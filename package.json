@@ -1,0 +1,21 @@
+{
+  "name": "todograph",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "concurrently -n server,app -c blue,green \"pnpm --filter @todograph/server dev\" \"pnpm --filter @todograph/app dev\"",
+    "dev:electron": "pnpm --filter @todograph/app dev:electron",
+    "build": "pnpm -r build",
+    "test": "pnpm --filter @todograph/core test",
+    "lint": "pnpm -r lint",
+    "start:web": "pnpm --filter @todograph/server start",
+    "package": "pnpm --filter @todograph/app package"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  }
+}

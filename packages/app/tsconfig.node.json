@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "outDir": "dist-node",
+    "noEmit": true
+  },
+  "include": ["electron.vite.config.ts", "vite.config.ts", "tailwind.config.ts", "postcss.config.js"]
+}

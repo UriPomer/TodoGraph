@@ -1,0 +1,166 @@
+@import '@xyflow/react/dist/style.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+ * 主题变量总入口
+ * - 每套主题都通过 [data-theme="..."] 选择器定义（见下方）
+ * - :root 不放颜色变量，防止与其它主题选择器的特异性打平后
+ *   因先后顺序意外盖过主题切换（这是之前切换无效的根因）
+ * - index.html 已预设 data-theme="dark"，初始即带正确主题
+ * ============================================================ */
+
+/* ---------- 深色（默认） ---------- */
+[data-theme='dark'] {
+  --background: 215 25% 9%;
+  --foreground: 213 31% 94%;
+
+  --card: 216 24% 13%;
+  --card-foreground: 213 31% 94%;
+
+  --border: 216 19% 21%;
+  --input: 216 19% 21%;
+  --ring: 217 91% 60%;
+
+  --primary: 217 91% 60%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 216 19% 17%;
+  --secondary-foreground: 213 31% 94%;
+
+  --muted: 216 19% 17%;
+  --muted-foreground: 215 14% 61%;
+
+  --accent: 216 19% 21%;
+  --accent-foreground: 213 31% 94%;
+
+  --destructive: 0 74% 65%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 142 71% 45%;
+  --success-foreground: 0 0% 100%;
+
+  --radius: 0.5rem;
+}
+
+/* ---------- 浅色 ---------- */
+[data-theme='light'] {
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+
+  --card: 0 0% 98%;
+  --card-foreground: 222 47% 11%;
+
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 217 91% 60%;
+
+  --primary: 217 91% 55%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 222 47% 11%;
+
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+
+  --accent: 210 40% 94%;
+  --accent-foreground: 222 47% 11%;
+
+  --destructive: 0 74% 55%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 142 71% 40%;
+  --success-foreground: 0 0% 100%;
+
+  --radius: 0.5rem;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-background text-foreground;
+  font-family: 'Segoe UI', -apple-system, 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  overflow: hidden;
+}
+
+/* ===== React Flow 主题覆盖：让节点/边颜色跟随主题 ===== */
+.react-flow__background {
+  background-color: hsl(var(--background));
+}
+
+/* Controls 工具条（左下角的 + / − / fit / lock） */
+.react-flow__controls {
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  box-shadow: 0 2px 8px hsl(0 0% 0% / 0.15);
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: transparent;
+  border-bottom: 1px solid hsl(var(--border));
+  color: hsl(var(--foreground));
+  fill: currentColor;
+  width: 26px;
+  height: 26px;
+  transition: background-color 150ms ease-out;
+}
+.react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+.react-flow__controls-button:hover {
+  background: hsl(var(--accent));
+}
+.react-flow__controls-button svg {
+  max-width: 12px;
+  max-height: 12px;
+}
+
+/* MiniMap：外框由 React 组件上的 className 控制，这里只管内部元素 */
+.react-flow__minimap {
+  margin: 12px;
+}
+.react-flow__minimap-mask {
+  fill: hsl(var(--background) / 0.55);
+  stroke: hsl(var(--primary) / 0.6);
+  stroke-width: 1.5;
+}
+/* MiniMap 节点用内联 fill 着色，这里仅平滑过渡 */
+.react-flow__minimap-node {
+  transition: fill 120ms ease-out;
+}
+
+.react-flow__edge-path {
+  stroke: hsl(var(--muted-foreground));
+  stroke-width: 1.5;
+}
+.react-flow__edge.ready .react-flow__edge-path {
+  stroke: hsl(var(--success));
+}
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: hsl(var(--destructive));
+  stroke-width: 2.5;
+}
+.react-flow__handle {
+  background: hsl(var(--primary));
+  border: 2px solid hsl(var(--card));
+  width: 10px;
+  height: 10px;
+}
+.react-flow__attribution {
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  opacity: 0.5;
+}

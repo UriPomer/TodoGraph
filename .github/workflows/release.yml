@@ -1,0 +1,77 @@
+name: Release Windows EXE
+
+# 打标签（v* 形如 v0.1.0、v1.2.3）时自动构建并发布 GitHub Release
+# 也支持在 Actions 页面手动点 Run workflow 触发（不会真发 Release）
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  # 让内置 GITHUB_TOKEN 有权创建 Release 和上传资产
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows portable exe
+    runs-on: windows-latest
+
+    steps:
+      # 1. 拉代码
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. 启 pnpm（从 package.json 的 packageManager 字段读版本）
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      # 3. 装 Node（用 pnpm 的 lockfile 做 cache key）
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # 4. 安装依赖
+      # 跟本地 .npmrc 保持一致（node-linker=hoisted），避免 electron-builder 跟不进 pnpm 的 symlink 布局
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 5. 编译 core / shared / server / renderer（electron-vite 会在 packaging 步骤再跑一次主进程构建）
+      - name: Build workspace packages
+        run: pnpm -r build
+
+      # 6. 打 portable exe
+      # electron-builder 的产物会落到仓库根目录 Build/（由 packages/app/package.json 里 directories.output 指向 ../../Build）
+      - name: Package Windows portable exe
+        run: pnpm --filter @todograph/app exec electron-builder --win portable --publish never
+        env:
+          # electron-builder 内部会用它查 GitHub Release API；内置 GITHUB_TOKEN 即可
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 7. 把产物作为 workflow artifact 上传（不论是否是 tag 触发，都能在 Actions 里下载）
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TodoGraph-windows-portable
+          path: Build/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      # 8. 仅在 tag 触发时才发 Release
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          # 自动从 commits 生成 release notes
+          generate_release_notes: true
+          # 上传产物到 Release（通配，匹配任意版本号）
+          files: |
+            Build/TodoGraph-*-portable.exe
+          # 名字里带上 tag
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

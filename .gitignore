@@ -1,0 +1,42 @@
+# ===== 依赖 / 产物 =====
+node_modules/
+dist/
+out/
+# Tailwind / 其它工具可能产生的小写 build/
+build/
+# electron-builder 默认输出目录（未使用，也加上防御）
+release/
+# electron-builder 实际输出目录（packages/app/package.json 里配置）
+Build/
+
+# ===== 运行时数据 =====
+# 本地运行 / Electron portable 产生的用户数据
+data/
+packages/*/data/
+# Fastify dev 日志等
+*.log
+
+# ===== 环境变量 =====
+.env
+.env.local
+.env.*.local
+
+# ===== 编辑器 / IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ===== pnpm =====
+.pnpm-store/
+.pnpm-debug.log*
+
+# ===== 其它 =====
+*.tsbuildinfo
+coverage/
