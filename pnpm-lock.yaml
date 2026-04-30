@@ -126,6 +126,9 @@ importers:
       vite:
         specifier: ^5.4.11
         version: 5.4.21(@types/node@22.19.17)
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.17)
 
   packages/core:
     devDependencies:
@@ -134,7 +137,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^2.1.8
-        version: 2.1.9
+        version: 2.1.9(@types/node@22.19.17)
 
   packages/server:
     dependencies:
@@ -5751,7 +5754,7 @@ packages:
     dev: true
     optional: true
 
-  /vite-node@2.1.9:
+  /vite-node@2.1.9(@types/node@22.19.17):
     resolution: {integrity: sha512-AM9aQ/IPrW/6ENLQg3AGY4K1N2TGZdR5e4gu/MmmR2xR3Ll1+dib+nook92g4TV3PXVyeyxdWwtaCAiUL0hMxA==}
     engines: {node: ^18.0.0 || >=20.0.0}
     hasBin: true
@@ -5812,7 +5815,7 @@ packages:
       fsevents: 2.3.3
     dev: true
 
-  /vitest@2.1.9:
+  /vitest@2.1.9(@types/node@22.19.17):
     resolution: {integrity: sha512-MSmPM9REYqDGBI8439mA4mWhV5sKmDlBKWIYbA3lRb2PTHACE0mgKwA8yQ2xq9vxDTuk4iPrECBAEW2aoFXY0Q==}
     engines: {node: ^18.0.0 || >=20.0.0}
     hasBin: true
@@ -5837,6 +5840,7 @@ packages:
       jsdom:
         optional: true
     dependencies:
+      '@types/node': 22.19.17
       '@vitest/expect': 2.1.9
       '@vitest/mocker': 2.1.9(vite@5.4.21)
       '@vitest/pretty-format': 2.1.9
@@ -5855,7 +5859,7 @@ packages:
       tinypool: 1.1.1
       tinyrainbow: 1.2.0
       vite: 5.4.21(@types/node@22.19.17)
-      vite-node: 2.1.9
+      vite-node: 2.1.9(@types/node@22.19.17)
       why-is-node-running: 2.3.0
     transitivePeerDependencies:
       - less
