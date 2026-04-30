@@ -9,6 +9,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useTaskStore } from '@/stores/useTaskStore';
+import { defaultPositionFor } from '@/lib/defaultPosition';
 
 export function TaskInput() {
   const [title, setTitle] = useState('');
@@ -18,11 +19,8 @@ export function TaskInput() {
   const submit = () => {
     const t = title.trim();
     if (!t) return;
-    // 优先使用图视口中心（如果图视图已经挂载过）；否则回落到随机位置避免重叠在 (0,0)
-    const center = useTaskStore.getState().viewportCenter;
-    const pos = center
-      ? { x: center.x - 90, y: center.y - 28 } // 减半个节点尺寸使其视觉上居中
-      : { x: 120 + Math.random() * 500, y: 120 + Math.random() * 300 };
+    const s = useTaskStore.getState();
+    const pos = defaultPositionFor({ nodes: s.nodes, viewportCenter: s.viewportCenter });
     addTask({
       title: t,
       priority: Number(priority),
