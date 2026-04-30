@@ -1,11 +1,11 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
-import { graphRoutes } from './routes/graph.js';
-import type { GraphRepository } from './repositories/Repository.js';
+import { workspaceRoutes } from './routes/workspace.js';
+import type { WorkspaceRepository } from './repositories/Repository.js';
 
 export interface AppOptions {
-  repo: GraphRepository;
+  repo: WorkspaceRepository;
   /** 若提供，生产模式下会作为前端静态资源目录 */
   staticDir?: string;
   logger?: boolean;
@@ -20,7 +20,7 @@ export interface AppOptions {
 export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: opts.logger ?? true });
 
-  await app.register(graphRoutes, { repo: opts.repo });
+  await app.register(workspaceRoutes, { repo: opts.repo });
 
   if (opts.staticDir) {
     await app.register(fastifyStatic, {

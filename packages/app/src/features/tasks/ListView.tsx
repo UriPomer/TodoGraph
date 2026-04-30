@@ -2,6 +2,11 @@ import { useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { buildAdj } from '@todograph/core';
 import type { Task } from '@todograph/shared';
 import { useTaskStore } from '@/stores/useTaskStore';
+import {
+  MAX_HIERARCHY_DEPTH,
+  depthOf,
+  subtreeHeight,
+} from '@/stores/useTaskStore';
 import { useDerived } from '@/hooks/useRecommendation';
 import { TaskInput } from './TaskInput';
 import { TaskItem } from './TaskItem';
@@ -132,12 +137,8 @@ export function ListView() {
         }
 
         // 已激活：找 drop target / 近邻指示行
-        // 限制：只有"自由节点"（无 parentId 且无子）才能挂到别人身上。
-        // 父节点（有子）/ 子节点（已有 parent）不允许再变成别人的子。
-        const draggingNode = nodes.find((n) => n.id === prev.taskId);
-        const draggedIsChild = !!draggingNode?.parentId;
-        const draggedIsGroup = childMap.has(prev.taskId);
-        const mergeAllowed = !draggedIsChild && !draggedIsGroup;
+        // 三层嵌套限制：合并后的总层数不能超过 MAX_HIERARCHY_DEPTH
+        const draggedHeight = subtreeHeight(nodes, prev.taskId);
 
         const el = document.elementFromPoint(e.clientX, e.clientY);
         const targetLi = el?.closest('[data-task-id]') as HTMLElement | null;
@@ -145,14 +146,18 @@ export function ListView() {
         let nearItemId: string | null = null;
         if (targetLi) {
           const tid = targetLi.getAttribute('data-task-id');
-          if (mergeAllowed && tid && tid !== prev.taskId && !isDescendantOf(tid, prev.taskId)) {
-            targetId = tid;
+          if (tid && tid !== prev.taskId && !isDescendantOf(tid, prev.taskId)) {
+            // 检查挂到这个候选下会不会超深度
+            const candDepth = depthOf(nodes, tid);
+            if (candDepth + 1 + draggedHeight + 1 <= MAX_HIERARCHY_DEPTH) {
+              targetId = tid;
+            }
           }
           nearItemId = tid;
         }
 
-        // 预测"松手时会发生什么"：只有子节点在空白区释放才 ungroup；
-        // mergeAllowed=false 的节点根本不会走归属变更，不需要 ungroup 预警。
+        // 预测"松手时会发生什么"：只有子节点在空白区释放才 ungroup
+        const draggingNode = nodes.find((n) => n.id === prev.taskId);
         const willUnparent = !targetId && !!draggingNode?.parentId;
 
         return { ...prev, x: e.clientX, y: e.clientY, targetId, willUnparent, nearItemId };

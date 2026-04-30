@@ -27,6 +27,11 @@ import { Layout, Maximize2 } from 'lucide-react';
 import { wouldCreateCycle } from '@todograph/core';
 import { Button } from '@/components/ui/button';
 import { useTaskStore } from '@/stores/useTaskStore';
+import {
+  MAX_HIERARCHY_DEPTH,
+  depthOf,
+  subtreeHeight,
+} from '@/stores/useTaskStore';
 import { useDerived } from '@/hooks/useRecommendation';
 import { TaskNode, type TaskNodeData } from './TaskNode';
 import { GroupNode, type GroupNodeData } from './GroupNode';
@@ -97,6 +102,7 @@ function GraphViewInner() {
   const setParent = useTaskStore((s) => s.setParent);
   const groupTasks = useTaskStore((s) => s.groupTasks);
   const normalizeGroupBounds = useTaskStore((s) => s.normalizeGroupBounds);
+  const ascendOneLevel = useTaskStore((s) => s.ascendOneLevel);
   const setViewportCenter = useTaskStore((s) => s.setViewportCenter);
 
   const { graph, readySet, recommended } = useDerived();
@@ -208,35 +214,58 @@ function GraphViewInner() {
 
   // 稳定的 data 对象缓存，避免每帧 new 一个对象触发 TaskNode 重渲染
   const dataCacheRef = useRef(new Map<string, TaskNodeData | GroupNodeData>());
+  // 上一轮计算出的父节点尺寸 —— 用于 diff 触发 updateNodeInternals
+  const prevGroupSizesRef = useRef(new Map<string, { w: number; h: number }>());
+  // 当 sync effect 发现父尺寸变化时，把 id 收集起来，交给一个后续 effect 调 updateNodeInternals
+  const [resizedGroupIds, setResizedGroupIds] = useState<string[]>([]);
 
   // 同步 store → 本地 rfNodes；正在拖动时不覆盖 position
   useEffect(() => {
     if (draggingRef.current) return;
     // 节点 id → node 的索引，供本 effect 内所有查找复用，避免 O(n²)
     const byId = new Map(nodes.map((n) => [n.id, n]));
-    // 计算每个父节点的包围尺寸
+
+    // === 拓扑排序（叶子优先）===
+    // 多层 group 场景下，祖父的尺寸要包含父 —— 而父的尺寸取决于它的子。
+    // 按深度倒序遍历 parentMap：先算叶子层的 group，再算它们的父。
+    const groupIds = [...parentMap.keys()];
+    groupIds.sort((a, b) => depthOf(nodes, b) - depthOf(nodes, a));
+
     const groupSizes = new Map<string, { w: number; h: number }>();
-    for (const [pid, childIds] of parentMap) {
+    for (const pid of groupIds) {
+      const childIds = parentMap.get(pid) ?? [];
       const childPositions: Array<{ x: number; y: number; w: number; h: number }> = [];
       for (const cid of childIds) {
         const c = byId.get(cid);
         if (!c) continue;
+        // 若子节点本身也是父节点 —— 用它已经计算好的尺寸（已按叶子优先拿到）
+        const childSize = groupSizes.get(cid);
         childPositions.push({
           x: c.x ?? 0,
           y: c.y ?? 0,
-          w: CHILD_DEFAULT_W,
-          h: CHILD_DEFAULT_H,
+          w: childSize?.w ?? CHILD_DEFAULT_W,
+          h: childSize?.h ?? CHILD_DEFAULT_H,
         });
       }
       groupSizes.set(pid, computeGroupSize(childPositions));
     }
 
-    // React Flow 要求 parent 在 children 之前；先父后子排序
-    const sorted = [...nodes].sort((a, b) => {
-      const aIsGroup = parentMap.has(a.id) ? 0 : 1;
-      const bIsGroup = parentMap.has(b.id) ? 0 : 1;
-      return aIsGroup - bIsGroup;
-    });
+    // === Diff：哪些父的尺寸变了？ ===
+    const prevSizes = prevGroupSizesRef.current;
+    const changed: string[] = [];
+    for (const [pid, cur] of groupSizes) {
+      const old = prevSizes.get(pid);
+      if (!old || old.w !== cur.w || old.h !== cur.h) changed.push(pid);
+    }
+    prevGroupSizesRef.current = groupSizes;
+    if (changed.length > 0) {
+      // 用 state 把变化传给独立 effect —— 这里直接 setState 会触发重渲染，但
+      // 只要 array 引用稳定（changed.length > 0 才变），次数很少。
+      setResizedGroupIds(changed);
+    }
+
+    // React Flow 要求 parent 在 children 之前；按深度升序（根 → 子 → 孙）
+    const sorted = [...nodes].sort((a, b) => depthOf(nodes, a.id) - depthOf(nodes, b.id));
 
     setRfNodes((prev) => {
       const prevById = new Map(prev.map((p) => [p.id, p]));
@@ -296,17 +325,17 @@ function GraphViewInner() {
     });
   }, [nodes, readySet, recommended, parentMap]);
 
-  // 当 parentMap 变化（子节点增减）时，通知 React Flow 重新测量父容器尺寸
+  // 父节点结构（子节点增减）或尺寸变化时，通知 React Flow 重新测量
   const updateNodeInternals = useUpdateNodeInternals();
   useEffect(() => {
-    const parentIds = [...parentMap.keys()];
-    if (parentIds.length > 0) {
-      // 延迟一帧确保 rfNodes 已写入 DOM
-      requestAnimationFrame(() => {
-        updateNodeInternals(parentIds);
-      });
-    }
-  }, [parentMap, updateNodeInternals]);
+    // parentMap 变化时：全部 parent 重测；尺寸变化时：只测有变化的
+    const ids = new Set<string>([...parentMap.keys(), ...resizedGroupIds]);
+    if (ids.size === 0) return;
+    // 延迟一帧确保 rfNodes 已写入 DOM
+    requestAnimationFrame(() => {
+      updateNodeInternals([...ids]);
+    });
+  }, [parentMap, resizedGroupIds, updateNodeInternals]);
 
   /**
    * 合成送给 React Flow 的最终节点数组。两种效果：
@@ -403,27 +432,27 @@ function GraphViewInner() {
     (_evt: React.MouseEvent, draggedNode: RFNode) => {
       const dragId = draggedNode.id;
 
-      // 限制：只有"自由节点"（无 parent，且自己也不是 group）才能被合并进别的节点。
-      // 已经是父节点（有子）或已经是子节点（有 parentId）都不允许 —— 避免产生多级嵌套。
-      const draggedIsChild = !!draggedNode.parentId;
-      const draggedIsGroup = parentMap.has(dragId);
-      const mergeAllowed = !draggedIsChild && !draggedIsGroup;
-
-      // ===== 1. 合并检测：仅 mergeAllowed 时才查找目标 =====
+      // ===== 1. 合并检测：放开多层嵌套，以"合并后的总深度"作为上限 =====
+      // 允许合并的条件：若把 draggedNode 挂到 candidate 下，合并后的最深层数 ≤ MAX_HIERARCHY_DEPTH
+      //   candidateDepth + 1（child 自身）+ draggedSubtreeHeight + 1（层数 = 深度 + 1）≤ MAX
+      const draggedHeight = subtreeHeight(nodes, dragId);
       let mergeCandidate: RFNode | null = null;
-      if (mergeAllowed) {
-        const intersecting = rf.getIntersectingNodes(draggedNode);
-        for (const n of intersecting) {
-          if (n.id === dragId) continue;
-          if (n.id === GHOST_ID || n.type === 'mergeGhost') continue;
-          if (isDescendantOf(n.id, dragId)) continue;
-          if (n.type === 'group') {
-            if (draggedNode.parentId === n.id) continue;
-            mergeCandidate = n;
-            break;
-          }
-          if (!mergeCandidate) mergeCandidate = n;
+      const intersecting = rf.getIntersectingNodes(draggedNode);
+      for (const n of intersecting) {
+        if (n.id === dragId) continue;
+        if (n.id === GHOST_ID || n.type === 'mergeGhost') continue;
+        if (isDescendantOf(n.id, dragId)) continue;
+        // 已在该父下 —— 无需再合并
+        if (draggedNode.parentId === n.id) continue;
+        // 深度检查：挂上后不能超层
+        const candDepth = depthOf(nodes, n.id);
+        if (candDepth + 1 + draggedHeight + 1 > MAX_HIERARCHY_DEPTH) continue;
+
+        if (n.type === 'group') {
+          mergeCandidate = n;
+          break;
         }
+        if (!mergeCandidate) mergeCandidate = n;
       }
 
       const candidateId = mergeCandidate?.id ?? null;
@@ -481,7 +510,7 @@ function GraphViewInner() {
         }
       }
     },
-    [rf, parentMap, isDescendantOf, clearMergeTimer, clearUngroupTimer],
+    [rf, nodes, isDescendantOf, clearMergeTimer, clearUngroupTimer],
   );
 
   const onNodeDragStart = useCallback(
@@ -509,8 +538,9 @@ function GraphViewInner() {
       // mergeAllowed 限制已经在 onNodeDrag 挡掉了"父/子节点被拖合并"的情况，
       // 所以走到 merge 分支时，被拖的一定是自由节点 —— 不会同时持有 ungroupFrom。
       // 顺序上把 ungroup 放在前面表意更清晰：「拖出父框」优先解释为「脱离」而非「再合并」。
+      // 三层嵌套下 ungroup 只脱一层 —— 孙节点拖出父框应该落到祖父而不是顶层
       if (ungroupFrom && draggedNode.parentId === ungroupFrom) {
-        setParent(dragId, null);
+        ascendOneLevel(dragId);
         return;
       }
 
@@ -536,11 +566,20 @@ function GraphViewInner() {
         },
       ]);
       // 子节点被拖到父框的左/上方（负相对坐标）会让父框无法包围 —— 归一化一次
+      // 多层嵌套下：链路上所有祖先都需要跟着重算（否则祖父框不会跟着涨）
       if (draggedNode.parentId) {
-        normalizeGroupBounds(draggedNode.parentId);
+        const storeNodes = useTaskStore.getState().nodes;
+        const byId = new Map(storeNodes.map((n) => [n.id, n]));
+        let cur: string | undefined = draggedNode.parentId;
+        const seen = new Set<string>();
+        while (cur && !seen.has(cur)) {
+          seen.add(cur);
+          normalizeGroupBounds(cur);
+          cur = byId.get(cur)?.parentId;
+        }
       }
     },
-    [rf, parentMap, setParent, updateTasksBulk, normalizeGroupBounds, clearMergeTimer, clearUngroupTimer],
+    [rf, parentMap, setParent, ascendOneLevel, updateTasksBulk, normalizeGroupBounds, clearMergeTimer, clearUngroupTimer],
   );
 
   const isValidConnection = useCallback(
@@ -647,12 +686,21 @@ function GraphViewInner() {
     // 父节点参与布局；子节点相对父节点的布局由 dagre 当作独立节点处理
     // 为了简单起见，仅对 "顶层" 节点（parentId 为空的）跑 dagre；
     // 子节点保留在其父容器内的相对位置。
+    //
+    // 关键：父节点（group）要告诉 dagre 它的真实尺寸 —— 否则 dagre 按默认
+    // 180x56 布局，兄弟节点就会撞进父框里。
     const topLevel = rfNodes.filter((n) => !n.parentId);
     const topLevelSet = new Set(topLevel.map((n) => n.id));
     const topLevelEdges = rfEdges.filter(
       (e) => topLevelSet.has(e.source) && topLevelSet.has(e.target),
     );
-    const { nodes: laid } = dagreLayout(topLevel, topLevelEdges);
+    const { nodes: laid } = dagreLayout(topLevel, topLevelEdges, (n) => {
+      // sync effect 在 rfNode 上已经设好 width/height（group 节点）
+      const w = typeof n.width === 'number' ? n.width : undefined;
+      const h = typeof n.height === 'number' ? n.height : undefined;
+      if (w !== undefined && h !== undefined) return { width: w, height: h };
+      return { width: CHILD_DEFAULT_W, height: CHILD_DEFAULT_H };
+    });
     const byId = new Map(laid.map((n) => [n.id, n.position]));
     setRfNodes((prev) =>
       prev.map((p) =>

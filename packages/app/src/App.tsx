@@ -8,6 +8,7 @@ import { ThemeSwitcher } from '@/features/theme/ThemeSwitcher';
 import { ListView } from '@/features/tasks/ListView';
 import { GraphView } from '@/features/graph/GraphView';
 import { useTaskStore } from '@/stores/useTaskStore';
+import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useDerived } from '@/hooks/useRecommendation';
 import { cn } from '@/lib/utils';
 
@@ -66,13 +67,22 @@ function Header({ tab, onTab }: { tab: string; onTab: (v: string) => void }) {
 }
 
 export default function App() {
-  const load = useTaskStore((s) => s.load);
-  const loaded = useTaskStore((s) => s.loaded);
+  const bootstrap = useWorkspaceStore((s) => s.bootstrap);
+  const loaded = useWorkspaceStore((s) => s.loaded);
   const [tab, setTab] = useState('list');
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void bootstrap();
+  }, [bootstrap]);
+
+  // 页面卸载 / 刷新前强制 flush pending 保存 —— 避免 250ms 防抖窗口内丢数据
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      void useTaskStore.getState().flush();
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
 
   return (
     <ThemeProvider>
