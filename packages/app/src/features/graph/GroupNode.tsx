@@ -15,6 +15,8 @@ export interface GroupNodeData extends Record<string, unknown> {
   childrenCount: number;
   /** 是否是拖拽合并的目标节点（ghost overlay 覆盖中） */
   isMergeTarget?: boolean;
+  /** 合并候选（timer 计时中）：虚线外框预警 */
+  isMergePending?: boolean;
   /** 子节点拖离父框超过阈值 —— 即将 ungroup 的警告态 */
   isUngroupWarn?: boolean;
 }
@@ -48,6 +50,8 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
         selected && 'ring-2 ring-[hsl(var(--ring))]',
         // 合并目标：ghost overlay 负责发光，自己只需略降亮度
         d.isMergeTarget && 'opacity-70',
+        // 合并候选（timer 运行中）：虚线外框预警
+        d.isMergePending && 'outline outline-2 outline-dashed outline-[hsl(var(--primary))] outline-offset-2',
         // ungroup 警告：红色边框 + 抖动（class 在 globals.css）
         d.isUngroupWarn && 'border-[hsl(var(--destructive))] group-ungroup-warn',
       )}

@@ -56,9 +56,9 @@ const nodeTypes: NodeTypes = {
 };
 
 /** hover 进入目标后多久才显示 ghost 合并预览（ms） */
-const MERGE_HOVER_MS = 220;
+const MERGE_HOVER_MS = 500;
 /** 子节点中心离开父框后多久才真正 ungroup（ms）—— 期间父框显示红色抖动警告 */
-const UNGROUP_CONFIRM_MS = 320;
+const UNGROUP_CONFIRM_MS = 600;
 /** 认定为「明显离开父框」所需的最小像素 —— 轻微拖动不触发 ungroup 提示 */
 const UNGROUP_ESCAPE_PX = 12;
 /** ghost overlay 的固定 id —— 用于在命中检测里排除自己 */
@@ -121,6 +121,9 @@ function GraphViewInner() {
 
   interface DragState {
     dragId: string;
+    /** 悬停在候选上、timer 仍在计时期间 —— 候选节点打"待确认"虚线外框。 */
+    mergeCandidatePending: string | null;
+    /** timer 触发 / 松手时锁定的合并目标 —— 显示 ghost overlay。 */
     mergeTarget: string | null;
     ungroupFrom: string | null;
   }
@@ -330,13 +333,16 @@ function GraphViewInner() {
    */
   const renderNodes: RFTaskNode[] = useMemo(() => {
     if (!dragState) return rfNodes;
-    const { mergeTarget, ungroupFrom, dragId } = dragState;
+    const { mergeCandidatePending, mergeTarget, ungroupFrom, dragId } = dragState;
 
     // 只对被标记的节点重建 —— 其它节点保留原引用命中 memo
-    const flagged = (mergeTarget || ungroupFrom)
+    const flagged = (mergeTarget || ungroupFrom || mergeCandidatePending)
       ? rfNodes.map((n) => {
-          if (n.id !== mergeTarget && n.id !== ungroupFrom) return n;
-          const extra = n.id === mergeTarget ? { isMergeTarget: true } : { isUngroupWarn: true };
+          if (n.id !== mergeTarget && n.id !== ungroupFrom && n.id !== mergeCandidatePending) return n;
+          let extra: Record<string, boolean>;
+          if (n.id === mergeTarget) extra = { isMergeTarget: true };
+          else if (n.id === ungroupFrom) extra = { isUngroupWarn: true };
+          else extra = { isMergePending: true };
           return { ...n, data: { ...n.data, ...extra } };
         })
       : rfNodes;
@@ -447,16 +453,25 @@ function GraphViewInner() {
         clearMergeTimer();
         mergeCandidateRef.current = candidateId;
         if (candidateId) {
+          // 先把候选写入 pending 态 —— 触发候选节点的虚线外框预警视觉
+          setDragState((s) =>
+            s && s.dragId === dragId
+              ? { ...s, mergeCandidatePending: candidateId, mergeTarget: null }
+              : s,
+          );
+          // timer 到时：清 pending，置 confirmed mergeTarget，开始显示 ghost overlay
           mergeTimerRef.current = window.setTimeout(() => {
             setDragState((s) =>
               s && s.dragId === dragId
-                ? { ...s, mergeTarget: candidateId }
+                ? { ...s, mergeCandidatePending: null, mergeTarget: candidateId }
                 : s,
             );
           }, MERGE_HOVER_MS);
         } else {
           setDragState((s) =>
-            s && s.mergeTarget ? { ...s, mergeTarget: null } : s,
+            s && (s.mergeTarget || s.mergeCandidatePending)
+              ? { ...s, mergeTarget: null, mergeCandidatePending: null }
+              : s,
           );
         }
       }
@@ -506,7 +521,7 @@ function GraphViewInner() {
       // 统计当前被选节点数：>1 即为多选拖动
       const selectedCount = rfNodes.filter((n) => n.selected).length;
       isMultiDragRef.current = selectedCount > 1;
-      setDragState({ dragId: node.id, mergeTarget: null, ungroupFrom: null });
+      setDragState({ dragId: node.id, mergeCandidatePending: null, mergeTarget: null, ungroupFrom: null });
     },
     [rfNodes],
   );

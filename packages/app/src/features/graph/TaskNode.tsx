@@ -13,6 +13,8 @@ export interface TaskNodeData extends Record<string, unknown> {
   recommended?: boolean;
   /** 是否是拖拽合并的目标节点 —— ghost overlay 会覆盖在上面 */
   isMergeTarget?: boolean;
+  /** 候选态：timer 正在计时 —— 虚线外框预警，未满 500ms 松手不会真正合并 */
+  isMergePending?: boolean;
 }
 
 function TaskNodeImpl({ id, data, selected }: NodeProps) {
@@ -35,6 +37,8 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
         selected && 'ring-2 ring-[hsl(var(--ring))]',
         // 合并目标：ghost overlay 自己会发光，节点本体只需略微变淡突出 overlay
         d.isMergeTarget && 'opacity-70',
+        // 合并候选（timer 运行中）：虚线外框，500ms 内松手不合并
+        d.isMergePending && 'outline outline-2 outline-dashed outline-[hsl(var(--primary))] outline-offset-2',
       )}
     >
       <Handle type="target" position={Position.Left} />
