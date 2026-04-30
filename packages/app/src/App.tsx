@@ -84,6 +84,28 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, []);
 
+  // 全局快捷键：Cmd/Ctrl-Z 撤销、Cmd/Ctrl-Y 或 Cmd/Ctrl-Shift-Z 重做。
+  // 输入框/文本域中时不劫持。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      const isText = tag === 'INPUT' || tag === 'TEXTAREA' || t?.isContentEditable;
+      if (isText) return;
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      if (e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        useTaskStore.getState().undo();
+      } else if (e.key === 'y' || (e.shiftKey && e.key === 'z')) {
+        e.preventDefault();
+        useTaskStore.getState().redo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
     <ThemeProvider>
       <div className="flex h-full flex-col">

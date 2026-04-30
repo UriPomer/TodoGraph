@@ -26,6 +26,7 @@ import {
 import { Layout, Maximize2 } from 'lucide-react';
 import { wouldCreateCycle } from '@todograph/core';
 import { Button } from '@/components/ui/button';
+import { UndoRedoButtons } from '@/components/UndoRedoButtons';
 import { useTaskStore } from '@/stores/useTaskStore';
 import {
   MAX_HIERARCHY_DEPTH,
@@ -890,6 +891,8 @@ function GraphViewInner() {
         <span className="text-xs text-muted-foreground">
           拖 <b>●</b> 连边；拖到空白处创建新节点；<kbd className="text-[10px]">Shift</kbd>+左键框选
         </span>
+        <div className="mx-1 h-4 w-px bg-border" />
+        <UndoRedoButtons />
         <div className="mx-1 h-4 w-px bg-border" />
         <Button variant="outline" size="sm" className="gap-1 h-7" onClick={applyAutoLayout}>
           <Layout className="h-3.5 w-3.5" />

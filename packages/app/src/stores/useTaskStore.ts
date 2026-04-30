@@ -8,6 +8,7 @@ import {
   GROUP_PADDING_X,
   GROUP_PADDING_Y,
 } from '@/features/graph/computeGroupSize';
+import { useHistoryStore } from './useHistoryStore';
 
 interface TaskStore {
   /** 当前页的 pageId —— 供 scheduleSave/flush 使用。null 表示未加载任何页。 */
@@ -80,6 +81,12 @@ interface TaskStore {
   getGraph: () => PageData;
   getReadySet: () => Set<string>;
   getRecommended: () => Task | null;
+
+  // ---- undo/redo ----
+  /** 回滚到最后一次 push 的快照；返回是否真正发生回滚。 */
+  undo: () => boolean;
+  /** 重新应用 redo 栈顶的快照；返回是否真正发生前进。 */
+  redo: () => boolean;
 }
 
 const nextStatus: Record<TaskStatus, TaskStatus> = {
@@ -255,6 +262,16 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     if (pendingPageId) await doSave();
   };
 
+  /**
+   * 在 mutation 之前记录前态快照 —— undo 返回的就是这个前态。
+   * nodes/edges 引用本身不可变（store 所有写都走 immutable 模式），
+   * 所以共享引用安全，不需要深拷贝。
+   */
+  const pushPre = () => {
+    const { nodes, edges } = get();
+    useHistoryStore.getState().push({ nodes, edges });
+  };
+
   return {
     activePageId: null,
     nodes: [],
@@ -275,6 +292,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
           edges: g.edges,
           loaded: true,
         });
+        // 页面切换 —— 历史栈清空
+        useHistoryStore.getState().clear();
       } catch (err) {
         toast.error('加载页面失败', String((err as Error).message));
         // 维持 loaded=true 避免卡在加载态
@@ -286,6 +305,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     flush,
 
     addTask: ({ title, priority = 2, x, y, parentId }) => {
+      pushPre();
       const t: Task = {
         id: uid(),
         title: title || '未命名',
@@ -301,6 +321,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     },
 
     updateTask: (id, patch) => {
+      pushPre();
       set((s) => {
         let changed = false;
         const next = s.nodes.map((n) => {
@@ -315,6 +336,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
 
     updateTasksBulk: (patches) => {
       if (patches.length === 0) return;
+      pushPre();
       const byId = new Map(patches.map((p) => [p.id, p.patch]));
       set((s) => ({
         nodes: s.nodes.map((n) => {
@@ -326,6 +348,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     },
 
     deleteTask: (id) => {
+      pushPre();
       set((s) => {
         // 删除节点前：如果它是父节点，要把子节点的相对坐标加回父节点坐标
         const deleted = s.nodes.find((n) => n.id === id);
@@ -346,6 +369,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     },
 
     toggleStatus: (id) => {
+      pushPre();
       set((s) => ({
         nodes: s.nodes.map((n) => (n.id === id ? { ...n, status: nextStatus[n.status] } : n)),
       }));
@@ -353,6 +377,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     },
 
     setStatus: (id, status) => {
+      pushPre();
       set((s) => ({
         nodes: s.nodes.map((n) => (n.id === id ? { ...n, status } : n)),
       }));
@@ -370,12 +395,14 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         toast.error('会形成循环依赖', '已阻止');
         return false;
       }
+      pushPre();
       set((s) => ({ edges: [...s.edges, { from, to }] }));
       scheduleSave();
       return true;
     },
 
     removeEdge: (from, to) => {
+      pushPre();
       set((s) => ({ edges: s.edges.filter((e) => !(e.from === from && e.to === to)) }));
       scheduleSave();
     },
@@ -392,6 +419,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       }
       const child = state.nodes.find((n) => n.id === childId);
       if (!child) return false;
+      pushPre();
       const newParent = parentId ? state.nodes.find((n) => n.id === parentId) : undefined;
       const oldParent = child.parentId
         ? state.nodes.find((n) => n.id === child.parentId)
@@ -500,6 +528,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       const parentY = parentTask.y ?? 0;
       const targetSet = new Set(targets);
 
+      pushPre();
       set((s) => {
         let next = s.nodes;
         if (isNewParent) next = [...next, parentTask];
@@ -542,5 +571,21 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     getReadySet: () => new Set(readyTasks(get().getGraph()).map((n) => n.id)),
 
     getRecommended: () => recommend(get().getGraph()),
+
+    undo: () => {
+      const prev = useHistoryStore.getState().undo();
+      if (!prev) return false;
+      set({ nodes: prev.nodes, edges: prev.edges });
+      scheduleSave();
+      return true;
+    },
+
+    redo: () => {
+      const next = useHistoryStore.getState().redo();
+      if (!next) return false;
+      set({ nodes: next.nodes, edges: next.edges });
+      scheduleSave();
+      return true;
+    },
   };
 });
