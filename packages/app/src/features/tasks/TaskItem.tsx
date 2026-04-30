@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import { Check, ChevronRight, ChevronDown, Plus, Trash2 } from 'lucide-react';
+import { Check, ChevronRight, ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
 import type { Task } from '@todograph/shared';
 import { cn } from '@/lib/utils';
 import {
@@ -51,7 +51,10 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
   const deleteTask = useTaskStore((s) => s.deleteTask);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(task.title);
+  const [descExpanded, setDescExpanded] = useState(false);
+  const [descDraft, setDescDraft] = useState(task.description ?? '');
   const inputRef = useRef<HTMLInputElement>(null);
+  const descRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (editing) {
@@ -60,11 +63,27 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
     }
   }, [editing]);
 
+  useEffect(() => {
+    // 当 store 的 description 外部变化时同步 draft
+    setDescDraft(task.description ?? '');
+  }, [task.description]);
+
+  useEffect(() => {
+    if (descExpanded) descRef.current?.focus();
+  }, [descExpanded]);
+
   const commit = () => {
     const t = draft.trim();
     if (t && t !== task.title) updateTask(task.id, { title: t });
     else setDraft(task.title);
     setEditing(false);
+  };
+
+  const commitDesc = () => {
+    const d = descDraft;
+    if (d !== (task.description ?? '')) {
+      updateTask(task.id, { description: d === '' ? undefined : d });
+    }
   };
 
   return (
@@ -75,7 +94,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         onDragStart?.(e, task);
       }}
       className={cn(
-        'group relative flex items-center gap-3 rounded-md px-2 py-1.5',
+        'group relative flex flex-col rounded-md',
         'transition-colors duration-150',
         'hover:bg-accent/40',
         isDragging && 'opacity-30 scale-[0.98]',
@@ -84,6 +103,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       )}
       style={{ paddingLeft: `${12 + depth * 20}px` }}
     >
+      <div className="flex items-center gap-3 py-1.5 pr-2">
       {/* 折叠/展开按钮 */}
       {hasChildren && (
         <button
@@ -167,6 +187,23 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
           </button>
         )}
 
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setDescExpanded((v) => !v);
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className={cn(
+            'shrink-0 rounded p-1',
+            'transition-[color,transform,background-color] duration-150 ease-out',
+            'hover:bg-accent active:scale-90',
+            task.description ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground',
+          )}
+          title={task.description ? '查看/编辑描述' : '添加描述'}
+        >
+          <FileText className="h-3.5 w-3.5" />
+        </button>
+
         <Select
           value={String(task.priority ?? 2)}
           onValueChange={(v) => updateTask(task.id, { priority: Number(v) })}
@@ -195,6 +232,42 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
+      </div>
+
+      {/* 描述展开区：点 FileText 按钮打开，blur 时保存 */}
+      {descExpanded && (
+        <div
+          className="pb-2 pr-2"
+          style={{ paddingLeft: `${12 + 18 + 18 + 12}px` /* 缩进对齐标题左边 */ }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <textarea
+            ref={descRef}
+            value={descDraft}
+            onChange={(e) => setDescDraft(e.target.value)}
+            onBlur={commitDesc}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setDescDraft(task.description ?? '');
+                setDescExpanded(false);
+              }
+            }}
+            rows={3}
+            placeholder="添加描述..."
+            className="w-full resize-y rounded border border-border bg-background px-2 py-1.5 text-xs outline-none focus:border-[hsl(var(--primary))]"
+          />
+        </div>
+      )}
+
+      {/* 折叠态下的单行预览：有描述且未展开时显示 */}
+      {!descExpanded && task.description && (
+        <p
+          className="pb-1 pr-2 text-[11px] text-muted-foreground/80 line-clamp-1"
+          style={{ paddingLeft: `${12 + 18 + 18 + 12}px` }}
+        >
+          {task.description}
+        </p>
+      )}
     </li>
   );
 });

@@ -11,6 +11,7 @@ export interface GroupNodeData extends Record<string, unknown> {
   priority?: number;
   ready?: boolean;
   recommended?: boolean;
+  description?: string;
   /** 子节点个数，用于标题徽标显示。 */
   childrenCount: number;
   /** 是否是拖拽合并的目标节点（ghost overlay 覆盖中） */
@@ -55,6 +56,16 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
         // ungroup 警告：红色边框 + 抖动（class 在 globals.css）
         d.isUngroupWarn && 'border-[hsl(var(--destructive))] group-ungroup-warn',
       )}
+      title={d.description || undefined}
+      onDoubleClick={(e) => {
+        // 双击 group 的 body 区域编辑描述；header 的 dblclick 会 stopPropagation 走标题编辑
+        e.stopPropagation();
+        const cur = d.description ?? '';
+        const next = prompt('编辑分组描述:', cur);
+        if (next !== null && next !== cur) {
+          updateTask(id, { description: next === '' ? undefined : next });
+        }
+      }}
     >
       {/* Handle：复用父节点身份参与依赖连线 */}
       <Handle type="target" position={Position.Left} />
@@ -72,6 +83,7 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
           d.status === 'doing' && 'border-b-[hsl(var(--primary)/0.5)]',
         )}
         onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
       >
         <button
           className={cn(

@@ -11,6 +11,7 @@ export interface TaskNodeData extends Record<string, unknown> {
   priority?: number;
   ready?: boolean;
   recommended?: boolean;
+  description?: string;
   /** 是否是拖拽合并的目标节点 —— ghost overlay 会覆盖在上面 */
   isMergeTarget?: boolean;
   /** 候选态：timer 正在计时 —— 虚线外框预警，未满 500ms 松手不会真正合并 */
@@ -40,6 +41,16 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
         // 合并候选（timer 运行中）：虚线外框，500ms 内松手不合并
         d.isMergePending && 'outline outline-2 outline-dashed outline-[hsl(var(--primary))] outline-offset-2',
       )}
+      title={d.description || undefined}
+      onDoubleClick={(e) => {
+        // 标题 span 的 dblclick 会 stopPropagation，所以这里只响应"非标题区域"的双击
+        e.stopPropagation();
+        const cur = d.description ?? '';
+        const next = prompt('编辑描述:', cur);
+        if (next !== null && next !== cur) {
+          updateTask(id, { description: next === '' ? undefined : next });
+        }
+      }}
     >
       <Handle type="target" position={Position.Left} />
 

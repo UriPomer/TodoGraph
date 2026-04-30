@@ -273,6 +273,7 @@ function GraphViewInner() {
               ready: readySet.has(n.id),
               recommended: recommended?.id === n.id,
               childrenCount: parentMap.get(n.id)?.length ?? 0,
+              description: n.description,
             } as GroupNodeData)
           : ({
               title: n.title,
@@ -280,6 +281,7 @@ function GraphViewInner() {
               priority: n.priority,
               ready: readySet.has(n.id),
               recommended: recommended?.id === n.id,
+              description: n.description,
             } as TaskNodeData);
 
         const cached = cache.get(n.id);
