@@ -4,6 +4,10 @@ import type { Edge, PageData, Task, TaskStatus } from '@todograph/shared';
 import { api } from '@/api/client';
 import { toast } from '@/components/ui/toaster-store';
 import { uid } from '@/lib/utils';
+import {
+  GROUP_PADDING_X,
+  GROUP_PADDING_Y,
+} from '@/features/graph/computeGroupSize';
 
 interface TaskStore {
   /** 当前页的 pageId —— 供 scheduleSave/flush 使用。null 表示未加载任何页。 */
@@ -158,6 +162,43 @@ export function wouldExceedMaxDepth(
   // 挂上后 child 的深度 = parentDepth + 1；整棵子树最深 = (parentDepth + 1) + childHeight
   // 层数（1-based）= 最深深度 + 1 ≤ MAX_HIERARCHY_DEPTH
   return parentDepth + 1 + childHeight + 1 > MAX_HIERARCHY_DEPTH;
+}
+
+/**
+ * 纯函数：把 parent 下子节点的相对坐标归一化为"最左子节点贴 GROUP_PADDING_X、
+ * 最上子节点贴 GROUP_PADDING_Y"。父节点世界坐标同步调整（+delta），
+ * 子节点相对坐标同步调整（-delta），保证视觉位置不变。
+ *
+ * - 若父不存在 / 父没有子，原样返回。
+ * - 若无需调整（delta=0）也原样返回同一个数组引用（便于 store 短路）。
+ * - 不修改输入，返回新的 nodes 数组。
+ *
+ * Bug3 修复：老 normalizeGroupBounds 只在 minX<0 时触发，会留出一大片左侧空白。
+ * 现在不论方向，都把左内边距吸附到 GROUP_PADDING_X。
+ */
+export function pureNormalizeGroupBounds(nodes: Task[], parentId: string): Task[] {
+  const parent = nodes.find((n) => n.id === parentId);
+  if (!parent) return nodes;
+  const children = nodes.filter((n) => n.parentId === parentId);
+  if (children.length === 0) return nodes;
+  let minX = Infinity;
+  let minY = Infinity;
+  for (const c of children) {
+    if ((c.x ?? 0) < minX) minX = c.x ?? 0;
+    if ((c.y ?? 0) < minY) minY = c.y ?? 0;
+  }
+  const dx = minX - GROUP_PADDING_X;
+  const dy = minY - GROUP_PADDING_Y;
+  if (dx === 0 && dy === 0) return nodes;
+  return nodes.map((n) => {
+    if (n.id === parentId) {
+      return { ...n, x: (n.x ?? 0) + dx, y: (n.y ?? 0) + dy };
+    }
+    if (n.parentId === parentId) {
+      return { ...n, x: (n.x ?? 0) - dx, y: (n.y ?? 0) - dy };
+    }
+    return n;
+  });
 }
 
 /**
@@ -488,33 +529,10 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     },
 
     normalizeGroupBounds: (parentId) => {
-      const state = get();
-      const parent = state.nodes.find((n) => n.id === parentId);
-      if (!parent) return false;
-      const children = state.nodes.filter((n) => n.parentId === parentId);
-      if (children.length === 0) return false;
-
-      let minX = Infinity;
-      let minY = Infinity;
-      for (const c of children) {
-        if ((c.x ?? 0) < minX) minX = c.x ?? 0;
-        if ((c.y ?? 0) < minY) minY = c.y ?? 0;
-      }
-      const dx = minX < 0 ? minX : 0;
-      const dy = minY < 0 ? minY : 0;
-      if (dx === 0 && dy === 0) return false;
-
-      set((s) => ({
-        nodes: s.nodes.map((n) => {
-          if (n.id === parentId) {
-            return { ...n, x: (n.x ?? 0) + dx, y: (n.y ?? 0) + dy };
-          }
-          if (n.parentId === parentId) {
-            return { ...n, x: (n.x ?? 0) - dx, y: (n.y ?? 0) - dy };
-          }
-          return n;
-        }),
-      }));
+      const before = get().nodes;
+      const after = pureNormalizeGroupBounds(before, parentId);
+      if (after === before) return false;
+      set({ nodes: after });
       scheduleSave();
       return true;
     },
