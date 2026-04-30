@@ -39,19 +39,21 @@ import { MergeGhostNode, type MergeGhostData } from './MergeGhostNode';
 import { SelectionMenu, type SelectionMenuAction } from './SelectionMenu';
 import { InlineCreateInput } from './InlineCreateInput';
 import { dagreLayout } from './useAutoLayout';
+import {
+  computeGroupSize,
+  GROUP_PADDING_X,
+  GROUP_PADDING_Y,
+  CHILD_DEFAULT_W,
+  CHILD_DEFAULT_H,
+  GROUP_MIN_W,
+  GROUP_MIN_H,
+} from './computeGroupSize';
 
 const nodeTypes: NodeTypes = {
   task: TaskNode,
   group: GroupNode,
   mergeGhost: MergeGhostNode,
 };
-
-const GROUP_PADDING_X = 24;
-const GROUP_PADDING_Y = 60; // 顶部要留给 header card
-const CHILD_DEFAULT_W = 180;
-const CHILD_DEFAULT_H = 56;
-const GROUP_MIN_W = 220;
-const GROUP_MIN_H = 140;
 
 /** hover 进入目标后多久才显示 ghost 合并预览（ms） */
 const MERGE_HOVER_MS = 220;
@@ -63,32 +65,6 @@ const UNGROUP_ESCAPE_PX = 12;
 const GHOST_ID = '__merge_ghost__';
 
 interface RFTaskNode extends RFNode<TaskNodeData | GroupNodeData | MergeGhostData> {}
-
-/**
- * 计算父节点的理想尺寸：包围所有子节点 + padding。
- * 子节点相对坐标可能为负 —— 同时考虑 min/max 才能算对。
- * 只读 —— 返回尺寸不修改输入。
- */
-function computeGroupSize(childPositions: Array<{ x: number; y: number; w: number; h: number }>) {
-  if (childPositions.length === 0) return { w: GROUP_MIN_W, h: GROUP_MIN_H };
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const c of childPositions) {
-    if (c.x < minX) minX = c.x;
-    if (c.y < minY) minY = c.y;
-    if (c.x + c.w > maxX) maxX = c.x + c.w;
-    if (c.y + c.h > maxY) maxY = c.y + c.h;
-  }
-  // 注意：min 为负时，需要把 -min 也纳入宽度；header 顶部需要额外留白
-  const left = Math.min(0, minX);
-  const top = Math.min(0, minY);
-  return {
-    w: Math.max(GROUP_MIN_W, maxX - left + GROUP_PADDING_X),
-    h: Math.max(GROUP_MIN_H, maxY - top + GROUP_PADDING_Y),
-  };
-}
 
 function GraphViewInner() {
   // 拆分订阅：单个字段订阅 + 稳定的函数引用，避免不必要的重渲染
