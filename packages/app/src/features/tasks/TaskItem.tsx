@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import { Check, ChevronRight, ChevronDown, Trash2 } from 'lucide-react';
+import { Check, ChevronRight, ChevronDown, Plus, Trash2 } from 'lucide-react';
 import type { Task } from '@todograph/shared';
 import { cn } from '@/lib/utils';
 import {
@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useTaskStore } from '@/stores/useTaskStore';
+import { MAX_HIERARCHY_DEPTH } from '@/stores/useTaskStore';
 
 interface Props {
   task: Task;
@@ -30,6 +31,8 @@ interface Props {
   isDropTarget?: boolean;
   /** mousedown 拖拽开始回调 */
   onDragStart?: (e: React.MouseEvent, task: Task) => void;
+  /** 添加子任务；仅在 depth < MAX-1 时传入才显示按钮 */
+  onAddChild?: (parentId: string) => void;
 }
 
 /**
@@ -42,7 +45,7 @@ interface Props {
  * 用 memo 包住：ListView 每次 store 变化都会重排列表，但对于未变动的行
  * props 引用相同时跳过重渲染，避免大列表下 input 输入卡顿。
  */
-export const TaskItem = memo(function TaskItem({ task, recommended, dependencyInfo, depth = 0, hasChildren, isCollapsed, onToggleCollapse, isDragging, isDropTarget, onDragStart }: Props) {
+export const TaskItem = memo(function TaskItem({ task, recommended, dependencyInfo, depth = 0, hasChildren, isCollapsed, onToggleCollapse, isDragging, isDropTarget, onDragStart, onAddChild }: Props) {
   const toggleStatus = useTaskStore((s) => s.toggleStatus);
   const updateTask = useTaskStore((s) => s.updateTask);
   const deleteTask = useTaskStore((s) => s.deleteTask);
@@ -146,6 +149,24 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
 
       {/* 优先级 & 删除：hover 或 focus 时浮现，保持视觉纯净 */}
       <div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
+        {onAddChild && depth < MAX_HIERARCHY_DEPTH - 1 && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddChild(task.id);
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            className={cn(
+              'shrink-0 text-muted-foreground rounded p-1',
+              'transition-[color,transform,background-color] duration-150 ease-out',
+              'hover:text-[hsl(var(--primary))] hover:bg-accent active:scale-90',
+            )}
+            title="添加子任务"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        )}
+
         <Select
           value={String(task.priority ?? 2)}
           onValueChange={(v) => updateTask(task.id, { priority: Number(v) })}

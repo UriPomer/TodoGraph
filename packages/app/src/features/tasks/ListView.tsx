@@ -8,6 +8,8 @@ import {
   subtreeHeight,
 } from '@/stores/useTaskStore';
 import { useDerived } from '@/hooks/useRecommendation';
+import { toast } from '@/components/ui/toaster-store';
+import { defaultPositionFor } from '@/lib/defaultPosition';
 import { TaskInput } from './TaskInput';
 import { TaskItem } from './TaskItem';
 
@@ -36,6 +38,7 @@ export function ListView() {
   const nodes = useTaskStore((s) => s.nodes);
   const setParent = useTaskStore((s) => s.setParent);
   const updateTask = useTaskStore((s) => s.updateTask);
+  const addTask = useTaskStore((s) => s.addTask);
   const { graph, readySet, recommended } = useDerived();
   // 折叠状态：parentId → boolean
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -69,6 +72,26 @@ export function ListView() {
   const toggleCollapse = (parentId: string) => {
     setCollapsed((prev) => ({ ...prev, [parentId]: !prev[parentId] }));
   };
+
+  const handleAddChild = useCallback(
+    (parentId: string) => {
+      const s = useTaskStore.getState();
+      // 深度护栏：父的深度 + 1（新子自身）不能超过 MAX
+      if (depthOf(s.nodes, parentId) + 1 >= MAX_HIERARCHY_DEPTH) {
+        toast.error(`嵌套不能超过 ${MAX_HIERARCHY_DEPTH} 层`);
+        return;
+      }
+      const pos = defaultPositionFor({
+        parentId,
+        nodes: s.nodes,
+        viewportCenter: s.viewportCenter,
+      });
+      addTask({ title: '未命名', parentId, x: pos.x, y: pos.y });
+      // 展开父节点，保证新子节点可见
+      setCollapsed((prev) => (prev[parentId] ? { ...prev, [parentId]: false } : prev));
+    },
+    [addTask],
+  );
 
   // ===== 拖拽：检查 targetId 是否是 dragId 的后代（防止循环） =====
   const isDescendantOf = useCallback(
@@ -347,6 +370,7 @@ export function ListView() {
           dragTaskId={drag?.taskId ?? null}
           dropTargetId={drag?.active ? drag.targetId ?? null : null}
           onDragStart={handleDragStart}
+          onAddChild={handleAddChild}
           empty="暂无可执行任务"
         />
         <Section
@@ -361,6 +385,7 @@ export function ListView() {
           dragTaskId={drag?.taskId ?? null}
           dropTargetId={drag?.active ? drag.targetId ?? null : null}
           onDragStart={handleDragStart}
+          onAddChild={handleAddChild}
         />
         <Section
           title="Done"
@@ -373,6 +398,7 @@ export function ListView() {
           dragTaskId={drag?.taskId ?? null}
           dropTargetId={drag?.active ? drag.targetId ?? null : null}
           onDragStart={handleDragStart}
+          onAddChild={handleAddChild}
         />
       </div>
 
@@ -449,10 +475,11 @@ interface SectionProps {
   dragTaskId: string | null;
   dropTargetId: string | null;
   onDragStart: (e: React.MouseEvent, task: Task) => void;
+  onAddChild?: (parentId: string) => void;
   empty?: string;
 }
 
-function Section({ title, hint, items, recommendedId, depInfo, childMap, collapsed, onToggleCollapse, dragTaskId, dropTargetId, onDragStart, empty }: SectionProps) {
+function Section({ title, hint, items, recommendedId, depInfo, childMap, collapsed, onToggleCollapse, dragTaskId, dropTargetId, onDragStart, onAddChild, empty }: SectionProps) {
   return (
     <section className="mt-5 first:mt-6">
       <h3 className="mb-1 flex items-baseline gap-2 px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
@@ -480,6 +507,7 @@ function Section({ title, hint, items, recommendedId, depInfo, childMap, collaps
                   isDragging={task.id === dragTaskId}
                   isDropTarget={task.id === dropTargetId}
                   onDragStart={onDragStart}
+                  onAddChild={onAddChild}
                 />
               </li>
             );
