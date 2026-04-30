@@ -161,6 +161,12 @@ function GraphViewInner() {
     };
   }, []);
 
+  /**
+   * 是否处于"多选拖动"—— 多选时禁用合并/ungroup 判定，drag stop 时批量 flush
+   * 所有被选节点的新位置。否则 bug1：多选拖动末态错乱 + 误形成父子。
+   */
+  const isMultiDragRef = useRef(false);
+
   // 父节点 id → 子节点集合。用于计算父容器尺寸 & 批量移动。
   const parentMap = useMemo(() => {
     const m = new Map<string, string[]>();
@@ -409,6 +415,8 @@ function GraphViewInner() {
    */
   const onNodeDrag = useCallback(
     (_evt: React.MouseEvent, draggedNode: RFNode) => {
+      // 多选拖动：不做合并/ungroup 判定，避免误形成父子或位置错乱
+      if (isMultiDragRef.current) return;
       const dragId = draggedNode.id;
 
       // ===== 1. 合并检测：放开多层嵌套，以"合并后的总深度"作为上限 =====
@@ -495,9 +503,12 @@ function GraphViewInner() {
   const onNodeDragStart = useCallback(
     (_evt: React.MouseEvent, node: RFNode) => {
       draggingRef.current = true;
+      // 统计当前被选节点数：>1 即为多选拖动
+      const selectedCount = rfNodes.filter((n) => n.selected).length;
+      isMultiDragRef.current = selectedCount > 1;
       setDragState({ dragId: node.id, mergeTarget: null, ungroupFrom: null });
     },
-    [],
+    [rfNodes],
   );
 
   const onNodeDragStop = useCallback(
@@ -513,6 +524,33 @@ function GraphViewInner() {
       clearMergeTimer();
       clearUngroupTimer();
       draggingRef.current = false;
+
+      // ===== 多选拖动分支 =====
+      // 每个被选节点 onNodeDragStop 都会被调用，这里只在首次触发时批量 flush，
+      // 之后 reset isMultiDragRef 让后续 stop 回调走普通路径（其实已经 idempotent）。
+      if (isMultiDragRef.current) {
+        isMultiDragRef.current = false;
+        // 读 rfNodes local state 里每个 selected 节点的 position —— applyNodeChanges
+        // 已经写入实时拖动位置。一次性 bulk flush 到 store。
+        const patches = rfNodes
+          .filter((n) => n.selected)
+          .map((n) => ({ id: n.id, patch: { x: n.position.x, y: n.position.y } }));
+        if (patches.length > 0) updateTasksBulk(patches);
+        // 对所有被选节点的祖先链路归一化（去重）
+        const storeNodes = useTaskStore.getState().nodes;
+        const byId = new Map(storeNodes.map((n) => [n.id, n]));
+        const seen = new Set<string>();
+        for (const n of rfNodes) {
+          if (!n.selected || !n.parentId) continue;
+          let cur: string | undefined = n.parentId;
+          while (cur && !seen.has(cur)) {
+            seen.add(cur);
+            normalizeGroupBounds(cur);
+            cur = byId.get(cur)?.parentId;
+          }
+        }
+        return;
+      }
 
       // mergeAllowed 限制已经在 onNodeDrag 挡掉了"父/子节点被拖合并"的情况，
       // 所以走到 merge 分支时，被拖的一定是自由节点 —— 不会同时持有 ungroupFrom。
@@ -558,7 +596,7 @@ function GraphViewInner() {
         }
       }
     },
-    [rf, parentMap, setParent, ascendOneLevel, updateTasksBulk, normalizeGroupBounds, clearMergeTimer, clearUngroupTimer],
+    [rf, parentMap, setParent, ascendOneLevel, updateTasksBulk, normalizeGroupBounds, rfNodes, clearMergeTimer, clearUngroupTimer],
   );
 
   const isValidConnection = useCallback(
