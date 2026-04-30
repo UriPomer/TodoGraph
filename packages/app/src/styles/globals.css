@@ -164,3 +164,54 @@ body {
   color: hsl(var(--muted-foreground));
   opacity: 0.5;
 }
+
+/* ============================================================
+ * 拖拽交互动画
+ * ============================================================ */
+
+/* 合并预览 ghost：从中心扩张 → 轻微呼吸
+ * 使用 2 个 keyframe 串联：
+ * - expandIn 180ms 一次性扩张（transform 从 0.6 → 1.04 → 1）
+ * - 扩张结束后 opacity 呼吸（通过 animation-delay 级联）
+ */
+@keyframes mergeGhostExpand {
+  0% { transform: scale(0.55); opacity: 0; }
+  60% { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes mergeGhostBreath {
+  0%, 100% { box-shadow: 0 0 20px hsl(var(--primary) / 0.25); }
+  50% { box-shadow: 0 0 32px hsl(var(--primary) / 0.5); }
+}
+.merge-ghost {
+  /* transform-origin 居中确保扩张从 B 的中心放射 */
+  transform-origin: 50% 50%;
+  animation:
+    mergeGhostExpand 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both,
+    mergeGhostBreath 1.6s ease-in-out 220ms infinite;
+}
+
+/* 子节点刚 re-parent 完成后的平滑落位 */
+@keyframes childSettleIn {
+  from { transform: scale(0.9); opacity: 0.4; }
+  to { transform: scale(1); opacity: 1; }
+}
+.react-flow__node.settling {
+  animation: childSettleIn 180ms ease-out;
+}
+
+/* Ungroup 警告：父框红色抖动提示 */
+@keyframes ungroupWarn {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+.group-ungroup-warn {
+  animation: ungroupWarn 180ms ease-in-out infinite;
+}
+
+/* 列表视图 ungroup 预览：蓝色竖线呼吸 */
+@keyframes unparentPulse {
+  0%, 100% { opacity: 0.7; transform: scaleY(1); }
+  50% { opacity: 1; transform: scaleY(1.06); }
+}

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
-import { Check, Trash2 } from 'lucide-react';
+import { memo, useEffect, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import { Check, ChevronRight, ChevronDown, Trash2 } from 'lucide-react';
 import type { Task } from '@todograph/shared';
 import { cn } from '@/lib/utils';
 import {
@@ -15,6 +16,20 @@ interface Props {
   task: Task;
   recommended?: boolean;
   dependencyInfo?: { undone: number; total: number; parentTitles: string[] };
+  /** 层级缩进深度，0 = 顶层 */
+  depth?: number;
+  /** 是否有子节点 */
+  hasChildren?: boolean;
+  /** 当前是否折叠 */
+  isCollapsed?: boolean;
+  /** 折叠/展开切换回调 */
+  onToggleCollapse?: () => void;
+  /** 当前是否正在被拖拽 */
+  isDragging?: boolean;
+  /** 当前是否是 hover 的 drop target */
+  isDropTarget?: boolean;
+  /** mousedown 拖拽开始回调 */
+  onDragStart?: (e: React.MouseEvent, task: Task) => void;
 }
 
 /**
@@ -23,12 +38,14 @@ interface Props {
  * - 左侧单个状态圆点：todo=空心 / doing=中心点 / done=实心 + 勾
  * - done 状态整行灰化 + 标题 line-through
  * - 优先级/删除按钮只在 hover 时浮现
+ *
+ * 用 memo 包住：ListView 每次 store 变化都会重排列表，但对于未变动的行
+ * props 引用相同时跳过重渲染，避免大列表下 input 输入卡顿。
  */
-export function TaskItem({ task, recommended, dependencyInfo }: Props) {
+export const TaskItem = memo(function TaskItem({ task, recommended, dependencyInfo, depth = 0, hasChildren, isCollapsed, onToggleCollapse, isDragging, isDropTarget, onDragStart }: Props) {
   const toggleStatus = useTaskStore((s) => s.toggleStatus);
   const updateTask = useTaskStore((s) => s.updateTask);
   const deleteTask = useTaskStore((s) => s.deleteTask);
-
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(task.title);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -50,14 +67,39 @@ export function TaskItem({ task, recommended, dependencyInfo }: Props) {
   return (
     <li
       data-task-id={task.id}
+      onMouseDown={(e) => {
+        if (e.button !== 0) return; // 只响应左键
+        onDragStart?.(e, task);
+      }}
       className={cn(
-        'group flex items-center gap-3 rounded-md px-2 py-1.5',
+        'group relative flex items-center gap-3 rounded-md px-2 py-1.5',
         'transition-colors duration-150',
         'hover:bg-accent/40',
-        task.status === 'done' && 'text-muted-foreground',
+        isDragging && 'opacity-30 scale-[0.98]',
+        isDropTarget && 'bg-primary/10 border-l-2 border-primary',
+        task.status === 'done' && !isDragging && 'text-muted-foreground',
       )}
+      style={{ paddingLeft: `${12 + depth * 20}px` }}
     >
-      <StatusDot
+      {/* 折叠/展开按钮 */}
+      {hasChildren && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCollapse?.();
+          }}
+          className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded hover:bg-accent transition-colors"
+          title={isCollapsed ? '展开' : '折叠'}
+        >
+          {isCollapsed ? (
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          )}
+        </button>
+      )}
+
+      {!hasChildren && <span className="shrink-0 w-[18px]" />}<StatusDot
         status={task.status}
         recommended={recommended}
         onClick={() => toggleStatus(task.id)}
@@ -134,7 +176,7 @@ export function TaskItem({ task, recommended, dependencyInfo }: Props) {
       </div>
     </li>
   );
-}
+});
 
 /** 状态圆点：三态极简视觉。 */
 function StatusDot({
