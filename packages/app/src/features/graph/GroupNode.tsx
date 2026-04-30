@@ -57,10 +57,13 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
       <Handle type="source" position={Position.Right} />
 
       {/* 顶部 Header Card —— 40px 高，占满整行，显示父任务本身的标题/状态 */}
+      {/* class group-drag-handle + react-flow 的 dragHandle 机制：只有 header 能拖动 group。
+          body 区域拖拽时交给底层的 panOnDrag，避免"拖整个 group 误入他人怀里"。 */}
       <div
         className={cn(
+          'group-drag-handle',
           'absolute left-0 right-0 top-0 flex h-10 items-center gap-2 px-3',
-          'rounded-t-xl border-b bg-[hsl(var(--card))] shadow-sm',
+          'rounded-t-xl border-b bg-[hsl(var(--card))] shadow-sm cursor-move',
           'border-[hsl(var(--border))]',
           d.status === 'doing' && 'border-b-[hsl(var(--primary)/0.5)]',
         )}

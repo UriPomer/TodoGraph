@@ -289,6 +289,9 @@ function GraphViewInner() {
           ...(n.parentId
             ? { parentId: n.parentId }
             : {}),
+          // group 节点：只有 .group-drag-handle（header）可以拖动，
+          // 框内其它区域交还给 panOnDrag，避免误把整个 group 丢进别的 group 里。
+          ...(isGroup ? { dragHandle: '.group-drag-handle' } : {}),
           ...(isGroup && size
             ? { style: { width: size.w, height: size.h }, width: size.w, height: size.h }
             : {}),
