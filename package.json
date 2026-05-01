@@ -5,7 +5,8 @@
   "type": "module",
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "dev": "concurrently -n server,app -c blue,green \"pnpm --filter @todograph/server dev\" \"pnpm --filter @todograph/app dev\"",
+    "predev": "pnpm --filter @todograph/shared build",
+    "dev": "concurrently -n shared,server,app -c cyan,blue,green \"pnpm --filter @todograph/shared dev\" \"pnpm --filter @todograph/server dev\" \"pnpm --filter @todograph/app dev\"",
     "dev:electron": "pnpm --filter @todograph/app dev:electron",
     "build": "pnpm -r build",
     "test": "pnpm --filter @todograph/core test",
