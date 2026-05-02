@@ -4,7 +4,7 @@ import {
   GROUP_PADDING_X,
   GROUP_PADDING_Y,
   CHILD_DEFAULT_H,
-} from '@/features/graph/computeGroupSize';
+} from '@todograph/shared';
 import type { Task } from '@todograph/shared';
 
 describe('defaultPositionFor', () => {

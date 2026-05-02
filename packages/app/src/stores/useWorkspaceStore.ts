@@ -25,6 +25,10 @@ interface WorkspaceStore {
   deletePage: (pageId: string) => Promise<void>;
   renamePage: (pageId: string, title: string) => Promise<void>;
   reorderPages: (ids: string[]) => Promise<void>;
+  moveNodesToPage: (
+    nodeIds: string[],
+    target: { pageId?: string; newPageTitle?: string },
+  ) => Promise<string | null>;
 
   // ---- settings ----
   updateSettings: (settings: WorkspaceSettings) => Promise<void>;
@@ -179,6 +183,65 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         set({ meta: { ...meta, pages: nextPages } });
       } catch (err) {
         toast.error('排序失败', String((err as Error).message));
+      }
+    },
+
+    moveNodesToPage: async (nodeIds, target) => {
+      const meta = get().meta;
+      const sourcePageId = useTaskStore.getState().activePageId;
+      const ids = [...new Set(nodeIds)];
+      if (!meta || !sourcePageId || ids.length === 0) return null;
+
+      let targetPageId = target.pageId;
+      let targetTitle = '';
+
+      if (!targetPageId) {
+        const info = await get().createPage(target.newPageTitle?.trim() || '新页面');
+        if (!info) return null;
+        targetPageId = info.id;
+        targetTitle = info.title;
+      } else {
+        targetTitle =
+          get().meta?.pages.find((page) => page.id === targetPageId)?.title ?? targetPageId;
+      }
+
+      if (targetPageId === sourcePageId) {
+        toast.error('不能移动到当前页面');
+        return null;
+      }
+
+      try {
+        await useTaskStore.getState().flush();
+        const resp = await api.moveNodes(sourcePageId, targetPageId, ids);
+
+        await useTaskStore.getState().loadPage(targetPageId);
+        try {
+          await api.setActivePage(targetPageId);
+        } catch (err) {
+          console.warn('setActivePage failed after moveNodes', err);
+        }
+
+        const nextMeta = get().meta;
+        if (nextMeta) {
+          set({ meta: { ...nextMeta, activePageId: targetPageId } });
+        }
+        scheduleAllTasksRefresh();
+
+        const details = [`${resp.movedNodes} 个节点`];
+        if (resp.autoIncludedChildren > 0) {
+          details.push(`自动带上 ${resp.autoIncludedChildren} 个子节点`);
+        }
+        if (resp.droppedParentLinks > 0) {
+          details.push(`拆开 ${resp.droppedParentLinks} 个父链接`);
+        }
+        if (resp.lostEdges > 0) {
+          details.push(`断开 ${resp.lostEdges} 条跨页依赖`);
+        }
+        toast.info(`已移动到 ${targetTitle}`, details.join('，'));
+        return targetPageId;
+      } catch (err) {
+        toast.error('移动节点失败', String((err as Error).message));
+        return null;
       }
     },
 

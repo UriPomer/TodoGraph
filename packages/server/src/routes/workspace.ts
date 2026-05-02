@@ -1,6 +1,7 @@
 import {
   MetaSchema,
   PageDataSchema,
+  placeMovedNodesOnTarget,
   type AllTasksItem,
   type AllTasksResponse,
   type Meta,
@@ -266,12 +267,24 @@ async function moveNodesBetweenPages(
   for (const id of toMove) {
     const n = byIdSrc.get(id)!;
     if (n.parentId && !toMove.has(n.parentId)) {
-      // 这个节点的父不跟着走 —— 把相对坐标转世界坐标，再清空 parentId
-      const p = byIdSrc.get(n.parentId);
+      // 这个节点的父不跟着走 —— 把相对坐标沿祖先链递归累加成世界坐标，再清空 parentId
+      let wx = n.x ?? 0;
+      let wy = n.y ?? 0;
+      let ancestorId: string | undefined = n.parentId;
+      const seen = new Set<string>([n.id]);
+      while (ancestorId && !seen.has(ancestorId)) {
+        seen.add(ancestorId);
+        const ancestor = byIdSrc.get(ancestorId);
+        if (!ancestor) break;
+        wx += ancestor.x ?? 0;
+        wy += ancestor.y ?? 0;
+        if (!ancestor.parentId || toMove.has(ancestor.parentId)) break;
+        ancestorId = ancestor.parentId;
+      }
       const copy: Task = {
         ...n,
-        x: (n.x ?? 0) + (p?.x ?? 0),
-        y: (n.y ?? 0) + (p?.y ?? 0),
+        x: wx,
+        y: wy,
       };
       delete copy.parentId;
       droppedParentLinks++;
@@ -300,8 +313,9 @@ async function moveNodesBetweenPages(
     nodes: source.nodes.filter((n) => !toMove.has(n.id)),
     edges: source.edges.filter((e) => !toMove.has(e.from) && !toMove.has(e.to)),
   };
+  const placedMovedNodes = placeMovedNodesOnTarget(target.nodes, movedNodes);
   const newTarget: PageData = {
-    nodes: [...target.nodes, ...movedNodes],
+    nodes: [...target.nodes, ...placedMovedNodes],
     edges: [...target.edges, ...movedEdges],
   };
 

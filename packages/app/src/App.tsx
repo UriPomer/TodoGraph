@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Toaster } from '@/components/ui/toaster';
+import { PageBar } from '@/components/PageBar';
 import { SplitPane } from '@/components/SplitPane';
 import { ThemeProvider } from '@/features/theme/ThemeProvider';
 import { ThemeSwitcher } from '@/features/theme/ThemeSwitcher';
@@ -110,6 +111,7 @@ export default function App() {
     <ThemeProvider>
       <div className="flex h-full flex-col">
         <Header tab={tab} onTab={setTab} />
+        <PageBar />
 
         {!loaded ? (
           <LoadingState />

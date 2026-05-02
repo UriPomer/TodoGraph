@@ -7,7 +7,7 @@ import { uid } from '@/lib/utils';
 import {
   GROUP_PADDING_X,
   GROUP_PADDING_Y,
-} from '@/features/graph/computeGroupSize';
+} from '@todograph/shared';
 import { useHistoryStore } from './useHistoryStore';
 
 interface TaskStore {

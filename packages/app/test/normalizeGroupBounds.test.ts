@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { pureNormalizeGroupBounds } from '@/stores/useTaskStore';
-import { GROUP_PADDING_X, GROUP_PADDING_Y } from '@/features/graph/computeGroupSize';
+import { GROUP_PADDING_X, GROUP_PADDING_Y } from '@todograph/shared';
 import type { Task } from '@todograph/shared';
 
 const mk = (id: string, x: number, y: number, parentId?: string): Task => ({

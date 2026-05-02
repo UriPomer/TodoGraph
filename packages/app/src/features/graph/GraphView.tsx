@@ -25,9 +25,21 @@ import {
 } from '@xyflow/react';
 import { Layout, Maximize2 } from 'lucide-react';
 import { wouldCreateCycle } from '@todograph/core';
+import type { Task } from '@todograph/shared';
+import {
+  type CollisionRect,
+  computeGroupSize,
+  GROUP_PADDING_X,
+  GROUP_PADDING_Y,
+  CHILD_DEFAULT_W,
+  CHILD_DEFAULT_H,
+  GROUP_MIN_W,
+  GROUP_MIN_H,
+} from '@todograph/shared';
 import { Button } from '@/components/ui/button';
 import { UndoRedoButtons } from '@/components/UndoRedoButtons';
 import { useTaskStore } from '@/stores/useTaskStore';
+import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import {
   MAX_HIERARCHY_DEPTH,
   depthOf,
@@ -40,15 +52,7 @@ import { MergeGhostNode, type MergeGhostData } from './MergeGhostNode';
 import { SelectionMenu, type SelectionMenuAction } from './SelectionMenu';
 import { InlineCreateInput } from './InlineCreateInput';
 import { dagreLayout } from './useAutoLayout';
-import {
-  computeGroupSize,
-  GROUP_PADDING_X,
-  GROUP_PADDING_Y,
-  CHILD_DEFAULT_W,
-  CHILD_DEFAULT_H,
-  GROUP_MIN_W,
-  GROUP_MIN_H,
-} from './computeGroupSize';
+import { resolvePinnedDropPushAway } from './dropCollision';
 
 const nodeTypes: NodeTypes = {
   task: TaskNode,
@@ -57,9 +61,9 @@ const nodeTypes: NodeTypes = {
 };
 
 /** hover 进入目标后多久才显示 ghost 合并预览（ms） */
-const MERGE_HOVER_MS = 500;
+const MERGE_HOVER_DEFAULT_MS = 500;
 /** 子节点中心离开父框后多久才真正 ungroup（ms）—— 期间父框显示红色抖动警告 */
-const UNGROUP_CONFIRM_MS = 600;
+const UNGROUP_CONFIRM_DEFAULT_MS = 600;
 /** 认定为「明显离开父框」所需的最小像素 —— 轻微拖动不触发 ungroup 提示 */
 const UNGROUP_ESCAPE_PX = 12;
 /** ghost overlay 的固定 id —— 用于在命中检测里排除自己 */
@@ -81,10 +85,15 @@ function GraphViewInner() {
   const normalizeGroupBounds = useTaskStore((s) => s.normalizeGroupBounds);
   const ascendOneLevel = useTaskStore((s) => s.ascendOneLevel);
   const setViewportCenter = useTaskStore((s) => s.setViewportCenter);
+  const workspaceMeta = useWorkspaceStore((s) => s.meta);
+  const moveNodesToPage = useWorkspaceStore((s) => s.moveNodesToPage);
 
   const { graph, readySet, recommended } = useDerived();
   const rf = useReactFlow();
   const containerRef = useRef<HTMLDivElement>(null);
+  const mergeHoverMs = workspaceMeta?.settings?.mergeHoverMs ?? MERGE_HOVER_DEFAULT_MS;
+  const ungroupConfirmMs =
+    workspaceMeta?.settings?.ungroupConfirmMs ?? UNGROUP_CONFIRM_DEFAULT_MS;
 
   // ===== 鼠标位置追踪（用于空格键新建节点） =====
   const lastMousePosRef = useRef({ x: 0, y: 0 });
@@ -418,6 +427,43 @@ function GraphViewInner() {
     [deleteTask],
   );
 
+  const resolveDropPushAway = useCallback(
+    (draggedNode: RFNode): Array<{ id: string; x: number; y: number }> => {
+      const draggedLocal = rfNodes.find((n) => n.id === draggedNode.id);
+      const pinned: CollisionRect = {
+        id: draggedNode.id,
+        x: draggedNode.position.x,
+        y: draggedNode.position.y,
+        w:
+          draggedNode.width ??
+          draggedLocal?.width ??
+          (draggedNode.type === 'group' ? GROUP_MIN_W : CHILD_DEFAULT_W),
+        h:
+          draggedNode.height ??
+          draggedLocal?.height ??
+          (draggedNode.type === 'group' ? GROUP_MIN_H : CHILD_DEFAULT_H),
+      };
+
+      const occupied: CollisionRect[] = rfNodes
+        .filter(
+          (n) =>
+            n.id !== draggedNode.id &&
+            n.parentId === draggedNode.parentId &&
+            n.id !== GHOST_ID,
+        )
+        .map((n) => ({
+          id: n.id,
+          x: n.position.x,
+          y: n.position.y,
+          w: n.width ?? (n.type === 'group' ? GROUP_MIN_W : CHILD_DEFAULT_W),
+          h: n.height ?? (n.type === 'group' ? GROUP_MIN_H : CHILD_DEFAULT_H),
+        }));
+
+      return resolvePinnedDropPushAway({ pinned, occupied });
+    },
+    [rfNodes],
+  );
+
   /**
    * 拖拽过程中：使用 React Flow 的 getIntersectingNodes 做命中检测。
    * 官方 API 已经内置了绝对坐标 + bounding box 计算，不需要手写 computeAbs。
@@ -469,7 +515,7 @@ function GraphViewInner() {
                 ? { ...s, mergeCandidatePending: null, mergeTarget: candidateId }
                 : s,
             );
-          }, MERGE_HOVER_MS);
+          }, mergeHoverMs);
         } else {
           setDragState((s) =>
             s && (s.mergeTarget || s.mergeCandidatePending)
@@ -503,7 +549,7 @@ function GraphViewInner() {
                   ? { ...s, ungroupFrom: parentId }
                   : s,
               );
-            }, UNGROUP_CONFIRM_MS);
+            }, ungroupConfirmMs);
           }
         } else {
           if (ungroupCandidateRef.current) {
@@ -515,7 +561,7 @@ function GraphViewInner() {
         }
       }
     },
-    [rf, nodes, isDescendantOf, clearMergeTimer, clearUngroupTimer],
+    [rf, nodes, isDescendantOf, clearMergeTimer, clearUngroupTimer, mergeHoverMs, ungroupConfirmMs],
   );
 
   const onNodeDragStart = useCallback(
@@ -533,9 +579,8 @@ function GraphViewInner() {
     (_evt: React.MouseEvent, draggedNode: RFNode) => {
       const dragId = draggedNode.id;
       const state = dragStateRef.current;
-      // 松手时若正好悬停在有效候选上 —— 即便 debounce 定时器还没触发，
-      // 也按"已确认"处理。否则手快用户会反复失败。
-      const mergeTarget = state?.mergeTarget ?? mergeCandidateRef.current ?? null;
+      // 只有进入确认态（ghost overlay 已出现）后松手，才允许真正挂到目标父下。
+      const mergeTarget = state?.mergeTarget ?? null;
       const ungroupFrom = state?.ungroupFrom ?? null;
 
       setDragState(null);
@@ -594,11 +639,23 @@ function GraphViewInner() {
         }
       }
 
+      const movedSiblings = resolveDropPushAway(draggedNode);
+      if (movedSiblings.length > 0) {
+        const movedById = new Map(movedSiblings.map((item) => [item.id, item]));
+        setRfNodes((prev) =>
+          prev.map((n) => {
+            const moved = movedById.get(n.id);
+            return moved ? { ...n, position: { x: moved.x, y: moved.y } } : n;
+          }),
+        );
+      }
+
       updateTasksBulk([
-        {
-          id: dragId,
-          patch: { x: draggedNode.position.x, y: draggedNode.position.y },
-        },
+        { id: dragId, patch: { x: draggedNode.position.x, y: draggedNode.position.y } },
+        ...movedSiblings.map((item) => ({
+          id: item.id,
+          patch: { x: item.x, y: item.y },
+        })),
       ]);
       // 子节点被拖到父框的左/上方（负相对坐标）会让父框无法包围 —— 归一化一次
       // 多层嵌套下：链路上所有祖先都需要跟着重算（否则祖父框不会跟着涨）
@@ -614,7 +671,7 @@ function GraphViewInner() {
         }
       }
     },
-    [rf, parentMap, setParent, ascendOneLevel, updateTasksBulk, normalizeGroupBounds, rfNodes, clearMergeTimer, clearUngroupTimer],
+    [rf, parentMap, setParent, ascendOneLevel, updateTasksBulk, normalizeGroupBounds, rfNodes, clearMergeTimer, clearUngroupTimer, resolveDropPushAway],
   );
 
   const isValidConnection = useCallback(
@@ -801,6 +858,10 @@ function GraphViewInner() {
     y: number;
     ids: string[];
   } | null>(null);
+  const selectedNodeIds = useMemo(
+    () => rfNodes.filter((n) => n.selected).map((n) => n.id),
+    [rfNodes],
+  );
 
   const onSelectionChange = useCallback((p: OnSelectionChangeParams) => {
     // 用 ref 同步写入，保证 onSelectionEnd 能读到最新值
@@ -822,6 +883,33 @@ function GraphViewInner() {
         : rect.top + rect.height / 2;
     setSelectionMenu({ x: cx - rect.left, y: cy - rect.top, ids: [...ids] });
   }, []);
+
+  const promptMoveSelectionToPage = useCallback(
+    async (idsInput?: string[]) => {
+      const ids = [...new Set(idsInput ?? selectedNodeIds)];
+      if (ids.length === 0) return;
+      if (!workspaceMeta) return;
+      const idSet = new Set(ids);
+      const selectedTasks = nodes.filter((n) => idSet.has(n.id));
+      const defaultTitle = pickDefaultMovePageTitle(selectedTasks, nodes);
+      const otherPages = workspaceMeta.pages.filter((page) => page.id !== workspaceMeta.activePageId);
+      const extra =
+        otherPages.length > 0
+          ? `\n已有页面：${otherPages.map((page) => page.title).join(' / ')}`
+          : '\n当前没有其它页面，将创建新页面';
+      const raw = prompt(`目标页面名称（已有则移动过去，不存在则新建）${extra}`, defaultTitle);
+      if (raw === null) return;
+      const title = raw.trim() || defaultTitle;
+      const existing = otherPages.find((page) => page.title === title);
+      if (existing) {
+        await moveNodesToPage(ids, { pageId: existing.id });
+      } else {
+        await moveNodesToPage(ids, { newPageTitle: title });
+      }
+      setSelectionMenu(null);
+    },
+    [selectedNodeIds, nodes, workspaceMeta, moveNodesToPage],
+  );
 
   const selectionActions: SelectionMenuAction[] = useMemo(() => {
     if (!selectionMenu) return [];
@@ -874,6 +962,13 @@ function GraphViewInner() {
         disabled: ids.length < 2 || !allHaveSameParent,
       },
       {
+        label: '移到页面',
+        hint: ids.length > 1 ? `${ids.length} 个` : '跨页',
+        onClick: () => {
+          void promptMoveSelectionToPage(ids);
+        },
+      },
+      {
         label: '删除选中',
         hint: `${ids.length} 个`,
         danger: true,
@@ -883,7 +978,7 @@ function GraphViewInner() {
         },
       },
     ];
-  }, [selectionMenu, nodes, groupTasks, setParent, updateTasksBulk, deleteTask]);
+  }, [selectionMenu, nodes, groupTasks, setParent, updateTasksBulk, deleteTask, promptMoveSelectionToPage]);
 
   return (
     <div ref={containerRef} className="relative h-full w-full" onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
@@ -906,6 +1001,16 @@ function GraphViewInner() {
         >
           <Maximize2 className="h-3.5 w-3.5" />
           适配
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7"
+          disabled={selectedNodeIds.length < 1}
+          onClick={() => void promptMoveSelectionToPage()}
+          title={selectedNodeIds.length < 1 ? '先选中节点' : '移到已有页面或新建页面'}
+        >
+          移到页面
         </Button>
       </div>
 
@@ -993,6 +1098,34 @@ function shallowEqualData(
   if (ak.length !== bk.length) return false;
   for (const k of ak) if (a[k] !== b[k]) return false;
   return true;
+}
+
+function pickDefaultMovePageTitle(selected: Task[], allNodes: Task[]): string {
+  if (selected.length === 0) return '新页面';
+  const byId = new Map(allNodes.map((node) => [node.id, node]));
+  const [first] = [...selected].sort((a, b) => {
+    const ap = worldPositionOf(a, byId);
+    const bp = worldPositionOf(b, byId);
+    return ap.y - bp.y || ap.x - bp.x || a.title.localeCompare(b.title);
+  });
+  return first?.title.trim() || '新页面';
+}
+
+function worldPositionOf(node: Task, byId: Map<string, Task>): { x: number; y: number } {
+  let x = node.x ?? 0;
+  let y = node.y ?? 0;
+  const seen = new Set<string>([node.id]);
+  let parentId = node.parentId;
+  while (parentId) {
+    if (seen.has(parentId)) break;
+    seen.add(parentId);
+    const parent = byId.get(parentId);
+    if (!parent) break;
+    x += parent.x ?? 0;
+    y += parent.y ?? 0;
+    parentId = parent.parentId;
+  }
+  return { x, y };
 }
 
 export function GraphView() {

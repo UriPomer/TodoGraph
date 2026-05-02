@@ -5,7 +5,7 @@ import {
   GROUP_PADDING_Y,
   GROUP_MIN_W,
   GROUP_MIN_H,
-} from '@/features/graph/computeGroupSize';
+} from '@todograph/shared';
 
 describe('computeGroupSize', () => {
   it('empty returns minimum size', () => {

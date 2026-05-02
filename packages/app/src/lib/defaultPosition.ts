@@ -3,7 +3,7 @@ import {
   GROUP_PADDING_X,
   GROUP_PADDING_Y,
   CHILD_DEFAULT_H,
-} from '@/features/graph/computeGroupSize';
+} from '@todograph/shared';
 
 /**
  * 新任务的默认落位策略。
