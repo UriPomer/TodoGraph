@@ -11,6 +11,7 @@ import { GraphView } from '@/features/graph/GraphView';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useDerived } from '@/hooks/useRecommendation';
+import { api } from '@/api/client';
 import { cn } from '@/lib/utils';
 
 /**
@@ -105,6 +106,21 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // 自动备份：每 60s 检查是否有新的 mutation，有则调用备份 API
+  useEffect(() => {
+    const BACKUP_INTERVAL_MS = 60_000;
+    const id = setInterval(() => {
+      const store = useTaskStore.getState();
+      if (!store.backupDirty || !store.activePageId) return;
+      api.createBackup(store.activePageId).then(() => {
+        store.markBackupDone();
+      }).catch((err) => {
+        console.warn('auto-backup failed', err);
+      });
+    }, BACKUP_INTERVAL_MS);
+    return () => clearInterval(id);
   }, []);
 
   return (

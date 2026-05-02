@@ -164,6 +164,17 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
   });
 
+  // ---- 自动备份：拷贝当前页面文件到 backups/ 目录 ----
+  app.post<{ Params: { id: string } }>('/api/pages/:id/backup', async (req, reply) => {
+    try {
+      await repo.createBackup(req.params.id);
+      return { ok: true };
+    } catch (err) {
+      reply.status(500);
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
   // ---- 跨页转移：自动带上整棵子树 ----
   app.post<{ Params: { id: string } }>('/api/pages/:id/move-nodes', async (req, reply) => {
     const parsed = MoveNodesBodySchema.safeParse(req.body);

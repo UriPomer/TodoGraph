@@ -87,6 +87,12 @@ interface TaskStore {
   undo: () => boolean;
   /** 重新应用 redo 栈顶的快照；返回是否真正发生前进。 */
   redo: () => boolean;
+
+  // ---- auto-backup ----
+  /** 自上次备份以来是否有新的 mutation。 */
+  backupDirty: boolean;
+  /** 标记备份已完成（清空 dirty 标记）。 */
+  markBackupDone: () => void;
 }
 
 const nextStatus: Record<TaskStatus, TaskStatus> = {
@@ -247,6 +253,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     const active = get().activePageId;
     if (!active) return;
     pendingPageId = active;
+    set({ backupDirty: true });
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveTimer = null;
@@ -278,6 +285,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     edges: [],
     loaded: false,
     viewportCenter: null,
+    backupDirty: false,
 
     setViewportCenter: (p) => set({ viewportCenter: p }),
 
@@ -291,6 +299,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
           nodes: g.nodes,
           edges: g.edges,
           loaded: true,
+          backupDirty: false,
         });
         // 页面切换 —— 历史栈清空
         useHistoryStore.getState().clear();
@@ -587,5 +596,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       scheduleSave();
       return true;
     },
+
+    markBackupDone: () => set({ backupDirty: false }),
   };
 });

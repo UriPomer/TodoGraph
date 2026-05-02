@@ -148,6 +148,29 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     return out;
   }
 
+  async createBackup(pageId: string): Promise<void> {
+    const src = this.pageFilePath(pageId);
+    const backupDir = path.join(this.dataDir, 'backups', pageId);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const dest = path.join(backupDir, `${ts}.json`);
+    await fs.mkdir(backupDir, { recursive: true });
+    await fs.copyFile(src, dest);
+
+    // 保留最近 50 份
+    const entries = await fs.readdir(backupDir);
+    const jsonFiles = entries
+      .filter((f) => f.endsWith('.json'))
+      .sort();
+    while (jsonFiles.length > 50) {
+      const oldest = jsonFiles.shift()!;
+      try {
+        await fs.unlink(path.join(backupDir, oldest));
+      } catch {
+        // 删不掉就跳过
+      }
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // internals
   // ---------------------------------------------------------------------------

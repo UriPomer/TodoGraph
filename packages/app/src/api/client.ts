@@ -131,6 +131,14 @@ export const api = {
     return MoveNodesResponseSchema.parse(data);
   },
 
+  async createBackup(pageId: string): Promise<void> {
+    const res = await fetch(
+      `${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/backup`,
+      { method: 'POST' },
+    );
+    await jsonOk(res);
+  },
+
   async loadAllTasks(): Promise<AllTasksResponse> {
     const res = await fetch(`${getApiBase()}/api/all-tasks`);
     const data = await json<unknown>(res);
