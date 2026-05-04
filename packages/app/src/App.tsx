@@ -13,13 +13,15 @@ import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useDerived } from '@/hooks/useRecommendation';
 import { api } from '@/api/client';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/features/auth/useAuth';
+import { LoginPage } from '@/features/auth/LoginPage';
 
 /**
  * 布局策略：
  * - 宽屏（>=1024px，Tailwind lg 断点）：左 List / 右 Graph 双栏并列，无需切换
  * - 窄屏：Header 上显示 Tabs，点击切换 List / Graph
  */
-function Header({ tab, onTab }: { tab: string; onTab: (v: string) => void }) {
+function Header({ tab, onTab, user, onLogout }: { tab: string; onTab: (v: string) => void; user: { username: string }; onLogout: () => void }) {
   const { recommended } = useDerived();
   return (
     <header className="flex h-12 shrink-0 items-center gap-4 border-b border-border bg-card px-4">
@@ -64,6 +66,8 @@ function Header({ tab, onTab }: { tab: string; onTab: (v: string) => void }) {
       </button>
 
       <ThemeSwitcher />
+      <span className="text-xs text-muted-foreground">{user.username}</span>
+      <button onClick={onLogout} className="text-xs text-muted-foreground hover:text-foreground transition-colors">退出</button>
     </header>
   );
 }
@@ -123,10 +127,15 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
+  // Auth gate: check login state
+  const { user, loading, logout } = useAuth();
+  if (loading) return <LoadingState />;
+  if (!user) return <LoginPage />;
+
   return (
     <ThemeProvider>
       <div className="flex h-full flex-col">
-        <Header tab={tab} onTab={setTab} />
+        <Header tab={tab} onTab={setTab} user={user} onLogout={logout} />
         <PageBar />
 
         {!loaded ? (
