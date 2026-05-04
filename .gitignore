@@ -21,6 +21,9 @@ packages/*/data/
 .env.local
 .env.*.local
 
+# ===== worktrees =====
+.worktrees/
+
 # ===== 编辑器 / IDE =====
 .vscode/
 .idea/
