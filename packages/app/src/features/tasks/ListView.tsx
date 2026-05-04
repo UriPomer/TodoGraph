@@ -109,6 +109,8 @@ export function ListView() {
 
   // ===== 拖拽开始（mousedown on TaskItem） =====
   const handleDragStart = useCallback((e: React.MouseEvent, task: Task) => {
+    // Touch devices: disable drag-to-reparent
+    if (window.matchMedia('(pointer: coarse)').matches) return;
     e.preventDefault(); // 防止文本选中
     const nativeEvent = e.nativeEvent;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();

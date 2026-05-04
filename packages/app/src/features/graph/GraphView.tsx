@@ -992,7 +992,7 @@ function GraphViewInner() {
   return (
     <div ref={containerRef} className="relative h-full w-full" onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
       <div className="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-lg border border-border bg-card/90 p-2 backdrop-blur">
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs text-muted-foreground hidden lg:inline">
           拖 <b>●</b> 连边；拖到空白处创建新节点；<kbd className="text-[10px]">Shift</kbd>+左键框选
         </span>
         <div className="mx-1 h-4 w-px bg-border" />

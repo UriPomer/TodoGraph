@@ -30,16 +30,6 @@ function Header({ tab, onTab, user, onLogout }: { tab: string; onTab: (v: string
         <span>TodoGraph</span>
       </div>
 
-      {/* 窄屏才显示 Tabs 切换；宽屏双栏并列不需要 */}
-      <div className="lg:hidden">
-        <Tabs value={tab} onValueChange={onTab}>
-          <TabsList>
-            <TabsTrigger value="list">列表视图</TabsTrigger>
-            <TabsTrigger value="graph">依赖图</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
-
       <button
         onClick={() => {
           if (!recommended) return;
@@ -155,7 +145,7 @@ export default function App() {
             </div>
 
             {/* ===== 窄屏：Tabs 切换 ===== */}
-            <div className="lg:hidden flex-1 min-h-0">
+            <div className="lg:hidden flex-1 min-h-0 pb-12">
               <Tabs value={tab} onValueChange={setTab} className="h-full">
                 <TabsContent value="list" className="h-full m-0 overflow-auto">
                   <ListView />
@@ -169,6 +159,27 @@ export default function App() {
         )}
 
         <Toaster />
+      </div>
+      {/* Narrow-screen bottom nav bar */}
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 flex border-t border-border bg-card/95 backdrop-blur">
+        <button
+          onClick={() => setTab('list')}
+          className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] transition-colors ${tab === 'list' ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground'}`}
+        >
+          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
+          </svg>
+          列表
+        </button>
+        <button
+          onClick={() => setTab('graph')}
+          className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] transition-colors ${tab === 'graph' ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground'}`}
+        >
+          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="6" cy="6" r="2" /><circle cx="18" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="6" cy="18" r="2" /><circle cx="18" cy="18" r="2" /><line x1="8" y1="6" x2="16" y2="5" /><line x1="8" y1="6" x2="10" y2="12" /><line x1="16" y1="5" x2="14" y2="12" /><line x1="10" y1="12" x2="6" y2="18" /><line x1="14" y1="12" x2="18" y2="18" />
+          </svg>
+          依赖图
+        </button>
       </div>
     </ThemeProvider>
   );

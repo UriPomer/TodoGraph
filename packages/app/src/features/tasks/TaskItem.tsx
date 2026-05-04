@@ -103,7 +103,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       )}
       style={{ paddingLeft: `${12 + depth * 20}px` }}
     >
-      <div className="flex items-center gap-3 py-1.5 pr-2">
+      <div className="flex items-center gap-3 py-1.5 pr-2 max-lg:min-h-[44px]">
       {/* 折叠/展开按钮 */}
       {hasChildren && (
         <button
@@ -286,7 +286,7 @@ function StatusDot({
     <button
       onClick={onClick}
       className={cn(
-        'relative flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full',
+        'relative flex shrink-0 items-center justify-center rounded-full h-[18px] w-[18px] max-lg:min-h-[28px] max-lg:min-w-[28px]',
         'transition-[transform,box-shadow] duration-150 ease-out',
         'hover:scale-110 active:scale-90',
         // 推荐项：细微的成功色光晕
