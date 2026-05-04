@@ -51,7 +51,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
 
   // Per-user workspace repo factory
   const getRepo = (userId: string): WorkspaceRepository =>
-    new FileWorkspaceRepository(path.join(opts.dataDir, 'users', userId));
+    new FileWorkspaceRepository(path.join(opts.dataDir, 'users', userId), opts.dataDir);
 
   // Workspace routes — pass factory, not a single repo
   await app.register(workspaceRoutes, { getRepo });

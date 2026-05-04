@@ -22,16 +22,21 @@ import { SEED_GRAPH } from './FileRepository.js';
  * 原子写：所有 writeFile 走 tmp+rename 模式，避免崩溃损坏主数据。
  */
 export class FileWorkspaceRepository implements WorkspaceRepository {
+  private readonly dataDir: string;
   private readonly metaPath: string;
   private readonly pagesDir: string;
   private readonly legacyPath: string;
   private readonly legacyBackupPath: string;
+  /** Old root-level data dir (pre-multi-user). If set and meta.json exists there, migrate it in. */
+  private readonly legacyV2Dir?: string;
 
-  constructor(private readonly dataDir: string) {
+  constructor(dataDir: string, legacyV2Dir?: string) {
+    this.dataDir = dataDir;
     this.metaPath = path.join(dataDir, 'meta.json');
     this.pagesDir = path.join(dataDir, 'pages');
     this.legacyPath = path.join(dataDir, 'tasks.json');
     this.legacyBackupPath = path.join(dataDir, 'tasks.json.v1.bak');
+    this.legacyV2Dir = legacyV2Dir;
   }
 
   async loadMeta(): Promise<Meta> {
@@ -42,7 +47,17 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== 'ENOENT') throw err;
-      // meta.json 不存在 → 执行一次性迁移
+      // meta.json 不存在 → 先尝试从旧根级目录迁移 v2 数据
+      if (this.legacyV2Dir) {
+        const legacyMetaPath = path.join(this.legacyV2Dir, 'meta.json');
+        try {
+          await fs.access(legacyMetaPath);
+          return await this.migrateFromLegacyV2(legacyMetaPath);
+        } catch {
+          // legacy v2 data doesn't exist either, fall through
+        }
+      }
+      // 无旧数据 → 执行 v1 迁移或 SEED
       return await this.migrateFromLegacyOrSeed();
     }
   }
@@ -188,6 +203,51 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     const tmp = target + '.tmp';
     await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf-8');
     await fs.rename(tmp, target);
+  }
+
+  /**
+   * 从旧的根级 v2 布局迁移（升级到多用户版）：
+   *   1. 复制旧 pages/ 目录到用户目录
+   *   2. 读旧 meta.json，调整路径
+   *   3. 备份旧 meta.json → meta.json.v2.bak（防止多用户重复迁移）
+   */
+  private async migrateFromLegacyV2(legacyMetaPath: string): Promise<Meta> {
+    const legacyDir = path.dirname(legacyMetaPath);
+    const legacyPagesDir = path.join(legacyDir, 'pages');
+
+    // 1. 复制页面文件
+    await fs.mkdir(this.pagesDir, { recursive: true });
+    try {
+      const entries = await fs.readdir(legacyPagesDir);
+      for (const entry of entries) {
+        if (entry.endsWith('.json')) {
+          await fs.copyFile(
+            path.join(legacyPagesDir, entry),
+            path.join(this.pagesDir, entry),
+          );
+        }
+      }
+    } catch {
+      // pages dir doesn't exist — use empty
+    }
+
+    // 2. 读旧 meta
+    const raw = await fs.readFile(legacyMetaPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    const meta = MetaSchema.parse(parsed);
+
+    // 3. 写新 meta（迁移完成标志）
+    await this.atomicWriteJson(this.metaPath, meta);
+
+    // 4. 备份旧 meta（防止第二个用户迁移同一份旧数据）
+    try {
+      await fs.rename(legacyMetaPath, legacyMetaPath + '.v2.bak');
+    } catch {
+      // rename failed, at least copy
+      try { await fs.copyFile(legacyMetaPath, legacyMetaPath + '.v2.bak'); } catch { /* best effort */ }
+    }
+
+    return meta;
   }
 
   /**

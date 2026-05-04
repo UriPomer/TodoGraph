@@ -67,9 +67,16 @@ export default function App() {
   const loaded = useWorkspaceStore((s) => s.loaded);
   const [tab, setTab] = useState('list');
 
+  // Auth gate: must check before any API calls to avoid 401 toasts on login page
+  const { user, loading, logout } = useAuth();
+
   useEffect(() => {
+    if (!user) return;
     void bootstrap();
-  }, [bootstrap]);
+  }, [bootstrap, user]);
+
+  if (loading) return <LoadingState />;
+  if (!user) return <LoginPage />;
 
   // 页面卸载 / 刷新前强制 flush pending 保存 —— 避免 250ms 防抖窗口内丢数据
   useEffect(() => {
@@ -116,11 +123,6 @@ export default function App() {
     }, BACKUP_INTERVAL_MS);
     return () => clearInterval(id);
   }, []);
-
-  // Auth gate: check login state
-  const { user, loading, logout } = useAuth();
-  if (loading) return <LoadingState />;
-  if (!user) return <LoginPage />;
 
   return (
     <ThemeProvider>
