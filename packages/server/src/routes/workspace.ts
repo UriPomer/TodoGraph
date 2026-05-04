@@ -15,7 +15,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { WorkspaceRepository } from '../repositories/Repository.js';
 
 interface Opts {
-  repo: WorkspaceRepository;
+  getRepo: (userId: string) => WorkspaceRepository;
 }
 
 const MoveNodesBodySchema = z.object({
@@ -54,19 +54,27 @@ interface AllTasksCache {
   response: AllTasksResponse;
 }
 
+const allCacheByUser = new Map<string, AllTasksCache | null>();
+
 export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
-  const { repo } = opts;
-  let allCache: AllTasksCache | null = null;
+  const { getRepo } = opts;
+  const getCache = (userId: string) => allCacheByUser.get(userId) ?? null;
+  const setCache = (userId: string, cache: AllTasksCache | null) => {
+    if (cache === null) allCacheByUser.delete(userId);
+    else allCacheByUser.set(userId, cache);
+  };
   const invalidateAll = () => {
-    allCache = null;
+    allCacheByUser.clear();
   };
 
   // ---- meta ----
-  app.get('/api/meta', async () => {
+  app.get('/api/meta', async (req) => {
+    const repo = getRepo(req.session.userId!);
     return repo.loadMeta();
   });
 
   app.patch('/api/meta/settings', async (req, reply) => {
+    const repo = getRepo(req.session.userId!);
     const parsed = UpdateSettingsBodySchema.safeParse(req.body);
     if (!parsed.success) {
       reply.status(400);
@@ -78,6 +86,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
   // ---- pages ----
   app.get<{ Params: { id: string } }>('/api/pages/:id', async (req, reply) => {
+    const repo = getRepo(req.session.userId!);
     try {
       return await repo.loadPage(req.params.id);
     } catch (err) {
@@ -91,6 +100,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   });
 
   app.put<{ Params: { id: string } }>('/api/pages/:id', async (req, reply) => {
+    const repo = getRepo(req.session.userId!);
     const parsed = PageDataSchema.safeParse(req.body);
     if (!parsed.success) {
       reply.status(400);
@@ -106,6 +116,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   });
 
   app.post('/api/pages', async (req, reply) => {
+    const repo = getRepo(req.session.userId!);
     const parsed = CreatePageBodySchema.safeParse(req.body);
     if (!parsed.success) {
       reply.status(400);
@@ -117,6 +128,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   });
 
   app.delete<{ Params: { id: string } }>('/api/pages/:id', async (req, reply) => {
+    const repo = getRepo(req.session.userId!);
     try {
       await repo.deletePage(req.params.id);
       invalidateAll();
@@ -128,6 +140,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   });
 
   app.patch<{ Params: { id: string } }>('/api/pages/:id', async (req, reply) => {
+    const repo = getRepo(req.session.userId!);
     const parsed = PatchPageBodySchema.safeParse(req.body);
     if (!parsed.success) {
       reply.status(400);
@@ -149,6 +162,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   });
 
   app.post('/api/pages/reorder', async (req, reply) => {
+    const repo = getRepo(req.session.userId!);
     const parsed = ReorderBodySchema.safeParse(req.body);
     if (!parsed.success) {
       reply.status(400);
@@ -166,6 +180,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
   // ---- 自动备份：拷贝当前页面文件到 backups/ 目录 ----
   app.post<{ Params: { id: string } }>('/api/pages/:id/backup', async (req, reply) => {
+    const repo = getRepo(req.session.userId!);
     try {
       await repo.createBackup(req.params.id);
       return { ok: true };
@@ -177,6 +192,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
   // ---- 跨页转移：自动带上整棵子树 ----
   app.post<{ Params: { id: string } }>('/api/pages/:id/move-nodes', async (req, reply) => {
+    const repo = getRepo(req.session.userId!);
     const parsed = MoveNodesBodySchema.safeParse(req.body);
     if (!parsed.success) {
       reply.status(400);
@@ -199,16 +215,19 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   });
 
   // ---- 全局任务聚合：左侧列表用 ----
-  app.get('/api/all-tasks', async (): Promise<AllTasksResponse> => {
+  app.get('/api/all-tasks', async (req): Promise<AllTasksResponse> => {
+    const userId = req.session.userId!;
+    const repo = getRepo(userId);
     const meta = await repo.loadMeta();
     const key = cacheKeyFromMeta(meta);
     const mtimes = await repo.listPageMtimes();
+    const cached = getCache(userId);
     if (
-      allCache &&
-      allCache.key === key &&
-      mtimes.every((m) => (allCache!.mtimes.get(m.pageId) ?? -1) >= m.mtimeMs)
+      cached &&
+      cached.key === key &&
+      mtimes.every((m) => (cached.mtimes.get(m.pageId) ?? -1) >= m.mtimeMs)
     ) {
-      return allCache.response;
+      return cached.response;
     }
     const tasks: AllTasksItem[] = [];
     for (const p of meta.pages) {
@@ -224,7 +243,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     const response: AllTasksResponse = { tasks };
     const mtimesMap = new Map<string, number>();
     for (const m of mtimes) mtimesMap.set(m.pageId, m.mtimeMs);
-    allCache = { key, mtimes: mtimesMap, response };
+    setCache(userId, { key, mtimes: mtimesMap, response });
     return response;
   });
 };

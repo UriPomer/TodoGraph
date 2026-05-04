@@ -1,11 +1,14 @@
 import { buildApp } from './app.js';
 import { resolveConfig } from './config.js';
-import { FileWorkspaceRepository } from './repositories/FileWorkspaceRepository.js';
 
 async function main(): Promise<void> {
   const cfg = resolveConfig();
-  const repo = new FileWorkspaceRepository(cfg.dataDir);
-  const app = await buildApp({ repo, staticDir: cfg.staticDir });
+  const app = await buildApp({
+    dataDir: cfg.dataDir,
+    staticDir: cfg.staticDir,
+    registrationKey: cfg.registrationKey,
+    sessionSecret: cfg.sessionSecret,
+  });
 
   try {
     const addr = await app.listen({ port: cfg.port, host: cfg.host });
