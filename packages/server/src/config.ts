@@ -22,6 +22,9 @@ export interface ServerConfig {
   sessionSecret: string;
 }
 
+/** dev 模式下的默认 session 密钥（仅本地开发用，生产必须通过 SESSION_SECRET 覆盖） */
+const DEV_SESSION_SECRET = 'todograph-dev-session-secret-do-not-use-in-production';
+
 export function resolveConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
   const cwd = process.cwd();
   // 兼容旧的 DATA_FILE：取其父目录；否则走 DATA_DIR / 默认 cwd/data
@@ -30,13 +33,14 @@ export function resolveConfig(overrides: Partial<ServerConfig> = {}): ServerConf
   const fallbackDir = legacyDataFile
     ? path.dirname(legacyDataFile)
     : path.join(cwd, 'data');
+  const isProd = !!process.env.STATIC_DIR;
   return {
     port: Number(process.env.PORT ?? 5173),
     host: process.env.HOST ?? '127.0.0.1',
     dataDir: envDataDir ?? fallbackDir,
     staticDir: process.env.STATIC_DIR,
     registrationKey: process.env.REGISTRATION_KEY ?? '',
-    sessionSecret: process.env.SESSION_SECRET ?? '',
+    sessionSecret: process.env.SESSION_SECRET || (isProd ? '' : DEV_SESSION_SECRET),
     ...overrides,
   };
 }
