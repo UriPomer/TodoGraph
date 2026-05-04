@@ -1,0 +1,11 @@
+node_modules
+dist
+out
+Build
+data
+.git
+.gitignore
+*.md
+!README.md
+.env
+.env.*

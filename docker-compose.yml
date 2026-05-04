@@ -1,0 +1,31 @@
+services:
+  todograph:
+    image: ghcr.io/uripomer/todograph:main
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persist data directory so container removal does not lose data
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - DATA_DIR=/app/data
+      - STATIC_DIR=/app/packages/app/dist
+      - REGISTRATION_KEY=
+      - SESSION_SECRET=
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    depends_on:
+      - todograph
+
+volumes:
+  caddy_data:
