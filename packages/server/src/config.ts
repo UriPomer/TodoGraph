@@ -16,6 +16,10 @@ export interface ServerConfig {
   dataDir: string;
   /** 生产模式下静态文件根目录（前端构建产物）。dev 下留空。 */
   staticDir?: string;
+  /** 新用户注册邀请码，空字符串 = 关闭注册（但首次启动无用户时忽略此限制） */
+  registrationKey: string;
+  /** @fastify/secure-session 的加密密钥，至少 32 字节 */
+  sessionSecret: string;
 }
 
 export function resolveConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
@@ -31,6 +35,8 @@ export function resolveConfig(overrides: Partial<ServerConfig> = {}): ServerConf
     host: process.env.HOST ?? '127.0.0.1',
     dataDir: envDataDir ?? fallbackDir,
     staticDir: process.env.STATIC_DIR,
+    registrationKey: process.env.REGISTRATION_KEY ?? '',
+    sessionSecret: process.env.SESSION_SECRET ?? '',
     ...overrides,
   };
 }
