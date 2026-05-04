@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { StoredUser, UserRepository } from './UserRepository.js';
+import { z } from 'zod';
+import { StoredUserSchema, type StoredUser, type UserRepository } from './UserRepository.js';
 
 export class FileUserRepository implements UserRepository {
   private filePath: string;
@@ -12,7 +13,8 @@ export class FileUserRepository implements UserRepository {
   async findAll(): Promise<StoredUser[]> {
     try {
       const raw = await fs.readFile(this.filePath, 'utf-8');
-      return JSON.parse(raw) as StoredUser[];
+      const parsed = JSON.parse(raw);
+      return z.array(StoredUserSchema).parse(parsed);
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException;
       if (e.code === 'ENOENT') return [];

@@ -22,11 +22,13 @@ describe('FileUserRepository', () => {
     expect(all).toEqual([]);
   });
 
-  it('creates and finds a user', async () => {
+  it('creates and finds a user by username and id', async () => {
     const user = { id: 'u1', username: 'alice', passwordHash: 'salt:hash', createdAt: new Date().toISOString() };
     await repo.create(user);
-    const found = await repo.findByUsername('alice');
-    expect(found).toEqual(user);
+    const byUsername = await repo.findByUsername('alice');
+    expect(byUsername).toEqual(user);
+    const byId = await repo.findById('u1');
+    expect(byId).toEqual(user);
   });
 
   it('returns null for non-existent user', async () => {
