@@ -24,6 +24,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/helmet": "^13.0.2",
+    "@fastify/rate-limit": "^10.3.0",
+    "@fastify/secure-session": "^8.3.0",
     "@fastify/static": "^8.0.3",
     "@todograph/core": "workspace:*",
     "@todograph/shared": "workspace:*",
