@@ -47,12 +47,16 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       return { ok: false, error: '用户名和密码不能为空' };
     }
     const user = await userRepo.findByUsername(username);
-    if (!user || !verifyPassword(password, user.passwordHash)) {
+    // Always run scryptSync to prevent timing-based user enumeration.
+    // When user doesn't exist, verify against a synthetic hash with identical cost.
+    const hash = user?.passwordHash ?? '00:00'; // dummy salt:hash, scryptSync runs the same
+    const ok = verifyPassword(password, hash) && user !== null;
+    if (!ok) {
       reply.status(401);
       return { ok: false, error: '用户名或密码错误' };
     }
-    req.session.userId = user.id;
-    return { ok: true, username: user.username };
+    req.session.userId = user!.id;
+    return { ok: true, username: user!.username };
   });
 
   // POST /api/auth/register
@@ -88,7 +92,7 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       reply.status(409);
       return { ok: false, error: '用户名已存在' };
     }
-    const id = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const id = 'u' + Date.now().toString(36) + randomBytes(8).toString('base64url');
     await userRepo.create({
       id,
       username,
