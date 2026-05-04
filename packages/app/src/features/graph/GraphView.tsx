@@ -687,7 +687,7 @@ function GraphViewInner() {
   // ===== 拖线到空白处创建新节点 =====
   // onConnect 只在两端都是 handle 时触发；落空不会触发。
   // onConnectEnd 无论落点在哪都会触发 —— 我们在此处判断落点是否是空白并创建。
-  const connectStartRef = useRef<{ nodeId: string } | null>(null);
+  const connectStartRef = useRef<{ nodeId: string; handleType: string | null } | null>(null);
   const [pendingCreate, setPendingCreate] = useState<{
     /** 屏幕坐标（相对于容器），用于定位输入框 */
     screenX: number;
@@ -696,11 +696,13 @@ function GraphViewInner() {
     flowX: number;
     flowY: number;
     fromId: string;
+    /** 从哪个 handle 拖出的：'source'（右侧）| 'target'（左侧） */
+    fromHandleType: string | null;
   } | null>(null);
 
   const onConnectStart = useCallback(
-    (_: unknown, params: { nodeId: string | null }) => {
-      connectStartRef.current = params.nodeId ? { nodeId: params.nodeId } : null;
+    (_: unknown, params: { nodeId: string | null; handleType: string | null }) => {
+      connectStartRef.current = params.nodeId ? { nodeId: params.nodeId, handleType: params.handleType } : null;
     },
     [],
   );
@@ -739,6 +741,7 @@ function GraphViewInner() {
         flowX: flow.x - 90,
         flowY: flow.y - 28,
         fromId: start.nodeId,
+        fromHandleType: start.handleType,
       });
     },
     [rf],
@@ -755,7 +758,13 @@ function GraphViewInner() {
       });
       // 空格键创建时 fromId 为空，不创建依赖边
       if (pendingCreate.fromId) {
-        addEdge(pendingCreate.fromId, task.id);
+        // 从右侧 source handle 拖出: 旧节点 → 新节点（旧阻碍新）
+        // 从左侧 target handle 拖出: 新节点 → 旧节点（新阻碍旧）
+        if (pendingCreate.fromHandleType === 'target') {
+          addEdge(task.id, pendingCreate.fromId);
+        } else {
+          addEdge(pendingCreate.fromId, task.id);
+        }
       }
       setPendingCreate(null);
     },
