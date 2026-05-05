@@ -22,8 +22,8 @@ export interface ServerConfig {
   sessionSecret: string;
 }
 
-/** dev 模式下的默认 session 密钥（仅本地开发用，生产必须通过 SESSION_SECRET 覆盖） */
-const DEV_SESSION_SECRET = 'todograph-dev-session-secret-do-not-use-in-production';
+/** dev 模式下的默认 session 密钥（仅本地开发用，32 字节，生产必须通过 SESSION_SECRET 覆盖） */
+const DEV_SESSION_SECRET = 'todograph-dev-key-01234567890123'; // exactly 32 bytes
 
 export function resolveConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
   const cwd = process.cwd();

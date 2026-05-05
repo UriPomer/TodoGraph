@@ -30,8 +30,8 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   });
 
   // Session (encrypted httpOnly cookie)
-  if (!opts.sessionSecret || opts.sessionSecret.length < 32) {
-    throw new Error('SESSION_SECRET must be at least 32 characters');
+  if (!opts.sessionSecret || Buffer.from(opts.sessionSecret).length !== 32) {
+    throw new Error('SESSION_SECRET must be exactly 32 bytes');
   }
   await app.register(fastifyCookie);
   await app.register(fastifySecureSession, {
