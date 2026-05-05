@@ -24,6 +24,9 @@ packages/*/data/
 # ===== worktrees =====
 .worktrees/
 
+# ===== Agent 中间产物，不提交 =====
+docs/superpowers/
+
 # ===== 编辑器 / IDE =====
 .vscode/
 .idea/
