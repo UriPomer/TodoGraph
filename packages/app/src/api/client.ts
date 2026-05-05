@@ -144,4 +144,10 @@ export const api = {
     const data = await json<unknown>(res);
     return AllTasksResponseSchema.parse(data);
   },
+
+  async exportMarkdown(): Promise<string> {
+    const res = await fetch(`${getApiBase()}/api/workspace/markdown`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.text();
+  },
 };

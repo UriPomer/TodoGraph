@@ -10,6 +10,7 @@ import {
 import { useDerived } from '@/hooks/useRecommendation';
 import { toast } from '@/components/ui/toaster-store';
 import { defaultPositionFor } from '@/lib/defaultPosition';
+import { CrossPageReady } from './CrossPageReady';
 import { TaskInput } from './TaskInput';
 import { TaskItem } from './TaskItem';
 
@@ -402,6 +403,8 @@ export function ListView() {
           onDragStart={handleDragStart}
           onAddChild={handleAddChild}
         />
+
+        <CrossPageReady />
       </div>
 
       {/* Ghost overlay：拖拽激活后跟随鼠标 */}

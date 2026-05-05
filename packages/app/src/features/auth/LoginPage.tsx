@@ -1,8 +1,11 @@
 import { useState, type FormEvent } from 'react';
-import { useAuth } from './useAuth';
 
-export function LoginPage() {
-  const { login, register, error: authError } = useAuth();
+interface Props {
+  onLogin: (username: string, password: string) => Promise<string | null>;
+  onRegister: (username: string, password: string, registrationKey: string) => Promise<string | null>;
+}
+
+export function LoginPage({ onLogin, onRegister }: Props) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -16,8 +19,8 @@ export function LoginPage() {
     setError(null);
     setBusy(true);
     const err = mode === 'login'
-      ? await login(username.trim(), password)
-      : await register(username.trim(), password, registrationKey.trim());
+      ? await onLogin(username.trim(), password)
+      : await onRegister(username.trim(), password, registrationKey.trim());
     if (err) setError(err);
     setBusy(false);
   };
@@ -71,8 +74,8 @@ export function LoginPage() {
             </div>
           )}
 
-          {(error || authError) && (
-            <p className="text-sm text-destructive">{error || authError}</p>
+          {error && (
+            <p className="text-sm text-destructive">{error}</p>
           )}
 
           <button

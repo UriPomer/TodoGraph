@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Download, Sparkles } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Toaster } from '@/components/ui/toaster';
 import { PageBar } from '@/components/PageBar';
@@ -56,6 +56,23 @@ function Header({ tab, onTab, user, onLogout }: { tab: string; onTab: (v: string
       </button>
 
       <ThemeSwitcher />
+      <button
+        onClick={async () => {
+          try {
+            const md = await api.exportMarkdown();
+            const blob = new Blob([md], { type: 'text/markdown' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `TodoGraph-${new Date().toISOString().slice(0, 10)}.md`;
+            a.click();
+            URL.revokeObjectURL(a.href);
+          } catch { /* ignore */ }
+        }}
+        className="text-muted-foreground hover:text-foreground transition-colors"
+        title="导出 Markdown"
+      >
+        <Download className="h-4 w-4" />
+      </button>
       <span className="text-xs text-muted-foreground">{user.username}</span>
       <button onClick={onLogout} className="text-xs text-muted-foreground hover:text-foreground transition-colors">退出</button>
     </header>
@@ -68,28 +85,29 @@ export default function App() {
   const [tab, setTab] = useState('list');
 
   // Auth gate: must check before any API calls to avoid 401 toasts on login page
-  const { user, loading, logout } = useAuth();
+  const { user, loading, login, register, logout } = useAuth();
+
+  // ===== ALL hooks must be called before any conditional return (Rules of Hooks) =====
 
   useEffect(() => {
     if (!user) return;
     void bootstrap();
   }, [bootstrap, user]);
 
-  if (loading) return <LoadingState />;
-  if (!user) return <LoginPage />;
-
   // 页面卸载 / 刷新前强制 flush pending 保存 —— 避免 250ms 防抖窗口内丢数据
   useEffect(() => {
+    if (!user) return;
     const onBeforeUnload = () => {
       void useTaskStore.getState().flush();
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, []);
+  }, [user]);
 
   // 全局快捷键：Cmd/Ctrl-Z 撤销、Cmd/Ctrl-Y 或 Cmd/Ctrl-Shift-Z 重做。
   // 输入框/文本域中时不劫持。
   useEffect(() => {
+    if (!user) return;
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       const tag = t?.tagName;
@@ -107,10 +125,11 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [user]);
 
   // 自动备份：每 60s 检查是否有新的 mutation，有则调用备份 API
   useEffect(() => {
+    if (!user) return;
     const BACKUP_INTERVAL_MS = 60_000;
     const id = setInterval(() => {
       const store = useTaskStore.getState();
@@ -122,7 +141,11 @@ export default function App() {
       });
     }, BACKUP_INTERVAL_MS);
     return () => clearInterval(id);
-  }, []);
+  }, [user]);
+
+  // ---- conditional returns after ALL hooks ----
+  if (loading) return <LoadingState />;
+  if (!user) return <LoginPage onLogin={login} onRegister={register} />;
 
   return (
     <ThemeProvider>

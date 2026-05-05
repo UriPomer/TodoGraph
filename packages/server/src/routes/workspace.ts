@@ -9,10 +9,11 @@ import {
   type PageData,
   type Task,
 } from '@todograph/shared';
-import { isDAG } from '@todograph/core';
+import { buildAdj, isDAG } from '@todograph/core';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import type { WorkspaceRepository } from '../repositories/Repository.js';
+import { generateWorkspaceMarkdown } from '../markdown.js';
 
 interface Opts {
   getRepo: (userId: string) => WorkspaceRepository;
@@ -233,8 +234,18 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     for (const p of meta.pages) {
       try {
         const pd = await repo.loadPage(p.id);
+        // 计算本页 ready 状态：status !== 'done' 且所有 edge 父节点均为 done
+        const { parents } = buildAdj(pd);
+        const byId = new Map(pd.nodes.map((n) => [n.id, n]));
+        const readySet = new Set<string>();
         for (const n of pd.nodes) {
-          tasks.push({ ...n, _pageId: p.id, _pageTitle: p.title });
+          if (n.status === 'done') continue;
+          const ps = parents.get(n.id);
+          const allParentsDone = !ps || [...ps].every((pid) => byId.get(pid)?.status === 'done');
+          if (allParentsDone) readySet.add(n.id);
+        }
+        for (const n of pd.nodes) {
+          tasks.push({ ...n, _pageId: p.id, _pageTitle: p.title, _ready: readySet.has(n.id) });
         }
       } catch (err) {
         app.log.warn({ pageId: p.id, err }, 'skipping page in all-tasks aggregation');
@@ -245,6 +256,16 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     for (const m of mtimes) mtimesMap.set(m.pageId, m.mtimeMs);
     setCache(userId, { key, mtimes: mtimesMap, response });
     return response;
+  });
+
+  // ---- workspace markdown export ----
+  app.get('/api/workspace/markdown', async (req, reply) => {
+    const repo = getRepo(req.session.userId!);
+    const meta = await repo.loadMeta();
+    const md = await generateWorkspaceMarkdown(meta.pages, (id) => repo.loadPage(id));
+    reply.header('Content-Type', 'text/plain; charset=utf-8');
+    reply.header('Content-Disposition', `inline; filename="TodoGraph-${new Date().toISOString().slice(0, 10)}.md"`);
+    return md;
   });
 };
 

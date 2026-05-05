@@ -90,6 +90,7 @@ export type Meta = z.infer<typeof MetaSchema>;
 export const AllTasksItemSchema = TaskSchema.extend({
   _pageId: z.string().min(1),
   _pageTitle: z.string(),
+  _ready: z.boolean(),
 });
 export const AllTasksResponseSchema = z.object({
   tasks: z.array(AllTasksItemSchema),
