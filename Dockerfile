@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:22-alpine AS builder
+FROM node:22-slim AS builder
 RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
 WORKDIR /build
 
@@ -20,11 +20,11 @@ COPY packages/server/src packages/server/src/
 COPY packages/app/tsconfig.json packages/app/tsconfig.node.json packages/app/vite.config.ts packages/app/tailwind.config.ts packages/app/postcss.config.js packages/app/index.html packages/app/
 COPY packages/app/src packages/app/src/
 
-RUN pnpm -r build
+RUN pnpm --filter @todograph/core --filter @todograph/shared --filter @todograph/server build
 RUN pnpm --filter @todograph/app build:web
 
 # Stage 2: Runtime
-FROM node:22-alpine
+FROM node:22-slim
 RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
 WORKDIR /app
 
