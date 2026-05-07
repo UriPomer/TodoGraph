@@ -42,7 +42,6 @@ export function TaskInput() {
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={onKey}
-        autoFocus
         className="h-8 border-transparent bg-transparent px-1 text-sm focus-visible:ring-0 focus-visible:border-border"
       />
       <Select value={priority} onValueChange={setPriority}>

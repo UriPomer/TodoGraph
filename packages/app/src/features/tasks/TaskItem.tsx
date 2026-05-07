@@ -94,7 +94,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         onDragStart?.(e, task);
       }}
       className={cn(
-        'group relative flex flex-col rounded-md',
+        'group relative flex flex-col rounded-md select-none',
         'transition-colors duration-150',
         'hover:bg-accent/40',
         isDragging && 'opacity-30 scale-[0.98]',
@@ -103,7 +103,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       )}
       style={{ paddingLeft: `${12 + depth * 20}px` }}
     >
-      <div className="flex items-center gap-3 py-1.5 pr-2 max-lg:min-h-[44px]">
+      <div className="flex items-center gap-2 py-1.5 pr-2 max-lg:min-h-[44px]">
       {/* 折叠/展开按钮 */}
       {hasChildren && (
         <button
@@ -122,7 +122,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         </button>
       )}
 
-      {!hasChildren && <span className="shrink-0 w-[18px]" />}<StatusDot
+      {!hasChildren && <span className="shrink-0 w-[10px]" />}<StatusDot
         status={task.status}
         recommended={recommended}
         onClick={() => toggleStatus(task.id)}
@@ -156,19 +156,17 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         </span>
       )}
 
-      {dependencyInfo && dependencyInfo.total > 0 && (
+      {dependencyInfo && dependencyInfo.undone > 0 && (
         <span
           className="text-[11px] text-muted-foreground/80 whitespace-nowrap"
-          title={dependencyInfo.parentTitles.map((t) => '• ' + t).join('\n')}
+          title={`还有 ${dependencyInfo.undone} 个前置未完成:\n${dependencyInfo.parentTitles.map((t) => '• ' + t).join('\n')}`}
         >
-          {dependencyInfo.undone > 0
-            ? `${dependencyInfo.undone}/${dependencyInfo.total}`
-            : `✓${dependencyInfo.total}`}
+          {dependencyInfo.undone}
         </span>
       )}
 
       {/* 优先级 & 删除：hover 或 focus 时浮现，保持视觉纯净 */}
-      <div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
+      <div className="flex items-center gap-1.5 opacity-0 max-lg:opacity-60 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 max-lg:group-hover:opacity-100">
         {onAddChild && depth < MAX_HIERARCHY_DEPTH - 1 && (
           <button
             onClick={(e) => {
@@ -223,9 +221,10 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
             if (confirm(`删除任务 "${task.title}"?`)) deleteTask(task.id);
           }}
           className={cn(
-            'shrink-0 text-muted-foreground rounded p-1',
+            'shrink-0 text-muted-foreground rounded p-1.5 ml-1',
             'transition-[color,transform,background-color] duration-150 ease-out',
             'hover:text-destructive hover:bg-destructive/10 active:scale-90',
+            'max-lg:min-h-[28px] max-lg:min-w-[28px]',
           )}
           title="删除"
         >
@@ -238,7 +237,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       {descExpanded && (
         <div
           className="pb-2 pr-2"
-          style={{ paddingLeft: `${12 + 18 + 18 + 12}px` /* 缩进对齐标题左边 */ }}
+          style={{ paddingLeft: `${10 + 14 + 16}px` }}
           onMouseDown={(e) => e.stopPropagation()}
         >
           <textarea
@@ -263,7 +262,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       {!descExpanded && task.description && (
         <p
           className="pb-1 pr-2 text-[11px] text-muted-foreground/80 line-clamp-1"
-          style={{ paddingLeft: `${12 + 18 + 18 + 12}px` }}
+          style={{ paddingLeft: `${10 + 14 + 16}px` }}
         >
           {task.description}
         </p>
@@ -286,7 +285,7 @@ function StatusDot({
     <button
       onClick={onClick}
       className={cn(
-        'relative flex shrink-0 items-center justify-center rounded-full h-[18px] w-[18px] max-lg:min-h-[28px] max-lg:min-w-[28px]',
+        'relative flex shrink-0 items-center justify-center rounded-full h-[14px] w-[14px]',
         'transition-[transform,box-shadow] duration-150 ease-out',
         'hover:scale-110 active:scale-90',
         // 推荐项：细微的成功色光晕

@@ -107,17 +107,12 @@ function GraphViewInner() {
       // 只在非输入框聚焦时响应
       if ((e.key === ' ' || e.key === 'Enter') && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
         e.preventDefault();
-        const rect = containerRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const screenX = lastMousePosRef.current.x - rect.left;
-        const screenY = lastMousePosRef.current.y - rect.top;
         const flow = rf.screenToFlowPosition(lastMousePosRef.current);
         setPendingCreate({
-          screenX,
-          screenY,
           flowX: flow.x - 90,
           flowY: flow.y - 28,
-          fromId: '', // 空格创建不关联依赖边
+          fromId: '',
+          fromHandleType: null,
         });
       }
     },
@@ -689,14 +684,9 @@ function GraphViewInner() {
   // onConnectEnd 无论落点在哪都会触发 —— 我们在此处判断落点是否是空白并创建。
   const connectStartRef = useRef<{ nodeId: string; handleType: string | null } | null>(null);
   const [pendingCreate, setPendingCreate] = useState<{
-    /** 屏幕坐标（相对于容器），用于定位输入框 */
-    screenX: number;
-    screenY: number;
-    /** 画布坐标，用于存储新节点位置 */
     flowX: number;
     flowY: number;
     fromId: string;
-    /** 从哪个 handle 拖出的：'source'（右侧）| 'target'（左侧） */
     fromHandleType: string | null;
   } | null>(null);
 
@@ -726,18 +716,18 @@ function GraphViewInner() {
       if (target?.closest('.react-flow__handle')) return;
       if (target?.closest('.react-flow__node')) return;
 
-      // 计算落点画布坐标
+      // 计算落点画布坐标（兼容 MouseEvent 和 TouchEvent）
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return;
-      const me = event as MouseEvent;
-      const cx = 'clientX' in me ? me.clientX : 0;
-      const cy = 'clientY' in me ? me.clientY : 0;
-      const screenX = cx - rect.left;
-      const screenY = cy - rect.top;
+      const isTouch = 'changedTouches' in event && (event as TouchEvent).changedTouches.length > 0;
+      const cx = isTouch
+        ? (event as TouchEvent).changedTouches[0]!.clientX
+        : (event as MouseEvent).clientX;
+      const cy = isTouch
+        ? (event as TouchEvent).changedTouches[0]!.clientY
+        : (event as MouseEvent).clientY;
       const flow = rf.screenToFlowPosition({ x: cx, y: cy });
       setPendingCreate({
-        screenX,
-        screenY,
         flowX: flow.x - 90,
         flowY: flow.y - 28,
         fromId: start.nodeId,
@@ -772,8 +762,56 @@ function GraphViewInner() {
   );
 
   const cancelPendingCreate = useCallback(() => {
-    // 空输入 → 什么都不创建
     setPendingCreate(null);
+  }, []);
+
+  // 手机端长按空白：创建节点。如果已有输入框则取消。
+  const touchTimerRef = useRef<number | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number; flowX: number; flowY: number } | null>(null);
+  const LONG_PRESS_MS = 500;
+  const LONG_PRESS_MOVE = 10;
+
+  const onContainerTouchStart = useCallback((e: React.TouchEvent) => {
+    // 点中节点/handle 不处理
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('.react-flow__node') || target?.closest('.react-flow__handle')) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const flow = rf.screenToFlowPosition({ x: touch.clientX, y: touch.clientY });
+    touchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      flowX: flow.x - 90,
+      flowY: flow.y - 28,
+    };
+    touchTimerRef.current = window.setTimeout(() => {
+      touchTimerRef.current = null;
+      const start = touchStartRef.current;
+      if (!start) return;
+      touchStartRef.current = null;
+      setPendingCreate((prev) => {
+        if (prev) return null; // 已有输入框 → 取消
+        return { flowX: start.flowX, flowY: start.flowY, fromId: '', fromHandleType: null };
+      });
+    }, LONG_PRESS_MS);
+  }, [rf]);
+
+  const onContainerTouchMove = useCallback((e: React.TouchEvent) => {
+    const start = touchStartRef.current;
+    if (!start) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    if (Math.abs(touch.clientX - start.x) > LONG_PRESS_MOVE ||
+        Math.abs(touch.clientY - start.y) > LONG_PRESS_MOVE) {
+      // 移动了 → 不是长按，取消
+      if (touchTimerRef.current) { clearTimeout(touchTimerRef.current); touchTimerRef.current = null; }
+      touchStartRef.current = null;
+    }
+  }, []);
+
+  const onContainerTouchEnd = useCallback(() => {
+    if (touchTimerRef.current) { clearTimeout(touchTimerRef.current); touchTimerRef.current = null; }
+    touchStartRef.current = null;
   }, []);
 
   const onEdgeClick = useCallback(
@@ -990,7 +1028,7 @@ function GraphViewInner() {
   }, [selectionMenu, nodes, groupTasks, setParent, updateTasksBulk, deleteTask, promptMoveSelectionToPage]);
 
   return (
-    <div ref={containerRef} className="relative h-full w-full" onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
+    <div ref={containerRef} className="relative h-full w-full" onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} onTouchStart={onContainerTouchStart} onTouchMove={onContainerTouchMove} onTouchEnd={onContainerTouchEnd} tabIndex={0}>
       <div className="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-lg border border-border bg-card/90 p-2 backdrop-blur">
         <span className="text-xs text-muted-foreground hidden lg:inline">
           拖 <b>●</b> 连边；拖到空白处创建新节点；<kbd className="text-[10px]">Shift</kbd>+左键框选
@@ -1047,7 +1085,8 @@ function GraphViewInner() {
         multiSelectionKeyCode={['Meta', 'Control']}
         // onlyRenderVisibleElements 需节点显式 width/height，否则首帧可能被误判到视口外。
         // 目前普通任务节点没有显式尺寸，保守起见不开启；改用 data 稳定化 + memo 缓解渲染开销。
-        defaultEdgeOptions={{ interactionWidth: 20 }}
+        connectionRadius={40}
+        defaultEdgeOptions={{ interactionWidth: 32 }}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         proOptions={{ hideAttribution: true }}
@@ -1078,8 +1117,6 @@ function GraphViewInner() {
 
       {pendingCreate && (
         <InlineCreateInput
-          x={pendingCreate.screenX}
-          y={pendingCreate.screenY}
           onCommit={commitPendingCreate}
           onCancel={cancelPendingCreate}
         />

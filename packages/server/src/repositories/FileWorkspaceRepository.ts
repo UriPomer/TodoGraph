@@ -274,7 +274,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
 
     // 步骤 1-2：建 default page
     const pageId = makePageId('默认');
-    const pageTitle = hasLegacy ? '默认' : '毕设示例';
+    const pageTitle = hasLegacy ? '默认' : '入门教程';
     await this.savePage(pageId, { nodes: seedGraph.nodes, edges: seedGraph.edges });
 
     // 步骤 3：备份老文件（仅当存在）

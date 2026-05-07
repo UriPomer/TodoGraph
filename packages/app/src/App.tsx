@@ -41,7 +41,7 @@ function Header({ tab, onTab, user, onLogout }: { tab: string; onTab: (v: string
           }, 50);
         }}
         className={cn(
-          'ml-auto flex max-w-[50vw] items-center gap-1.5 overflow-hidden rounded-md border border-border bg-background px-3 py-1.5 text-xs',
+          'ml-auto hidden lg:flex max-w-[50vw] items-center gap-1.5 overflow-hidden rounded-md border border-border bg-background px-3 py-1.5 text-xs',
           'transition-[background-color,border-color,transform,box-shadow] duration-150 ease-out',
           'hover:bg-accent hover:border-muted-foreground/40 active:scale-[0.97]',
           !recommended && 'opacity-50 pointer-events-none',

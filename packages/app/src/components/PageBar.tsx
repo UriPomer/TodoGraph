@@ -82,7 +82,7 @@ export function PageBar() {
               onDrop={(e) => handleDrop(e, page.id)}
               onDragEnd={handleDragEnd}
               className={cn(
-                'group flex shrink-0 items-center rounded-lg border transition-colors cursor-grab active:cursor-grabbing',
+                'group flex shrink-0 items-center rounded-lg border transition-colors cursor-grab active:cursor-grabbing select-none',
                 isDragging && 'opacity-40',
                 active
                   ? 'border-[hsl(var(--primary)/0.45)] bg-[hsl(var(--primary)/0.08)]'

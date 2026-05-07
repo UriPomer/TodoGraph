@@ -358,7 +358,7 @@ export function ListView() {
 
   return (
     <div className="h-full overflow-auto">
-      <div className="mx-auto w-full max-w-md px-4 py-5">
+      <div className="mx-auto w-full max-w-md px-4 py-5 pb-24">
         <TaskInput />
 
         <Section
@@ -487,12 +487,12 @@ interface SectionProps {
 function Section({ title, hint, items, recommendedId, depInfo, childMap, collapsed, onToggleCollapse, dragTaskId, dropTargetId, onDragStart, onAddChild, empty }: SectionProps) {
   return (
     <section className="mt-5 first:mt-6">
-      <h3 className="mb-1 flex items-baseline gap-2 px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+      <h3 className="mb-1 flex items-baseline gap-2 px-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
         <span>{title}</span>
         {hint && <span className="text-[10px] normal-case tracking-normal opacity-70">{hint}</span>}
       </h3>
       {items.length === 0 ? (
-        <p className="px-2 py-1.5 text-xs text-muted-foreground/50 italic">{empty ?? '空'}</p>
+        <p className="px-3 py-1.5 text-xs text-muted-foreground/50 italic">{empty ?? '空'}</p>
       ) : (
         <ul className="flex flex-col">
           {items.map(({ task, depth }) => {

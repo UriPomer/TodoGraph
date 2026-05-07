@@ -82,6 +82,20 @@
   border-color: hsl(var(--border));
 }
 
+/* 移动端输入框最小 16px 防止 iOS Safari 自动缩放 */
+@media (max-width: 1023px) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+}
+
+/* 触摸设备上禁止 sticky hover：手指离开后不再保持高亮 */
+@media (hover: none) and (pointer: coarse) {
+  [data-task-id]:hover {
+    background-color: transparent !important;
+  }
+}
+
 html,
 body,
 #root {
@@ -142,6 +156,18 @@ body {
   transition: fill 120ms ease-out;
 }
 
+/* 移动端：防止浏览器手势（双指缩放、下拉刷新等）干扰画布操作 */
+@media (max-width: 1023px) {
+  body {
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+.react-flow__pane {
+  touch-action: none;
+}
+
 .react-flow__edge-path {
   stroke: hsl(var(--muted-foreground));
   stroke-width: 1.5;
@@ -158,6 +184,24 @@ body {
   border: 2px solid hsl(var(--card));
   width: 10px;
   height: 10px;
+  /* 移动端增大 touch area 但视觉不变 */
+  touch-action: none;
+}
+
+/* 移动端：增大 handle 视觉尺寸，方便手指点按 */
+@media (max-width: 1023px) {
+  .react-flow__handle {
+    width: 16px;
+    height: 16px;
+    border-width: 3px;
+  }
+  /* 移动端 handle 更靠外以免被手指遮挡 */
+  .react-flow__handle-left {
+    left: -10px;
+  }
+  .react-flow__handle-right {
+    right: -10px;
+  }
 }
 .react-flow__attribution {
   background: transparent;
