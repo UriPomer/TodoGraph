@@ -361,15 +361,13 @@ export function ListView() {
 
   // ===== 下拉新建：scrollTop=0 时继续下拉超过阈值 → 聚焦顶部输入框 =====
   const scrollRef = useRef<HTMLDivElement>(null);
-  const pullRef = useRef<HTMLDivElement>(null);
-  const [pullDist, setPullDist] = useState(0); // 仅用于文字颜色切换（阈值前后）
+  const [pullDist, setPullDist] = useState(0);
   const [focusTrigger, setFocusTrigger] = useState(0);
   const PULL_THRESHOLD = 60;
 
   useEffect(() => {
     const el = scrollRef.current;
-    const indicator = pullRef.current;
-    if (!el || !indicator) return;
+    if (!el) return;
 
     let startY = 0;
     let pulling = false;
@@ -388,16 +386,10 @@ export function ListView() {
       if (dy > 0 && el.scrollTop <= 0) {
         e.preventDefault();
         dist = Math.min(dy * 0.5, 100);
-        // 直接操作 DOM — 不触发 React 重渲染
-        indicator.style.height = `${dist}px`;
-        // 文字颜色切换：只用 state 更新（低频）
-        if ((dist >= PULL_THRESHOLD) !== (pullDist >= PULL_THRESHOLD)) {
-          setPullDist(dist);
-        }
+        setPullDist(dist);
       } else if (dy <= 0) {
         pulling = false;
         dist = 0;
-        indicator.style.height = '0';
         setPullDist(0);
       }
     };
@@ -408,7 +400,6 @@ export function ListView() {
       if (dist >= PULL_THRESHOLD) {
         setFocusTrigger((n) => n + 1);
       }
-      indicator.style.height = '0';
       setPullDist(0);
     };
 
@@ -421,15 +412,14 @@ export function ListView() {
       el.removeEventListener('touchmove', onTouchMove);
       el.removeEventListener('touchend', onTouchEnd);
     };
-  }, [pullDist]);
+  }, []);
 
   return (
     <div ref={scrollRef} className="h-full overflow-auto">
-      {/* 下拉指示器：拉到顶部时继续下拉则展示。height 由 JS 直接操作 DOM */}
+      {/* 下拉指示器：拉到顶部时继续下拉则展示 */}
       <div
-        ref={pullRef}
-        className="flex items-center justify-center text-sm text-muted-foreground overflow-hidden will-change-[height]"
-        style={{ height: 0 }}
+        className="flex items-center justify-center text-sm text-muted-foreground transition-[height] duration-150 overflow-hidden"
+        style={{ height: pullDist > 0 ? `${pullDist}px` : 0 }}
       >
         <span className={pullDist >= PULL_THRESHOLD ? 'text-[hsl(var(--success))] font-semibold' : ''}>
           {pullDist >= PULL_THRESHOLD ? '松手新建' : '下拉新建'}
