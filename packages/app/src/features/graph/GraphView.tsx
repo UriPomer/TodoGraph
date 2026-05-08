@@ -53,6 +53,7 @@ import { SelectionMenu, type SelectionMenuAction } from './SelectionMenu';
 import { InlineCreateInput } from './InlineCreateInput';
 import { dagreLayout } from './useAutoLayout';
 import { resolvePinnedDropPushAway } from './dropCollision';
+import { useTouchManager } from './useTouchManager';
 
 const nodeTypes: NodeTypes = {
   task: TaskNode,
@@ -690,6 +691,16 @@ function GraphViewInner() {
     fromHandleType: string | null;
   } | null>(null);
 
+  // ===== 全局 pointer 位置追踪：解决 React Flow v12 移动端 onConnectEnd 不传原生事件的问题 =====
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      lastPointerRef.current = { x: e.clientX, y: e.clientY };
+    };
+    document.addEventListener('pointermove', onMove, { capture: true, passive: true });
+    return () => document.removeEventListener('pointermove', onMove, { capture: true });
+  }, []);
+
   const onConnectStart = useCallback(
     (_: unknown, params: { nodeId: string | null; handleType: string | null }) => {
       connectStartRef.current = params.nodeId ? { nodeId: params.nodeId, handleType: params.handleType } : null;
@@ -699,34 +710,28 @@ function GraphViewInner() {
 
   const onConnect = useCallback(
     (c: Connection) => {
-      if (c.source && c.target) addEdge(c.source, c.target);
+      if (c.source && c.target) {
+        connectStartRef.current = null; // 连线成功 → 阻止 onConnectEnd 再弹创建框
+        addEdge(c.source, c.target);
+      }
     },
     [addEdge],
   );
 
   const onConnectEnd = useCallback(
-    (event: MouseEvent | TouchEvent) => {
+    () => {
       const start = connectStartRef.current;
       connectStartRef.current = null;
       if (!start) return;
 
-      // 如果连到了某个节点的 handle，React Flow 会触发 onConnect；
-      // 这里判断 target 是否命中 handle/node，若命中则不处理
-      const target = event.target as HTMLElement | null;
-      if (target?.closest('.react-flow__handle')) return;
-      if (target?.closest('.react-flow__node')) return;
+      const pos = lastPointerRef.current;
+      if (!pos) return;
 
-      // 计算落点画布坐标（兼容 MouseEvent 和 TouchEvent）
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const isTouch = 'changedTouches' in event && (event as TouchEvent).changedTouches.length > 0;
-      const cx = isTouch
-        ? (event as TouchEvent).changedTouches[0]!.clientX
-        : (event as MouseEvent).clientX;
-      const cy = isTouch
-        ? (event as TouchEvent).changedTouches[0]!.clientY
-        : (event as MouseEvent).clientY;
-      const flow = rf.screenToFlowPosition({ x: cx, y: cy });
+      // 落点在 handle 或 node 上 → onConnect 已处理（或应该处理），不弹创建框
+      const el = document.elementFromPoint(pos.x, pos.y);
+      if (el?.closest('.react-flow__handle, .react-flow__node')) return;
+
+      const flow = rf.screenToFlowPosition({ x: pos.x, y: pos.y });
       setPendingCreate({
         flowX: flow.x - 90,
         flowY: flow.y - 28,
@@ -765,54 +770,24 @@ function GraphViewInner() {
     setPendingCreate(null);
   }, []);
 
-  // 手机端长按空白：创建节点。如果已有输入框则取消。
-  const touchTimerRef = useRef<number | null>(null);
-  const touchStartRef = useRef<{ x: number; y: number; flowX: number; flowY: number } | null>(null);
-  const LONG_PRESS_MS = 500;
-  const LONG_PRESS_MOVE = 10;
+  // 触控管理器：原生 passive:false 监听器，替代 React 合成事件
+  // 解决两个问题：① 系统长按菜单抢占 ② 长按空白建节点 ③ 已有输入框时再长按 → 取消
+  const hasPendingCreate = useCallback(() => pendingCreate !== null, [pendingCreate]);
+  const onLongPressBlank = useCallback(
+    (flowX: number, flowY: number) => {
+      setPendingCreate({ flowX, flowY, fromId: '', fromHandleType: null });
+    },
+    [],
+  );
+  const onCancelCreate = useCallback(() => setPendingCreate(null), []);
 
-  const onContainerTouchStart = useCallback((e: React.TouchEvent) => {
-    // 点中节点/handle 不处理
-    const target = e.target as HTMLElement | null;
-    if (target?.closest('.react-flow__node') || target?.closest('.react-flow__handle')) return;
-    const touch = e.touches[0];
-    if (!touch) return;
-    const flow = rf.screenToFlowPosition({ x: touch.clientX, y: touch.clientY });
-    touchStartRef.current = {
-      x: touch.clientX,
-      y: touch.clientY,
-      flowX: flow.x - 90,
-      flowY: flow.y - 28,
-    };
-    touchTimerRef.current = window.setTimeout(() => {
-      touchTimerRef.current = null;
-      const start = touchStartRef.current;
-      if (!start) return;
-      touchStartRef.current = null;
-      setPendingCreate((prev) => {
-        if (prev) return null; // 已有输入框 → 取消
-        return { flowX: start.flowX, flowY: start.flowY, fromId: '', fromHandleType: null };
-      });
-    }, LONG_PRESS_MS);
-  }, [rf]);
-
-  const onContainerTouchMove = useCallback((e: React.TouchEvent) => {
-    const start = touchStartRef.current;
-    if (!start) return;
-    const touch = e.touches[0];
-    if (!touch) return;
-    if (Math.abs(touch.clientX - start.x) > LONG_PRESS_MOVE ||
-        Math.abs(touch.clientY - start.y) > LONG_PRESS_MOVE) {
-      // 移动了 → 不是长按，取消
-      if (touchTimerRef.current) { clearTimeout(touchTimerRef.current); touchTimerRef.current = null; }
-      touchStartRef.current = null;
-    }
-  }, []);
-
-  const onContainerTouchEnd = useCallback(() => {
-    if (touchTimerRef.current) { clearTimeout(touchTimerRef.current); touchTimerRef.current = null; }
-    touchStartRef.current = null;
-  }, []);
+  useTouchManager({
+    containerRef,
+    rf,
+    hasPendingCreate,
+    onLongPressBlank,
+    onCancelPendingCreate: onCancelCreate,
+  });
 
   const onEdgeClick = useCallback(
     (_evt: React.MouseEvent, e: RFEdge) => {
@@ -1028,7 +1003,7 @@ function GraphViewInner() {
   }, [selectionMenu, nodes, groupTasks, setParent, updateTasksBulk, deleteTask, promptMoveSelectionToPage]);
 
   return (
-    <div ref={containerRef} className="relative h-full w-full" onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} onTouchStart={onContainerTouchStart} onTouchMove={onContainerTouchMove} onTouchEnd={onContainerTouchEnd} tabIndex={0}>
+    <div ref={containerRef} className="relative h-full w-full" style={{ touchAction: 'none', WebkitTouchCallout: 'none' }} onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
       <div className="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-lg border border-border bg-card/90 p-2 backdrop-blur">
         <span className="text-xs text-muted-foreground hidden lg:inline">
           拖 <b>●</b> 连边；拖到空白处创建新节点；<kbd className="text-[10px]">Shift</kbd>+左键框选
@@ -1085,7 +1060,7 @@ function GraphViewInner() {
         multiSelectionKeyCode={['Meta', 'Control']}
         // onlyRenderVisibleElements 需节点显式 width/height，否则首帧可能被误判到视口外。
         // 目前普通任务节点没有显式尺寸，保守起见不开启；改用 data 稳定化 + memo 缓解渲染开销。
-        connectionRadius={40}
+        connectionRadius={48}
         defaultEdgeOptions={{ interactionWidth: 32 }}
         fitView
         fitViewOptions={{ padding: 0.2 }}

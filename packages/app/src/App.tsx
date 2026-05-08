@@ -127,6 +127,13 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [user]);
 
+  // 修复 iOS Safari sticky hover：告知浏览器 JS 在监听触摸，:hover 会在手指抬起后正确清除
+  useEffect(() => {
+    const noop = () => {};
+    document.addEventListener('touchstart', noop, { passive: true });
+    return () => document.removeEventListener('touchstart', noop);
+  }, []);
+
   // 自动备份：每 60s 检查是否有新的 mutation，有则调用备份 API
   useEffect(() => {
     if (!user) return;
@@ -170,7 +177,7 @@ export default function App() {
             </div>
 
             {/* ===== 窄屏：Tabs 切换 ===== */}
-            <div className="lg:hidden flex-1 min-h-0 pb-12">
+            <div className="lg:hidden flex-1 min-h-0" style={{ paddingBottom: 'calc(3rem + env(safe-area-inset-bottom))' }}>
               <Tabs value={tab} onValueChange={setTab} className="h-full">
                 <TabsContent value="list" className="h-full m-0 overflow-auto">
                   <ListView />
@@ -186,7 +193,7 @@ export default function App() {
         <Toaster />
       </div>
       {/* Narrow-screen bottom nav bar */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 flex border-t border-border bg-card/95 backdrop-blur">
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 flex border-t border-border bg-card/95 backdrop-blur" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
         <button
           onClick={() => setTab('list')}
           className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] transition-colors ${tab === 'list' ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground'}`}

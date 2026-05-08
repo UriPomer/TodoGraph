@@ -166,7 +166,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       )}
 
       {/* 优先级 & 删除：hover 或 focus 时浮现，保持视觉纯净 */}
-      <div className="flex items-center gap-1.5 opacity-0 max-lg:opacity-60 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 max-lg:group-hover:opacity-100">
+      <div className="flex items-center gap-1.5 opacity-60 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
         {onAddChild && depth < MAX_HIERARCHY_DEPTH - 1 && (
           <button
             onClick={(e) => {
