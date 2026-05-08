@@ -155,6 +155,15 @@ body {
     overscroll-behavior: none;
     -webkit-overflow-scrolling: touch;
   }
+
+  /* 移动端动画性能：强制 GPU 合成层 */
+  .react-flow__pane,
+  .react-flow__node,
+  .react-flow__edge-path,
+  .will-change-transform {
+    will-change: transform;
+    transform: translateZ(0);
+  }
 }
 
 .react-flow__pane {

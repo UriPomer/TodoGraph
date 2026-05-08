@@ -88,9 +88,14 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
   };
 
   // ===== 移动端滑动手势：右滑完成 / 左滑删除 =====
-  const [swipeX, setSwipeX] = useState(0);
+  // 性能关键：touchmove 期间用 ref 直接操作 DOM，绕过 React 重渲染，确保 60fps
+  const [swipeX, setSwipeX] = useState(0); // 仅用于 touchend 后的归位动画
+  const swipeLayerRef = useRef<HTMLDivElement>(null);
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const swipeXRef = useRef(0); // touchmove 期间的当前偏移，供 touchend 读取
   const swipingRef = useRef(false);
+  const bgRightRef = useRef<HTMLDivElement>(null);
+  const bgLeftRef = useRef<HTMLDivElement>(null);
   const SWIPE_THRESHOLD = 60;
 
   const onSwipeStart = useCallback((e: React.TouchEvent) => {
@@ -113,14 +118,31 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
     // 带阻力：超过 100px 后减速
     const mag = Math.abs(dx);
     const clamped = mag > 100 ? 100 + (mag - 100) * 0.3 : mag;
-    setSwipeX(dx > 0 ? clamped : -clamped);
+    const offset = dx > 0 ? clamped : -clamped;
+    swipeXRef.current = offset;
+
+    // 直接操作 DOM — 不触发 React 重渲染
+    if (swipeLayerRef.current) {
+      swipeLayerRef.current.style.transform = `translateX(${offset}px)`;
+    }
+    // 背景指示器也用 DOM 操作
+    const opacity = Math.min(1, Math.max(0, (Math.abs(offset) - 20) / 40));
+    if (bgRightRef.current) bgRightRef.current.style.opacity = String(dx > 0 ? opacity : 0);
+    if (bgLeftRef.current) bgLeftRef.current.style.opacity = String(dx < 0 ? opacity : 0);
   }, []);
 
   const onSwipeEnd = useCallback(() => {
     swipeStartRef.current = null;
-    const dx = swipeX;
-    setSwipeX(0);
+    const dx = swipeXRef.current;
+    swipeXRef.current = 0;
     swipingRef.current = false;
+
+    // 触发 React state → CSS transition 归位动画
+    setSwipeX(0);
+
+    // 隐藏背景指示器
+    if (bgRightRef.current) bgRightRef.current.style.opacity = '0';
+    if (bgLeftRef.current) bgLeftRef.current.style.opacity = '0';
 
     if (dx > SWIPE_THRESHOLD) {
       if (toggleStatus(task.id)) {
@@ -132,7 +154,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       deleteTask(task.id);
       toast.action('已删除', '撤销', () => useTaskStore.getState().undo());
     }
-  }, [swipeX, toggleStatus, deleteTask, task.id]);
+  }, [toggleStatus, deleteTask, task.id]);
 
   return (
     <li
@@ -153,16 +175,17 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         task.status === 'done' && !isDragging && 'text-muted-foreground',
       )}
     >
-      {/* 滑动手势背景指示 */}
-      <div className="absolute inset-y-0 left-0 flex items-center pl-4 text-sm font-semibold text-[hsl(var(--success))] opacity-0 pointer-events-none" style={{ opacity: swipeX > 20 ? Math.min((swipeX - 20) / 40, 1) : 0 }}>
+      {/* 滑动手势背景指示 — opacity 由 onSwipeMove 直接操作 DOM */}
+      <div ref={bgRightRef} className="absolute inset-y-0 left-0 flex items-center pl-4 text-sm font-semibold text-[hsl(var(--success))] pointer-events-none" style={{ opacity: 0 }}>
         完成
       </div>
-      <div className="absolute inset-y-0 right-0 flex items-center pr-4 text-sm font-semibold text-destructive opacity-0 pointer-events-none" style={{ opacity: swipeX < -20 ? Math.min((-swipeX - 20) / 40, 1) : 0 }}>
+      <div ref={bgLeftRef} className="absolute inset-y-0 right-0 flex items-center pr-4 text-sm font-semibold text-destructive pointer-events-none" style={{ opacity: 0 }}>
         删除
       </div>
 
       <div
-        className="relative flex flex-col"
+        ref={swipeLayerRef}
+        className="relative flex flex-col will-change-transform"
         style={{
           paddingLeft: `${12 + depth * 20}px`,
           transform: `translateX(${swipeX}px)`,
