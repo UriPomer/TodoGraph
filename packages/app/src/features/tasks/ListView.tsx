@@ -359,15 +359,21 @@ export function ListView() {
     return { readyArr: ready, blockedArr: blocked, doneArr: done, depInfo: nextCache };
   }, [nodes, graph, readySet, recommended, childMap, collapsed]);
 
-  // ===== 下拉新建：scrollTop=0 时继续下拉超过阈值 → 聚焦顶部输入框 =====
+  // ===== 下拉新建：纯 GPU 动画，只用 transform/opacity（不触发 layout） =====
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [pullDist, setPullDist] = useState(0);
+  const pullRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [pullReady, setPullReady] = useState(false);
   const [focusTrigger, setFocusTrigger] = useState(0);
+  const pullReadyRef = useRef(false);
   const PULL_THRESHOLD = 60;
+  const PULL_MAX = 100;
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
+    const indicator = pullRef.current;
+    const content = contentRef.current;
+    if (!el || !indicator || !content) return;
 
     let startY = 0;
     let pulling = false;
@@ -385,12 +391,25 @@ export function ListView() {
       const dy = e.touches[0]!.clientY - startY;
       if (dy > 0 && el.scrollTop <= 0) {
         e.preventDefault();
-        dist = Math.min(dy * 0.5, 100);
-        setPullDist(dist);
+        dist = Math.min(dy * 0.5, PULL_MAX);
+        // 内容跟随手指下移（GPU composited，无 layout）
+        content.style.transition = 'none';
+        content.style.transform = `translateY(${dist}px)`;
+        // 指示器淡入 + 微视差
+        indicator.style.transition = 'none';
+        indicator.style.opacity = String(Math.min(1, dist / PULL_THRESHOLD));
+        indicator.style.transform = `translateY(${dist * 0.4}px)`;
+        const over = dist >= PULL_THRESHOLD;
+        if (over !== pullReadyRef.current) {
+          pullReadyRef.current = over;
+          setPullReady(over);
+        }
       } else if (dy <= 0) {
         pulling = false;
         dist = 0;
-        setPullDist(0);
+        resetPullDOM(content, indicator);
+        pullReadyRef.current = false;
+        setPullReady(false);
       }
     };
 
@@ -400,7 +419,14 @@ export function ListView() {
       if (dist >= PULL_THRESHOLD) {
         setFocusTrigger((n) => n + 1);
       }
-      setPullDist(0);
+      // 归位动画
+      content.style.transition = 'transform 0.2s ease-out';
+      content.style.transform = 'translateY(0px)';
+      indicator.style.transition = 'opacity 0.2s, transform 0.2s';
+      indicator.style.opacity = '0';
+      indicator.style.transform = `translateY(${INIT_INDICATOR_Y}px)`;
+      pullReadyRef.current = false;
+      setPullReady(false);
     };
 
     el.addEventListener('touchstart', onTouchStart, { passive: true });
@@ -414,18 +440,28 @@ export function ListView() {
     };
   }, []);
 
+  const INIT_INDICATOR_Y = -20;
+  function resetPullDOM(content: HTMLElement, indicator: HTMLElement) {
+    content.style.transition = 'none';
+    content.style.transform = 'translateY(0px)';
+    indicator.style.transition = 'none';
+    indicator.style.opacity = '0';
+    indicator.style.transform = `translateY(${INIT_INDICATOR_Y}px)`;
+  }
+
   return (
-    <div ref={scrollRef} className="h-full overflow-auto">
-      {/* 下拉指示器：拉到顶部时继续下拉则展示 */}
+    <div ref={scrollRef} className="relative h-full overflow-auto">
+      {/* 下拉指示器：绝对定位不占布局空间，opacity/translateY 动画由 JS 操作 DOM */}
       <div
-        className="flex items-center justify-center text-sm text-muted-foreground transition-[height] duration-150 overflow-hidden"
-        style={{ height: pullDist > 0 ? `${pullDist}px` : 0 }}
+        ref={pullRef}
+        className="absolute top-0 left-0 right-0 flex items-center justify-center text-sm text-muted-foreground will-change-transform will-change-[opacity]"
+        style={{ height: 60, opacity: 0, transform: 'translateY(-20px)' }}
       >
-        <span className={pullDist >= PULL_THRESHOLD ? 'text-[hsl(var(--success))] font-semibold' : ''}>
-          {pullDist >= PULL_THRESHOLD ? '松手新建' : '下拉新建'}
+        <span className={pullReady ? 'text-[hsl(var(--success))] font-semibold' : ''}>
+          {pullReady ? '松手新建' : '下拉新建'}
         </span>
       </div>
-      <div className="mx-auto w-full max-w-md px-4 py-5 pb-24">
+      <div ref={contentRef} className="will-change-transform mx-auto w-full max-w-md px-4 py-5 pb-24" style={{ transform: 'translateY(0px)' }}>
         <TaskInput focusTrigger={focusTrigger} />
 
         <Section
