@@ -312,7 +312,7 @@ export function ListView() {
           roots.push({ index: i, item });
         }
       }
-      // 按推荐/进行中/优先级排序顶层条目
+      // 按推荐/进行中/优先级排序顶层条目；同优先级时新建的排前面
       roots.sort((a, b) => {
         const aRec = a.item.task.id === recommended?.id ? 1 : 0;
         const bRec = b.item.task.id === recommended?.id ? 1 : 0;
@@ -320,7 +320,10 @@ export function ListView() {
         const aD = a.item.task.status === 'doing' ? 1 : 0;
         const bD = b.item.task.status === 'doing' ? 1 : 0;
         if (aD !== bD) return bD - aD;
-        return (b.item.task.priority ?? 0) - (a.item.task.priority ?? 0);
+        const p = (b.item.task.priority ?? 0) - (a.item.task.priority ?? 0);
+        if (p !== 0) return p;
+        // 同优先级：数组末尾（新建）的排前面
+        return b.index - a.index;
       });
       // 按排序后的顺序重组数组：每个排序后的根节点 + 其子树
       const result: FlatItem[] = [];
@@ -356,10 +359,74 @@ export function ListView() {
     return { readyArr: ready, blockedArr: blocked, doneArr: done, depInfo: nextCache };
   }, [nodes, graph, readySet, recommended, childMap, collapsed]);
 
+  // ===== 下拉新建：scrollTop=0 时继续下拉超过阈值 → 聚焦顶部输入框 =====
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [pullDist, setPullDist] = useState(0);
+  const [focusTrigger, setFocusTrigger] = useState(0);
+  const PULL_THRESHOLD = 60;
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    let startY = 0;
+    let pulling = false;
+    let dist = 0;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (el.scrollTop <= 0) {
+        startY = e.touches[0]!.clientY;
+        pulling = true;
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!pulling) return;
+      const dy = e.touches[0]!.clientY - startY;
+      if (dy > 0 && el.scrollTop <= 0) {
+        e.preventDefault();
+        dist = Math.min(dy * 0.5, 100);
+        setPullDist(dist);
+      } else if (dy <= 0) {
+        pulling = false;
+        dist = 0;
+        setPullDist(0);
+      }
+    };
+
+    const onTouchEnd = () => {
+      if (!pulling) return;
+      pulling = false;
+      if (dist >= PULL_THRESHOLD) {
+        setFocusTrigger((n) => n + 1);
+      }
+      setPullDist(0);
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd);
+
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+    };
+  }, []);
+
   return (
-    <div className="h-full overflow-auto">
+    <div ref={scrollRef} className="h-full overflow-auto">
+      {/* 下拉指示器：拉到顶部时继续下拉则展示 */}
+      <div
+        className="flex items-center justify-center text-sm text-muted-foreground transition-[height] duration-150 overflow-hidden"
+        style={{ height: pullDist > 0 ? `${pullDist}px` : 0 }}
+      >
+        <span className={pullDist >= PULL_THRESHOLD ? 'text-[hsl(var(--success))] font-semibold' : ''}>
+          {pullDist >= PULL_THRESHOLD ? '松手新建' : '下拉新建'}
+        </span>
+      </div>
       <div className="mx-auto w-full max-w-md px-4 py-5 pb-24">
-        <TaskInput />
+        <TaskInput focusTrigger={focusTrigger} />
 
         <Section
           title="Ready"

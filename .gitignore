@@ -24,6 +24,9 @@ packages/*/data/
 # ===== worktrees =====
 .worktrees/
 
+# ===== Claude Code =====
+.claude/
+
 # ===== Agent 中间产物，不提交 =====
 docs/superpowers/
 

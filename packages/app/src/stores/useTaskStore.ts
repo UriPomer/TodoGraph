@@ -43,7 +43,7 @@ interface TaskStore {
   deleteTask: (id: string) => void;
   /** 批量更新坐标等，避免每次 set 都触发订阅者重渲染。 */
   updateTasksBulk: (patches: Array<{ id: string; patch: Partial<Omit<Task, 'id'>> }>) => void;
-  toggleStatus: (id: string) => void;
+  toggleStatus: (id: string) => boolean;
   setStatus: (id: string, status: TaskStatus) => void;
 
   addEdge: (from: string, to: string) => boolean;
@@ -378,11 +378,20 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     },
 
     toggleStatus: (id) => {
+      const s = get();
+      const node = s.nodes.find((n) => n.id === id);
+      if (!node) return false;
+      // 如果要切换到 done，且该节点有未完成的子节点 → 阻止
+      if (node.status !== 'done') {
+        const hasUndoneChild = s.nodes.some((n) => n.parentId === id && n.status !== 'done');
+        if (hasUndoneChild) return false;
+      }
       pushPre();
-      set((s) => ({
-        nodes: s.nodes.map((n) => (n.id === id ? { ...n, status: nextStatus[n.status] } : n)),
+      set((s2) => ({
+        nodes: s2.nodes.map((n) => (n.id === id ? { ...n, status: nextStatus[n.status] } : n)),
       }));
       scheduleSave();
+      return true;
     },
 
     setStatus: (id, status) => {

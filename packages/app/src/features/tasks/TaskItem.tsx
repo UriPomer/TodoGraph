@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Check, ChevronRight, ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
 import type { Task } from '@todograph/shared';
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/select';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { MAX_HIERARCHY_DEPTH } from '@/stores/useTaskStore';
+import { toast } from '@/components/ui/toaster-store';
 
 interface Props {
   task: Task;
@@ -86,6 +87,53 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
     }
   };
 
+  // ===== 移动端滑动手势：右滑完成 / 左滑删除 =====
+  const [swipeX, setSwipeX] = useState(0);
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const swipingRef = useRef(false);
+  const SWIPE_THRESHOLD = 60;
+
+  const onSwipeStart = useCallback((e: React.TouchEvent) => {
+    swipeStartRef.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY };
+    swipingRef.current = false;
+  }, []);
+
+  const onSwipeMove = useCallback((e: React.TouchEvent) => {
+    const start = swipeStartRef.current;
+    if (!start) return;
+    const dx = e.touches[0]!.clientX - start.x;
+    const dy = e.touches[0]!.clientY - start.y;
+
+    if (!swipingRef.current) {
+      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+        swipingRef.current = true;
+      } else return;
+    }
+
+    // 带阻力：超过 100px 后减速
+    const mag = Math.abs(dx);
+    const clamped = mag > 100 ? 100 + (mag - 100) * 0.3 : mag;
+    setSwipeX(dx > 0 ? clamped : -clamped);
+  }, []);
+
+  const onSwipeEnd = useCallback(() => {
+    swipeStartRef.current = null;
+    const dx = swipeX;
+    setSwipeX(0);
+    swipingRef.current = false;
+
+    if (dx > SWIPE_THRESHOLD) {
+      if (toggleStatus(task.id)) {
+        toast.action('已完成', '撤销', () => useTaskStore.getState().undo());
+      } else {
+        toast.info('无法完成', '该任务下还有未完成的子任务');
+      }
+    } else if (dx < -SWIPE_THRESHOLD) {
+      deleteTask(task.id);
+      toast.action('已删除', '撤销', () => useTaskStore.getState().undo());
+    }
+  }, [swipeX, toggleStatus, deleteTask, task.id]);
+
   return (
     <li
       data-task-id={task.id}
@@ -93,16 +141,34 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         if (e.button !== 0) return; // 只响应左键
         onDragStart?.(e, task);
       }}
+      onTouchStart={onSwipeStart}
+      onTouchMove={onSwipeMove}
+      onTouchEnd={onSwipeEnd}
       className={cn(
-        'group relative flex flex-col rounded-md select-none',
+        'group relative flex flex-col rounded-md select-none overflow-hidden',
         'transition-colors duration-150',
         'hover:bg-accent/40',
         isDragging && 'opacity-30 scale-[0.98]',
         isDropTarget && 'bg-primary/10 border-l-2 border-primary',
         task.status === 'done' && !isDragging && 'text-muted-foreground',
       )}
-      style={{ paddingLeft: `${12 + depth * 20}px` }}
     >
+      {/* 滑动手势背景指示 */}
+      <div className="absolute inset-y-0 left-0 flex items-center pl-4 text-sm font-semibold text-[hsl(var(--success))] opacity-0 pointer-events-none" style={{ opacity: swipeX > 20 ? Math.min((swipeX - 20) / 40, 1) : 0 }}>
+        完成
+      </div>
+      <div className="absolute inset-y-0 right-0 flex items-center pr-4 text-sm font-semibold text-destructive opacity-0 pointer-events-none" style={{ opacity: swipeX < -20 ? Math.min((-swipeX - 20) / 40, 1) : 0 }}>
+        删除
+      </div>
+
+      <div
+        className="relative flex flex-col"
+        style={{
+          paddingLeft: `${12 + depth * 20}px`,
+          transform: `translateX(${swipeX}px)`,
+          transition: swipingRef.current ? 'none' : 'transform 0.2s ease-out',
+        }}
+      >
       <div className="flex items-center gap-2 py-1.5 pr-2 max-lg:min-h-[44px]">
       {/* 折叠/展开按钮 */}
       {hasChildren && (
@@ -125,7 +191,11 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       {!hasChildren && <span className="shrink-0 w-[10px]" />}<StatusDot
         status={task.status}
         recommended={recommended}
-        onClick={() => toggleStatus(task.id)}
+        onClick={() => {
+          if (!toggleStatus(task.id)) {
+            toast.info('无法完成', '该任务下还有未完成的子任务');
+          }
+        }}
       />
 
       {editing ? (
@@ -267,6 +337,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
           {task.description}
         </p>
       )}
+      </div>
     </li>
   );
 });
