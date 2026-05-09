@@ -10,7 +10,7 @@ import {
   type PageInfo,
   type WorkspaceSettings,
 } from '@todograph/shared';
-import type { WorkspaceRepository } from './Repository.js';
+import { type WorkspaceRepository, VersionConflictError } from './Repository.js';
 import { SEED_GRAPH } from './FileRepository.js';
 
 /**
@@ -69,9 +69,30 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     return PageDataSchema.parse(parsed);
   }
 
-  async savePage(pageId: string, data: PageData): Promise<void> {
+  async savePage(pageId: string, data: PageData, expectedVersion?: number): Promise<number> {
+    const filePath = this.pageFilePath(pageId);
+
+    // 读当前版本
+    let currentVersion = 0;
+    try {
+      const raw = await fs.readFile(filePath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      currentVersion = typeof parsed.version === 'number' ? parsed.version : 0;
+    } catch (err: unknown) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code !== 'ENOENT') throw err;
+      // 文件不存在 → version = 0
+    }
+
+    // 版本比对
+    if (expectedVersion !== undefined && expectedVersion !== currentVersion) {
+      throw new VersionConflictError(pageId, currentVersion);
+    }
+
+    const newVersion = currentVersion + 1;
     const valid = PageDataSchema.parse(data);
-    await this.atomicWriteJson(this.pageFilePath(pageId), valid);
+    await this.atomicWriteJson(filePath, { ...valid, version: newVersion });
+    return newVersion;
   }
 
   async createPage(title: string): Promise<PageInfo> {

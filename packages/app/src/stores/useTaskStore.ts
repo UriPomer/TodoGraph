@@ -13,6 +13,8 @@ import { useHistoryStore } from './useHistoryStore';
 interface TaskStore {
   /** 当前页的 pageId —— 供 scheduleSave/flush 使用。null 表示未加载任何页。 */
   activePageId: string | null;
+  /** 乐观锁版本号：loadPage 时从服务端获取，保存时带上，用于检测多设备冲突。 */
+  pageVersion: number;
   nodes: Task[];
   edges: Edge[];
   loaded: boolean;
@@ -34,7 +36,6 @@ interface TaskStore {
   // ---- mutators ----
   addTask: (input: {
     title: string;
-    priority?: number;
     x?: number;
     y?: number;
     parentId?: string;
@@ -240,12 +241,32 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     if (!pendingPageId) return;
     const pid = pendingPageId;
     pendingPageId = null;
-    const { nodes, edges } = get();
+    const { nodes, edges, pageVersion } = get();
     try {
-      await api.savePage(pid, { nodes, edges });
+      const { version: newVersion } = await api.savePage(pid, { nodes, edges }, pageVersion);
+      set({ pageVersion: newVersion });
       invalidateAllTasks?.();
     } catch (err) {
-      toast.error('保存失败', String((err as Error).message ?? err));
+      const e = err as Error & { conflict?: boolean; serverVersion?: number };
+      if (e.conflict) {
+        toast.error('保存冲突', '页面已被其他设备修改，已重新加载最新数据');
+        try {
+          const g = await api.loadPage(pid);
+          set({
+            activePageId: pid,
+            nodes: g.nodes,
+            edges: g.edges,
+            pageVersion: e.serverVersion ?? g.version ?? 0,
+            loaded: true,
+            backupDirty: false,
+          });
+          useHistoryStore.getState().clear();
+        } catch (_reloadErr) {
+          toast.error('重新加载失败', '请刷新页面');
+        }
+        return;
+      }
+      toast.error('保存失败', String(e.message ?? err));
     }
   };
 
@@ -281,6 +302,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
 
   return {
     activePageId: null,
+    pageVersion: 0,
     nodes: [],
     edges: [],
     loaded: false,
@@ -296,6 +318,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         const g = await api.loadPage(pageId);
         set({
           activePageId: pageId,
+          pageVersion: g.version ?? 0,
           nodes: g.nodes,
           edges: g.edges,
           loaded: true,
@@ -313,13 +336,12 @@ export const useTaskStore = create<TaskStore>((set, get) => {
 
     flush,
 
-    addTask: ({ title, priority = 2, x, y, parentId }) => {
+    addTask: ({ title, x, y, parentId }) => {
       pushPre();
       const t: Task = {
         id: uid(),
         title: title || '未命名',
         status: 'todo',
-        priority,
         x,
         y,
         ...(parentId ? { parentId } : {}),
@@ -534,7 +556,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
           id: uid(),
           title: opts?.title?.trim() || '新分组',
           status: 'todo',
-          priority: 2,
           x: minX - GROUP_PAD_X,
           y: minY - GROUP_PAD_Y,
         };

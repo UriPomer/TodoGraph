@@ -72,9 +72,8 @@ function renderTask(
 ) {
   const indent = '  '.repeat(depth);
   const done = task.status === 'done' ? 'x' : ' ';
-  const priority = task.priority === 3 ? ' 🔴' : task.priority === 1 ? ' 🟢' : '';
   const title = done === 'x' ? `~~${task.title}~~` : task.title;
-  lines.push(`${indent}- [${done}]${priority} ${title}`);
+  lines.push(`${indent}- [${done}] ${title}`);
 
   // Dependencies
   const ps = parents.get(task.id);

@@ -15,8 +15,7 @@ export interface RecommendationStrategy {
  * 默认策略：
  *  1) 只考虑 Ready 任务（依赖已全部完成）
  *  2) status=doing 的优先（用户已在处理）
- *  3) priority 高的优先（数值大=更高优先级）
- *  4) 下游任务数多的优先（解锁更多路径）
+ *  3) 下游任务数多的优先（解锁更多路径）
  */
 export const defaultStrategy: RecommendationStrategy = {
   name: 'default',
@@ -27,10 +26,9 @@ export const defaultStrategy: RecommendationStrategy = {
     const scored = ready.map((n) => ({
       node: n,
       doing: n.status === 'doing' ? 1 : 0,
-      pri: n.priority ?? 0,
       down: downstreamSet(adj, n.id).size,
     }));
-    scored.sort((a, b) => b.doing - a.doing || b.pri - a.pri || b.down - a.down);
+    scored.sort((a, b) => b.doing - a.doing || b.down - a.down);
     return scored.map((s) => s.node);
   },
 };

@@ -6,7 +6,6 @@ export const TaskSchema = z.object({
   id: z.string().min(1),
   title: z.string(),
   status: TaskStatusSchema,
-  priority: z.number().int().min(1).max(3).optional(),
   x: z.number().optional(),
   y: z.number().optional(),
   /**
@@ -45,6 +44,9 @@ export const GraphSchema = z.object({
  * 不能含跨页面 edge —— 服务端在 PUT/move-nodes 时保证。
  */
 export const PageDataSchema = z.object({
+  /** 乐观锁版本号：服务端每次保存时从磁盘读取并自增，客户端传入的版本仅用于比对。
+   *  optional —— 迁移/新建页面时服务端内部调用不传此字段，旧数据文件也缺此字段。 */
+  version: z.number().int().min(0).optional(),
   nodes: z.array(TaskSchema),
   edges: z.array(EdgeSchema),
 });

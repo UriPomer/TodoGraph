@@ -10,6 +10,16 @@ export interface GraphRepository {
   save(graph: Graph): Promise<void>;
 }
 
+export class VersionConflictError extends Error {
+  constructor(
+    public pageId: string,
+    public serverVersion: number,
+  ) {
+    super(`版本冲突：页面已被其他设备修改（服务端版本 ${serverVersion}），请刷新后重试`);
+    this.name = 'VersionConflictError';
+  }
+}
+
 /**
  * 工作区（多页面）持久化抽象。v2。
  *
@@ -17,6 +27,8 @@ export interface GraphRepository {
  *  - 原子写：页面/meta 文件的写入不能半途损坏（tmp+rename）。
  *  - 失败抛异常：调用方负责转成 HTTP 响应 / Toast。
  *  - 迁移幂等：没有 meta.json 才会跑迁移，跑完之后不会再跑。
+ *  - 乐观锁：savePage 可接受 expectedVersion 做版本比对，
+ *    不匹配时抛 VersionConflictError，防止多设备覆盖。
  */
 export interface WorkspaceRepository {
   /**
@@ -27,7 +39,11 @@ export interface WorkspaceRepository {
    */
   loadMeta(): Promise<Meta>;
   loadPage(pageId: string): Promise<PageData>;
-  savePage(pageId: string, data: PageData): Promise<void>;
+  /**
+   * 保存页面。若 expectedVersion 传入且与服务端版本不匹配，抛 VersionConflictError。
+   * 返回写入后的新版本号。
+   */
+  savePage(pageId: string, data: PageData, expectedVersion?: number): Promise<number>;
   createPage(title: string): Promise<PageInfo>;
   deletePage(pageId: string): Promise<void>;
   renamePage(pageId: string, title: string): Promise<void>;

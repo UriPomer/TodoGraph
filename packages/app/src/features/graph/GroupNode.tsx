@@ -3,12 +3,12 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTaskStore } from '@/stores/useTaskStore';
+import { dialog } from '@/components/ui/dialog-store';
 import type { TaskStatus } from '@todograph/shared';
 
 export interface GroupNodeData extends Record<string, unknown> {
   title: string;
   status: TaskStatus;
-  priority?: number;
   ready?: boolean;
   recommended?: boolean;
   description?: string;
@@ -57,11 +57,10 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
         d.isUngroupWarn && 'border-[hsl(var(--destructive))] group-ungroup-warn',
       )}
       title={d.description || undefined}
-      onDoubleClick={(e) => {
-        // 双击 group 的 body 区域编辑描述；header 的 dblclick 会 stopPropagation 走标题编辑
+      onDoubleClick={async (e) => {
         e.stopPropagation();
         const cur = d.description ?? '';
-        const next = prompt('编辑分组描述:', cur);
+        const next = await dialog.prompt('编辑分组描述', { defaultValue: cur, placeholder: '分组描述...' });
         if (next !== null && next !== cur) {
           updateTask(id, { description: next === '' ? undefined : next });
         }
@@ -117,10 +116,10 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
             'flex-1 min-w-0 truncate text-sm font-medium select-none cursor-text',
             d.status === 'done' && 'line-through text-muted-foreground',
           )}
-          onDoubleClick={(e) => {
+          onDoubleClick={async (e) => {
             e.stopPropagation();
-            const t = prompt('编辑分组标题:', d.title);
-            if (t && t.trim() && t !== d.title) updateTask(id, { title: t.trim() });
+            const t = await dialog.prompt('编辑分组标题', { defaultValue: d.title });
+            if (t !== null && t.trim() && t !== d.title) updateTask(id, { title: t.trim() });
           }}
           title="双击编辑标题"
         >

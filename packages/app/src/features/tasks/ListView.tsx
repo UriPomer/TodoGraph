@@ -257,7 +257,7 @@ export function ListView() {
         const aD = a.task.status === 'doing' ? 1 : 0;
         const bD = b.task.status === 'doing' ? 1 : 0;
         if (aD !== bD) return bD - aD;
-        return (b.task.priority ?? 0) - (a.task.priority ?? 0);
+        return 0;
       });
 
     // 分离顶层节点和子节点
@@ -312,7 +312,7 @@ export function ListView() {
           roots.push({ index: i, item });
         }
       }
-      // 按推荐/进行中/优先级排序顶层条目；同优先级时新建的排前面
+      // 按推荐/进行中排序顶层条目；同状态时新建的排前面
       roots.sort((a, b) => {
         const aRec = a.item.task.id === recommended?.id ? 1 : 0;
         const bRec = b.item.task.id === recommended?.id ? 1 : 0;
@@ -320,9 +320,6 @@ export function ListView() {
         const aD = a.item.task.status === 'doing' ? 1 : 0;
         const bD = b.item.task.status === 'doing' ? 1 : 0;
         if (aD !== bD) return bD - aD;
-        const p = (b.item.task.priority ?? 0) - (a.item.task.priority ?? 0);
-        if (p !== 0) return p;
-        // 同优先级：数组末尾（新建）的排前面
         return b.index - a.index;
       });
       // 按排序后的顺序重组数组：每个排序后的根节点 + 其子树
@@ -450,7 +447,7 @@ export function ListView() {
   }
 
   return (
-    <div ref={scrollRef} className="relative h-full overflow-auto">
+    <div ref={scrollRef} className="relative h-full overflow-auto" style={{ overscrollBehaviorY: 'contain' }}>
       {/* 下拉指示器：绝对定位不占布局空间，opacity/translateY 动画由 JS 操作 DOM */}
       <div
         ref={pullRef}
@@ -534,16 +531,22 @@ export function ListView() {
   );
 }
 
-/** 在被拖行左侧绘制一条蓝色竖线 —— 用 rAF 读取 DOM rect 跟踪位置。 */
+/** 在被拖行左侧绘制一条蓝色竖线 —— 纯 DOM rAF 跟踪，零 React 渲染开销 */
 function UnparentIndicator({ taskId }: { taskId: string }) {
-  const [rect, setRect] = useState<{ top: number; left: number; height: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let raf = 0;
     const tick = () => {
       const el = document.querySelector(`[data-task-id="${taskId}"]`);
-      if (el) {
+      const indicator = ref.current;
+      if (el && indicator) {
         const r = (el as HTMLElement).getBoundingClientRect();
-        setRect({ top: r.top, left: r.left, height: r.height });
+        indicator.style.left = `${r.left + 12}px`;
+        indicator.style.top = `${r.top + 2}px`;
+        indicator.style.height = `${r.height - 4}px`;
+        indicator.style.display = '';
+      } else if (indicator) {
+        indicator.style.display = 'none';
       }
       raf = requestAnimationFrame(tick);
     };
@@ -551,17 +554,11 @@ function UnparentIndicator({ taskId }: { taskId: string }) {
     return () => cancelAnimationFrame(raf);
   }, [taskId]);
 
-  if (!rect) return null;
   return (
     <div
+      ref={ref}
       className="fixed pointer-events-none z-[60] w-[3px] rounded-sm bg-[hsl(var(--primary))] shadow-[0_0_8px_hsl(var(--primary)/0.6)]"
-      style={{
-        // depth=0 的缩进起点（与 TaskItem 的 paddingLeft 基础 12px 对齐）
-        left: rect.left + 12,
-        top: rect.top + 2,
-        height: rect.height - 4,
-        animation: 'unparentPulse 0.9s ease-in-out infinite',
-      }}
+      style={{ display: 'none', animation: 'unparentPulse 0.9s ease-in-out infinite' }}
     />
   );
 }

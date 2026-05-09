@@ -23,33 +23,20 @@ describe('defaultStrategy / recommend', () => {
   it('prefers doing over todo', () => {
     const graph = g(
       [
-        { id: 'a', title: 'a', status: 'todo', priority: 3 },
-        { id: 'b', title: 'b', status: 'doing', priority: 1 },
+        { id: 'a', title: 'a', status: 'todo' },
+        { id: 'b', title: 'b', status: 'doing' },
       ],
       [],
     );
     expect(recommend(graph)?.id).toBe('b');
   });
 
-  it('prefers higher priority among same status', () => {
-    const graph = g(
-      [
-        { id: 'a', title: 'a', status: 'todo', priority: 1 },
-        { id: 'b', title: 'b', status: 'todo', priority: 3 },
-        { id: 'c', title: 'c', status: 'todo', priority: 2 },
-      ],
-      [],
-    );
-    const rank = rankRecommendations(graph).map((n) => n.id);
-    expect(rank).toEqual(['b', 'c', 'a']);
-  });
-
   it('tiebreaks by downstream count', () => {
-    // 两个同优先级的 ready，拥有更多下游的应排在前
+    // 两个同状态 ready，拥有更多下游的应排在前
     const graph = g(
       [
-        { id: 'a', title: 'a', status: 'todo', priority: 2 },
-        { id: 'b', title: 'b', status: 'todo', priority: 2 },
+        { id: 'a', title: 'a', status: 'todo' },
+        { id: 'b', title: 'b', status: 'todo' },
         { id: 'c', title: 'c', status: 'todo' },
         { id: 'd', title: 'd', status: 'todo' },
       ],

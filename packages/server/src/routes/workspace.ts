@@ -12,7 +12,7 @@ import {
 import { buildAdj, isDAG } from '@todograph/core';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
-import type { WorkspaceRepository } from '../repositories/Repository.js';
+import { type WorkspaceRepository, VersionConflictError } from '../repositories/Repository.js';
 import { generateWorkspaceMarkdown } from '../markdown.js';
 
 interface Opts {
@@ -102,6 +102,8 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
   app.put<{ Params: { id: string } }>('/api/pages/:id', async (req, reply) => {
     const repo = getRepo(req.session.userId!);
+    const body = req.body as Record<string, unknown> | null;
+    const expectedVersion = typeof body?.expectedVersion === 'number' ? body.expectedVersion : undefined;
     const parsed = PageDataSchema.safeParse(req.body);
     if (!parsed.success) {
       reply.status(400);
@@ -111,9 +113,17 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       reply.status(400);
       return { ok: false, error: 'graph contains a cycle' };
     }
-    await repo.savePage(req.params.id, parsed.data);
-    invalidateAll();
-    return { ok: true };
+    try {
+      const newVersion = await repo.savePage(req.params.id, parsed.data, expectedVersion);
+      invalidateAll();
+      return { ok: true, version: newVersion };
+    } catch (err) {
+      if (err instanceof VersionConflictError) {
+        reply.status(409);
+        return { ok: false, error: err.message, serverVersion: err.serverVersion };
+      }
+      throw err;
+    }
   });
 
   app.post('/api/pages', async (req, reply) => {

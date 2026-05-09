@@ -6,7 +6,7 @@ import { useTaskStore } from '@/stores/useTaskStore';
 /**
  * 订阅 nodes/edges 变化，实时计算 ready 与 recommended。
  *
- * 关键性能优化：readyTasks 与 recommend 只关心 id/status/priority/edges——
+ * 关键性能优化：readyTasks 与 recommend 只关心 id/status/edges——
  * 不关心 x/y。把它们从 nodes 中"投影"出来做一个稳定签名，避免拖动时
  * 每帧重新跑拓扑排序，这是大图下创建新节点卡死的根因之一。
  */
@@ -16,7 +16,7 @@ export function useDerived() {
 
   // 把与派生计算相关的字段做一个浅签名（拖动 x/y 不会改变它）
   const signature = useMemo(
-    () => nodes.map((n) => `${n.id}|${n.status}|${n.priority ?? 2}`).join(','),
+    () => nodes.map((n) => `${n.id}|${n.status}`).join(','),
     [nodes],
   );
   const edgeSig = useMemo(

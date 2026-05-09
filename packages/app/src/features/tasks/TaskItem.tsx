@@ -3,16 +3,10 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Check, ChevronRight, ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
 import type { Task } from '@todograph/shared';
 import { cn } from '@/lib/utils';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { MAX_HIERARCHY_DEPTH } from '@/stores/useTaskStore';
 import { toast } from '@/components/ui/toaster-store';
+import { dialog } from '@/components/ui/dialog-store';
 
 interface Props {
   task: Task;
@@ -299,23 +293,13 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
           <FileText className="h-3.5 w-3.5" />
         </button>
 
-        <Select
-          value={String(task.priority ?? 2)}
-          onValueChange={(v) => updateTask(task.id, { priority: Number(v) })}
-        >
-          <SelectTrigger className="h-6 w-[56px] text-[11px] border-transparent bg-transparent hover:bg-accent">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="3">高</SelectItem>
-            <SelectItem value="2">中</SelectItem>
-            <SelectItem value="1">低</SelectItem>
-          </SelectContent>
-        </Select>
-
         <button
-          onClick={() => {
-            if (confirm(`删除任务 "${task.title}"?`)) deleteTask(task.id);
+          onClick={async () => {
+            const ok = await dialog.confirm(`删除「${task.title}」`, {
+              description: '删除后可从撤销 toast 恢复',
+              danger: true,
+            });
+            if (ok) deleteTask(task.id);
           }}
           className={cn(
             'shrink-0 text-muted-foreground rounded p-1.5 ml-1',

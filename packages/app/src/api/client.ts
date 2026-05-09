@@ -61,13 +61,30 @@ export const api = {
     return PageDataSchema.parse(data);
   },
 
-  async savePage(pageId: string, data: PageData): Promise<void> {
+  async savePage(
+    pageId: string,
+    data: PageData,
+    expectedVersion?: number,
+  ): Promise<{ version: number }> {
     const res = await fetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, expectedVersion }),
     });
-    await jsonOk(res);
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({})) as { serverVersion?: number };
+      const err = new Error('版本冲突：页面已被其他设备修改') as Error & { conflict: boolean; serverVersion?: number };
+      err.conflict = true;
+      err.serverVersion = body.serverVersion;
+      throw err;
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+    }
+    const body = await res.json() as { ok?: boolean; version?: number };
+    if (body.ok === false) throw new Error('save failed');
+    return { version: body.version ?? 0 };
   },
 
   async createPage(title: string): Promise<PageInfo> {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Download, Sparkles } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Toaster } from '@/components/ui/toaster';
+import { DialogContainer } from '@/components/ui/dialog-container';
 import { PageBar } from '@/components/PageBar';
 import { SplitPane } from '@/components/SplitPane';
 import { ThemeProvider } from '@/features/theme/ThemeProvider';
@@ -191,6 +192,7 @@ export default function App() {
         )}
 
         <Toaster />
+        <DialogContainer />
       </div>
       {/* Narrow-screen bottom nav bar */}
       <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 flex border-t border-border bg-card/95 backdrop-blur" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>

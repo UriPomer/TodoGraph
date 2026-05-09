@@ -50,6 +50,7 @@ import { TaskNode, type TaskNodeData } from './TaskNode';
 import { GroupNode, type GroupNodeData } from './GroupNode';
 import { MergeGhostNode, type MergeGhostData } from './MergeGhostNode';
 import { SelectionMenu, type SelectionMenuAction } from './SelectionMenu';
+import { dialog } from '@/components/ui/dialog-store';
 import { InlineCreateInput } from './InlineCreateInput';
 import { dagreLayout } from './useAutoLayout';
 import { resolvePinnedDropPushAway } from './dropCollision';
@@ -275,7 +276,6 @@ function GraphViewInner() {
           ? ({
               title: n.title,
               status: n.status,
-              priority: n.priority,
               ready: readySet.has(n.id),
               recommended: recommended?.id === n.id,
               childrenCount: parentMap.get(n.id)?.length ?? 0,
@@ -284,7 +284,6 @@ function GraphViewInner() {
           : ({
               title: n.title,
               status: n.status,
-              priority: n.priority,
               ready: readySet.has(n.id),
               recommended: recommended?.id === n.id,
               description: n.description,
@@ -747,7 +746,6 @@ function GraphViewInner() {
       if (!pendingCreate) return;
       const task = addTask({
         title,
-        priority: 2,
         x: pendingCreate.flowX,
         y: pendingCreate.flowY,
       });
@@ -790,8 +788,9 @@ function GraphViewInner() {
   });
 
   const onEdgeClick = useCallback(
-    (_evt: React.MouseEvent, e: RFEdge) => {
-      if (confirm('删除这条依赖?')) removeEdge(e.source, e.target);
+    async (_evt: React.MouseEvent, e: RFEdge) => {
+      const ok = await dialog.confirm('删除这条依赖?', { danger: true });
+      if (ok) removeEdge(e.source, e.target);
     },
     [removeEdge],
   );
@@ -915,11 +914,13 @@ function GraphViewInner() {
       const selectedTasks = nodes.filter((n) => idSet.has(n.id));
       const defaultTitle = pickDefaultMovePageTitle(selectedTasks, nodes);
       const otherPages = workspaceMeta.pages.filter((page) => page.id !== workspaceMeta.activePageId);
-      const extra =
-        otherPages.length > 0
-          ? `\n已有页面：${otherPages.map((page) => page.title).join(' / ')}`
-          : '\n当前没有其它页面，将创建新页面';
-      const raw = prompt(`目标页面名称（已有则移动过去，不存在则新建）${extra}`, defaultTitle);
+      const raw = await dialog.prompt(
+        '移到页面',
+        {
+          defaultValue: defaultTitle,
+          placeholder: `已有：${otherPages.map((p) => p.title).join(' / ')}` || '输入新页面名称',
+        },
+      );
       if (raw === null) return;
       const title = raw.trim() || defaultTitle;
       const existing = otherPages.find((page) => page.title === title);
@@ -946,9 +947,9 @@ function GraphViewInner() {
       {
         label: `归入新分组 (${ids.length})`,
         hint: '创建父任务',
-        onClick: () => {
-          const title = prompt('分组名称:', '新分组');
-          if (title === null) return; // 取消
+        onClick: async () => {
+          const title = await dialog.prompt('分组名称', { defaultValue: '新分组' });
+          if (title === null) return;
           groupTasks(ids, { title: title || '新分组' });
         },
         disabled: ids.length < 2,
@@ -994,8 +995,9 @@ function GraphViewInner() {
         label: '删除选中',
         hint: `${ids.length} 个`,
         danger: true,
-        onClick: () => {
-          if (!confirm(`删除选中的 ${ids.length} 个任务?`)) return;
+        onClick: async () => {
+          const ok = await dialog.confirm(`删除选中的 ${ids.length} 个任务`, { danger: true });
+          if (!ok) return;
           for (const id of ids) deleteTask(id);
         },
       },

@@ -3,12 +3,12 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Check, Trash2, Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTaskStore } from '@/stores/useTaskStore';
+import { dialog } from '@/components/ui/dialog-store';
 import type { TaskStatus } from '@todograph/shared';
 
 export interface TaskNodeData extends Record<string, unknown> {
   title: string;
   status: TaskStatus;
-  priority?: number;
   ready?: boolean;
   recommended?: boolean;
   description?: string;
@@ -122,10 +122,10 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
             'shrink-0 opacity-0 transition-[opacity,color,transform] duration-150 ease-out',
             'group-hover:opacity-60 hover:!opacity-100 hover:text-destructive hover:scale-110 active:scale-90',
           )}
-          onClick={(e) => {
+          onClick={async (e) => {
             e.stopPropagation();
             const cur = d.description ?? '';
-            const next = prompt('编辑描述:', cur);
+            const next = await dialog.prompt('编辑描述', { defaultValue: cur, placeholder: '任务描述...' });
             if (next !== null && next !== cur) {
               updateTask(id, { description: next === '' ? undefined : next });
             }
@@ -141,9 +141,10 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
           'shrink-0 opacity-0 transition-[opacity,color,transform] duration-150 ease-out',
           'group-hover:opacity-60 hover:!opacity-100 hover:text-destructive hover:scale-110 active:scale-90',
         )}
-        onClick={(e) => {
+        onClick={async (e) => {
           e.stopPropagation();
-          if (confirm(`删除 "${d.title}"?`)) deleteTask(id);
+          const ok = await dialog.confirm(`删除「${d.title}」`, { danger: true });
+          if (ok) deleteTask(id);
         }}
         title="删除"
       >

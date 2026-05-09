@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
+import { dialog } from '@/components/ui/dialog-store';
 
 export function PageBar() {
   const meta = useWorkspaceStore((s) => s.meta);
@@ -60,7 +61,7 @@ export function PageBar() {
 
   const handleCreatePage = async () => {
     const fallbackTitle = `页面 ${pages.length + 1}`;
-    const title = prompt('新页面名称:', fallbackTitle);
+    const title = await dialog.prompt('新页面名称', { defaultValue: fallbackTitle, placeholder: '输入页面名称' });
     if (title === null) return;
     const info = await createPage(title.trim() || fallbackTitle);
     if (info) await switchPage(info.id);
@@ -121,8 +122,8 @@ export function PageBar() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
                   <DropdownMenuItem
-                    onSelect={() => {
-                      const next = prompt('重命名页面:', page.title);
+                    onSelect={async () => {
+                      const next = await dialog.prompt('重命名页面', { defaultValue: page.title, placeholder: '输入新名称' });
                       if (next === null) return;
                       const title = next.trim();
                       if (!title || title === page.title) return;
@@ -134,8 +135,9 @@ export function PageBar() {
                   <DropdownMenuItem
                     disabled={disableDelete}
                     className="text-destructive focus:text-destructive"
-                    onSelect={() => {
-                      if (!confirm(`删除页面 "${page.title}"?`)) return;
+                    onSelect={async () => {
+                      const ok = await dialog.confirm(`删除页面「${page.title}」`, { danger: true });
+                      if (!ok) return;
                       void deletePage(page.id);
                     }}
                   >
