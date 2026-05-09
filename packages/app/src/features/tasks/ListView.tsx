@@ -447,7 +447,7 @@ export function ListView() {
   }
 
   return (
-    <div ref={scrollRef} className="relative h-full overflow-auto" style={{ overscrollBehaviorY: 'contain' }}>
+    <div ref={scrollRef} className="relative h-full overflow-auto" style={{ overscrollBehaviorY: 'contain', touchAction: 'pan-y' }}>
       {/* 下拉指示器：绝对定位不占布局空间，opacity/translateY 动画由 JS 操作 DOM */}
       <div
         ref={pullRef}

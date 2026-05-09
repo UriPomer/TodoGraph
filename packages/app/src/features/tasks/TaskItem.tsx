@@ -91,12 +91,34 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
   const swipingRef = useRef(false);
   const SWIPE_THRESHOLD = 60;
 
+  const cancelSwipeDOM = () => {
+    const el = swipeLayerRef.current;
+    if (el) {
+      el.style.transition = 'transform 0.2s ease-out';
+      el.style.transform = 'translateX(0px)';
+    }
+    if (bgRightRef.current) bgRightRef.current.style.opacity = '0';
+    if (bgLeftRef.current) bgLeftRef.current.style.opacity = '0';
+  };
+
   const onSwipeStart = useCallback((e: React.TouchEvent) => {
+    // 多指触控（双指缩放等）不触发滑动
+    if (e.touches.length > 1) return;
     swipeStartRef.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY };
     swipingRef.current = false;
   }, []);
 
   const onSwipeMove = useCallback((e: React.TouchEvent) => {
+    // 多指触控：取消当前滑动
+    if (e.touches.length > 1) {
+      if (swipingRef.current || swipeStartRef.current) {
+        swipeStartRef.current = null;
+        swipingRef.current = false;
+        swipeOffsetRef.current = 0;
+        cancelSwipeDOM();
+      }
+      return;
+    }
     const start = swipeStartRef.current;
     if (!start) return;
     const dx = e.touches[0]!.clientX - start.x;
@@ -105,7 +127,6 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
     if (!swipingRef.current) {
       if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
         swipingRef.current = true;
-        // 首次进入 swipe 态：禁用 CSS transition，防止手指落后于动画
         const el = swipeLayerRef.current;
         if (el) el.style.transition = 'none';
       } else return;
@@ -116,33 +137,31 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
     const offset = dx > 0 ? clamped : -clamped;
     swipeOffsetRef.current = offset;
 
-    // 直接操作 DOM — 不触发 React 渲染
     const el = swipeLayerRef.current;
     if (el) el.style.transform = `translateX(${offset}px)`;
 
-    // 背景指示器也跟着手指淡入
     const opacity = Math.min(1, Math.max(0, (Math.abs(offset) - 20) / 40));
     if (bgRightRef.current) bgRightRef.current.style.opacity = String(dx > 0 ? opacity : 0);
     if (bgLeftRef.current) bgLeftRef.current.style.opacity = String(dx < 0 ? opacity : 0);
   }, []);
 
-  const onSwipeEnd = useCallback(() => {
+  const onSwipeEnd = useCallback((e: React.TouchEvent) => {
+    // 仍有手指在屏幕上（双指缩放中一根手指抬起）：取消滑动
+    if (e.touches.length > 0) {
+      swipeStartRef.current = null;
+      swipingRef.current = false;
+      swipeOffsetRef.current = 0;
+      cancelSwipeDOM();
+      return;
+    }
     swipeStartRef.current = null;
     swipingRef.current = false;
     const offset = swipeOffsetRef.current;
     swipeOffsetRef.current = 0;
 
-    // DOM 驱动的归位动画（CSS transition）
-    const el = swipeLayerRef.current;
-    if (el) {
-      el.style.transition = 'transform 0.2s ease-out';
-      el.style.transform = 'translateX(0px)';
-    }
-    if (bgRightRef.current) bgRightRef.current.style.opacity = '0';
-    if (bgLeftRef.current) bgLeftRef.current.style.opacity = '0';
+    cancelSwipeDOM();
 
     if (Math.abs(offset) > SWIPE_THRESHOLD) {
-      // 等归位动画播完再弹 toast
       setTimeout(() => {
         if (offset > SWIPE_THRESHOLD) {
           if (toggleStatus(task.id)) {
