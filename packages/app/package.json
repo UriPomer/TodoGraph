@@ -61,6 +61,7 @@
     "productName": "TodoGraph",
     "electronVersion": "33.4.11",
     "asar": true,
+    "icon": "build/icon.ico",
     "directories": {
       "output": "../../Build",
       "buildResources": "build"
@@ -68,20 +69,23 @@
     "files": [
       "out/**/*",
       "package.json",
+      "build/icon.ico",
       "!**/node_modules/**/{README.md,readme.md,LICENSE,CHANGELOG*,*.d.ts,*.d.ts.map,*.map}",
       "!**/node_modules/**/{test,tests,__tests__,example,examples,docs,doc}/**"
     ],
     "win": {
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": true,
       "target": [
         {
           "target": "portable",
           "arch": ["x64"]
         }
       ],
-      "artifactName": "${productName}-${version}-portable.${ext}"
+      "artifactName": "${productName}.${ext}"
     },
     "portable": {
-      "artifactName": "${productName}-${version}-portable.${ext}"
+      "artifactName": "${productName}.${ext}"
     }
   }
 }

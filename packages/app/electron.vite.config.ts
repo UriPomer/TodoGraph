@@ -19,6 +19,7 @@ export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin({ exclude: workspaceDeps })],
     build: {
+      target: 'node20',
       rollupOptions: {
         input: { index: path.resolve(__dirname, 'electron/main.ts') },
       },

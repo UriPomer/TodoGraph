@@ -4,10 +4,12 @@ dist/
 out/
 # Tailwind / 其它工具可能产生的小写 build/
 build/
+!packages/app/build/
+!packages/app/build/icon.ico
 # electron-builder 默认输出目录（未使用，也加上防御）
 release/
 # electron-builder 实际输出目录（packages/app/package.json 里配置）
-Build/
+/Build/
 
 # ===== 运行时数据 =====
 # 本地运行 / Electron portable 产生的用户数据
