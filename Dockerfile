@@ -18,6 +18,7 @@ COPY packages/shared/src packages/shared/src/
 COPY packages/server/tsconfig.json packages/server/
 COPY packages/server/src packages/server/src/
 COPY packages/app/tsconfig.json packages/app/tsconfig.node.json packages/app/vite.config.ts packages/app/tailwind.config.ts packages/app/postcss.config.js packages/app/index.html packages/app/
+COPY packages/app/public packages/app/public/
 COPY packages/app/src packages/app/src/
 
 RUN pnpm --filter @todograph/core --filter @todograph/shared --filter @todograph/server build
