@@ -182,4 +182,34 @@ describe('auth routes', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ error: '密码至少 6 位' });
   });
+
+  it('rejects stale meta revision when two clients create pages concurrently', async () => {
+    const regRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'secret123' },
+    });
+    const cookies = regRes.cookies as unknown as { name: string; value: string }[];
+    const cookieObj = Object.fromEntries(cookies.map((c) => [c.name, c.value]));
+
+    const metaRes = await app.inject({ method: 'GET', url: '/api/meta', cookies: cookieObj });
+    expect(metaRes.statusCode).toBe(200);
+    const meta = metaRes.json() as { revision: number };
+
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/pages',
+      cookies: cookieObj,
+      payload: { title: '第一页', expectedRevision: meta.revision },
+    });
+    expect(first.statusCode).toBe(200);
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/pages',
+      cookies: cookieObj,
+      payload: { title: '第二页', expectedRevision: meta.revision },
+    });
+    expect(second.statusCode).toBe(409);
+  });
 });

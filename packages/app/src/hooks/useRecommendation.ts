@@ -1,5 +1,5 @@
 import { useMemo, useRef } from 'react';
-import { recommend, readyTasks } from '@todograph/core';
+import { deriveReadyAndRecommended } from '@todograph/core';
 import type { Task } from '@todograph/shared';
 import { useTaskStore } from '@/stores/useTaskStore';
 
@@ -43,9 +43,7 @@ export function useDerived() {
       };
     }
     const graph = { nodes, edges };
-    const ready = readyTasks(graph);
-    const readySet = new Set(ready.map((n) => n.id));
-    const recommended = recommend(graph);
+    const { ready, readySet, recommended } = deriveReadyAndRecommended(graph);
     cacheRef.current = { sig: signature, edgeSig, ready, readySet, recommended };
     return { graph, ready, readySet, recommended };
   }, [nodes, edges, signature, edgeSig]);

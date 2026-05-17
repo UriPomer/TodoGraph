@@ -4,8 +4,7 @@ import type { Task } from '@todograph/shared';
 import { useTaskStore } from '@/stores/useTaskStore';
 import {
   MAX_HIERARCHY_DEPTH,
-  depthOf,
-  subtreeHeight,
+  buildHierarchyMetrics,
 } from '@/stores/useTaskStore';
 import { useDerived } from '@/hooks/useRecommendation';
 import { toast } from '@/components/ui/toaster-store';
@@ -41,6 +40,7 @@ export function ListView() {
   const updateTask = useTaskStore((s) => s.updateTask);
   const addTask = useTaskStore((s) => s.addTask);
   const { graph, readySet, recommended } = useDerived();
+  const hierarchyMetrics = useMemo(() => buildHierarchyMetrics(nodes), [nodes]);
   // 折叠状态：parentId → boolean
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
@@ -78,7 +78,7 @@ export function ListView() {
     (parentId: string) => {
       const s = useTaskStore.getState();
       // 深度护栏：父的深度 + 1（新子自身）不能超过 MAX
-      if (depthOf(s.nodes, parentId) + 1 >= MAX_HIERARCHY_DEPTH) {
+      if ((hierarchyMetrics.depthById.get(parentId) ?? 0) + 1 >= MAX_HIERARCHY_DEPTH) {
         toast.error(`嵌套不能超过 ${MAX_HIERARCHY_DEPTH} 层`);
         return;
       }
@@ -91,7 +91,7 @@ export function ListView() {
       // 展开父节点，保证新子节点可见
       setCollapsed((prev) => (prev[parentId] ? { ...prev, [parentId]: false } : prev));
     },
-    [addTask],
+    [addTask, hierarchyMetrics],
   );
 
   // ===== 拖拽：检查 targetId 是否是 dragId 的后代（防止循环） =====
@@ -164,7 +164,7 @@ export function ListView() {
 
         // 已激活：找 drop target / 近邻指示行
         // 三层嵌套限制：合并后的总层数不能超过 MAX_HIERARCHY_DEPTH
-        const draggedHeight = subtreeHeight(nodes, prev.taskId);
+        const draggedHeight = hierarchyMetrics.subtreeHeightById.get(prev.taskId) ?? 0;
 
         const el = document.elementFromPoint(e.clientX, e.clientY);
         const targetLi = el?.closest('[data-task-id]') as HTMLElement | null;
@@ -174,7 +174,7 @@ export function ListView() {
           const tid = targetLi.getAttribute('data-task-id');
           if (tid && tid !== prev.taskId && !isDescendantOf(tid, prev.taskId)) {
             // 检查挂到这个候选下会不会超深度
-            const candDepth = depthOf(nodes, tid);
+            const candDepth = hierarchyMetrics.depthById.get(tid) ?? 0;
             if (candDepth + 1 + draggedHeight + 1 <= MAX_HIERARCHY_DEPTH) {
               targetId = tid;
             }
@@ -183,7 +183,7 @@ export function ListView() {
         }
 
         // 预测"松手时会发生什么"：只有子节点在空白区释放才 ungroup
-        const draggingNode = nodes.find((n) => n.id === prev.taskId);
+        const draggingNode = hierarchyMetrics.byId.get(prev.taskId);
         const willUnparent = !targetId && !!draggingNode?.parentId;
 
         return { ...prev, x: e.clientX, y: e.clientY, targetId, willUnparent, nearItemId };
@@ -223,7 +223,7 @@ export function ListView() {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
     };
-  }, [drag, isDescendantOf, setParent, updateTask, nodes, childMap]);
+  }, [drag, isDescendantOf, setParent, updateTask, nodes, childMap, hierarchyMetrics]);
 
   const { readyArr, blockedArr, doneArr, depInfo } = useMemo(() => {
     const byId = new Map(nodes.map((n) => [n.id, n]));

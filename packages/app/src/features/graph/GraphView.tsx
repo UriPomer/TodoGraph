@@ -42,8 +42,7 @@ import { useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import {
   MAX_HIERARCHY_DEPTH,
-  depthOf,
-  subtreeHeight,
+  buildHierarchyMetrics,
 } from '@/stores/useTaskStore';
 import { useDerived } from '@/hooks/useRecommendation';
 import { TaskNode, type TaskNodeData } from './TaskNode';
@@ -190,6 +189,10 @@ function GraphViewInner() {
     return m;
   }, [nodes]);
 
+  const hierarchyMetrics = useMemo(() => buildHierarchyMetrics(nodes), [nodes]);
+  const depthById = hierarchyMetrics.depthById;
+  const subtreeHeightById = hierarchyMetrics.subtreeHeightById;
+
   // 判断 nodeId 是否是 ancestorId 的后代（含自身）
   const isDescendantOf = useCallback(
     (descendantId: string, ancestorId: string): boolean => {
@@ -221,7 +224,7 @@ function GraphViewInner() {
     // 多层 group 场景下，祖父的尺寸要包含父 —— 而父的尺寸取决于它的子。
     // 按深度倒序遍历 parentMap：先算叶子层的 group，再算它们的父。
     const groupIds = [...parentMap.keys()];
-    groupIds.sort((a, b) => depthOf(nodes, b) - depthOf(nodes, a));
+    groupIds.sort((a, b) => (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0));
 
     const groupSizes = new Map<string, { w: number; h: number }>();
     for (const pid of groupIds) {
@@ -257,7 +260,9 @@ function GraphViewInner() {
     }
 
     // React Flow 要求 parent 在 children 之前；按深度升序（根 → 子 → 孙）
-    const sorted = [...nodes].sort((a, b) => depthOf(nodes, a.id) - depthOf(nodes, b.id));
+    const sorted = [...nodes].sort(
+      (a, b) => (depthById.get(a.id) ?? 0) - (depthById.get(b.id) ?? 0),
+    );
 
     setRfNodes((prev) => {
       const prevById = new Map(prev.map((p) => [p.id, p]));
@@ -476,7 +481,7 @@ function GraphViewInner() {
       // ===== 1. 合并检测：放开多层嵌套，以"合并后的总深度"作为上限 =====
       // 允许合并的条件：若把 draggedNode 挂到 candidate 下，合并后的最深层数 ≤ MAX_HIERARCHY_DEPTH
       //   candidateDepth + 1（child 自身）+ draggedSubtreeHeight + 1（层数 = 深度 + 1）≤ MAX
-      const draggedHeight = subtreeHeight(nodes, dragId);
+      const draggedHeight = subtreeHeightById.get(dragId) ?? 0;
       let mergeCandidate: RFNode | null = null;
       const intersecting = rf.getIntersectingNodes(draggedNode);
       for (const n of intersecting) {
@@ -486,7 +491,7 @@ function GraphViewInner() {
         // 已在该父下 —— 无需再合并
         if (draggedNode.parentId === n.id) continue;
         // 深度检查：挂上后不能超层
-        const candDepth = depthOf(nodes, n.id);
+        const candDepth = depthById.get(n.id) ?? 0;
         if (candDepth + 1 + draggedHeight + 1 > MAX_HIERARCHY_DEPTH) continue;
 
         if (n.type === 'group') {
@@ -562,7 +567,16 @@ function GraphViewInner() {
         }
       }
     },
-    [rf, nodes, isDescendantOf, clearMergeTimer, clearUngroupTimer, mergeHoverMs, ungroupConfirmMs],
+    [
+      rf,
+      isDescendantOf,
+      clearMergeTimer,
+      clearUngroupTimer,
+      mergeHoverMs,
+      ungroupConfirmMs,
+      depthById,
+      subtreeHeightById,
+    ],
   );
 
   const onNodeDragStart = useCallback(

@@ -58,12 +58,59 @@ interface WorkspaceStore {
  */
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   let allTasksTimer: ReturnType<typeof setTimeout> | null = null;
+  const WORKSPACE_SYNCED_MESSAGE = '工作区已被其他设备修改，已同步最新状态';
+  const WORKSPACE_RETRY_MESSAGE = '工作区已被其他设备修改，已刷新最新状态，请重新执行刚才的操作';
+  const PAGE_RETRY_MESSAGE = '页面已被其他设备修改，已重新加载最新数据，请重新执行刚才的操作';
   const scheduleAllTasksRefresh = () => {
     if (allTasksTimer) clearTimeout(allTasksTimer);
     allTasksTimer = setTimeout(() => {
       allTasksTimer = null;
       void get().refreshAllTasks();
     }, 300);
+  };
+  const isConflictError = (
+    err: unknown,
+  ): err is Error & { conflict: boolean; serverRevision?: number; serverVersion?: number } =>
+    !!err && typeof err === 'object' && 'conflict' in err && (err as { conflict?: unknown }).conflict === true;
+
+  const syncMetaAfterConflict = async (preferredActivePageId?: string): Promise<Meta | null> => {
+    try {
+      const latestMeta = await api.loadMeta();
+      const storePageId = useTaskStore.getState().activePageId;
+      const pageIds = new Set(latestMeta.pages.map((page) => page.id));
+      let nextActivePageId = preferredActivePageId;
+      if (!nextActivePageId || !pageIds.has(nextActivePageId)) {
+        nextActivePageId =
+          (storePageId && pageIds.has(storePageId) ? storePageId : undefined) ??
+          latestMeta.activePageId ??
+          latestMeta.pages[0]?.id;
+      }
+      if (nextActivePageId && storePageId !== nextActivePageId) {
+        await useTaskStore.getState().loadPage(nextActivePageId);
+      }
+      const nextMeta = nextActivePageId
+        ? { ...latestMeta, activePageId: nextActivePageId }
+        : latestMeta;
+      set({ meta: nextMeta });
+      scheduleAllTasksRefresh();
+      return nextMeta;
+    } catch (reloadErr) {
+      console.warn('reload meta after conflict failed', reloadErr);
+      return null;
+    }
+  };
+
+  const handleWorkspaceError = async (
+    title: string,
+    err: unknown,
+    preferredActivePageId?: string,
+  ): Promise<void> => {
+    if (isConflictError(err)) {
+      await syncMetaAfterConflict(preferredActivePageId);
+      toast.error(title, WORKSPACE_RETRY_MESSAGE);
+      return;
+    }
+    toast.error(title, String((err as Error).message ?? err));
   };
 
   return {
@@ -100,7 +147,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       if (!meta) return;
       if (meta.activePageId === pageId) return;
       // 1. flush 当前页
-      await useTaskStore.getState().flush();
+      try {
+        await useTaskStore.getState().flush();
+      } catch {
+        return;
+      }
       // 2. 加载目标页
       try {
         await useTaskStore.getState().loadPage(pageId);
@@ -110,24 +161,34 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       }
       // 3. 持久化 activePageId（失败不影响本地状态）
       try {
-        await api.setActivePage(pageId);
+        const nextMeta = await api.setActivePage(pageId, get().meta?.revision ?? meta.revision);
+        if (nextMeta) {
+          set({ meta: nextMeta });
+          scheduleAllTasksRefresh();
+          return;
+        }
       } catch (err) {
+        if (isConflictError(err)) {
+          await syncMetaAfterConflict(pageId);
+          toast.info('切换页面已同步', WORKSPACE_SYNCED_MESSAGE);
+          return;
+        }
         // 不打扰用户：本地已经切过去了；下次启动会落到老的 activePageId
         console.warn('setActivePage failed', err);
       }
-      set({ meta: { ...meta, activePageId: pageId } });
+      set({ meta: { ...(get().meta ?? meta), activePageId: pageId } });
       scheduleAllTasksRefresh();
     },
 
     createPage: async (title) => {
+      const meta = get().meta;
       try {
-        const info = await api.createPage(title);
-        const meta = get().meta;
-        if (meta) set({ meta: { ...meta, pages: [...meta.pages, info] } });
+        const result = await api.createPage(title, meta?.revision);
+        set({ meta: result.meta });
         scheduleAllTasksRefresh();
-        return info;
+        return result.page;
       } catch (err) {
-        toast.error('创建页面失败', String((err as Error).message));
+        await handleWorkspaceError('创建页面失败', err);
         return null;
       }
     },
@@ -140,18 +201,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         return;
       }
       try {
-        await api.deletePage(pageId);
-        const nextPages = meta.pages.filter((p) => p.id !== pageId);
-        const nextActive =
-          meta.activePageId === pageId ? (nextPages[0]?.id ?? meta.activePageId) : meta.activePageId;
-        set({ meta: { ...meta, pages: nextPages, activePageId: nextActive } });
+        const nextMeta = await api.deletePage(pageId, meta.revision);
+        set({ meta: nextMeta });
         // 若删的是当前页，切到新 active
-        if (meta.activePageId === pageId && nextActive !== pageId) {
-          await useTaskStore.getState().loadPage(nextActive);
+        if (meta.activePageId === pageId && nextMeta.activePageId !== pageId) {
+          await useTaskStore.getState().loadPage(nextMeta.activePageId);
         }
         scheduleAllTasksRefresh();
       } catch (err) {
-        toast.error('删除页面失败', String((err as Error).message));
+        await handleWorkspaceError('删除页面失败', err);
       }
     },
 
@@ -159,12 +217,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       const meta = get().meta;
       if (!meta) return;
       try {
-        await api.renamePage(pageId, title);
-        const nextPages = meta.pages.map((p) => (p.id === pageId ? { ...p, title } : p));
-        set({ meta: { ...meta, pages: nextPages } });
+        const nextMeta = await api.renamePage(pageId, title, meta.revision);
+        if (nextMeta) set({ meta: nextMeta });
         scheduleAllTasksRefresh();
       } catch (err) {
-        toast.error('重命名失败', String((err as Error).message));
+        await handleWorkspaceError('重命名失败', err);
       }
     },
 
@@ -172,17 +229,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       const meta = get().meta;
       if (!meta) return;
       try {
-        await api.reorderPages(ids);
-        const byId = new Map(meta.pages.map((p) => [p.id, p]));
-        const nextPages: PageInfo[] = ids
-          .map((id, i) => {
-            const p = byId.get(id);
-            return p ? { ...p, order: i } : null;
-          })
-          .filter((p): p is PageInfo => p !== null);
-        set({ meta: { ...meta, pages: nextPages } });
+        const nextMeta = await api.reorderPages(ids, meta.revision);
+        set({ meta: nextMeta });
       } catch (err) {
-        toast.error('排序失败', String((err as Error).message));
+        await handleWorkspaceError('排序失败', err);
       }
     },
 
@@ -212,12 +262,33 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
 
       try {
         await useTaskStore.getState().flush();
-        const resp = await api.moveNodes(sourcePageId, targetPageId, ids);
+      } catch {
+        return null;
+      }
+
+      try {
+        const targetPage = get().meta?.pages.find((page) => page.id === targetPageId);
+        if (!targetPage) throw new Error(`target page not found: ${targetPageId}`);
+        const targetGraph = await api.loadPage(targetPageId);
+        const resp = await api.moveNodes(
+          sourcePageId,
+          targetPageId,
+          ids,
+          useTaskStore.getState().pageVersion,
+          targetGraph.version,
+        );
 
         await useTaskStore.getState().loadPage(targetPageId);
         try {
-          await api.setActivePage(targetPageId);
+          const nextMeta = await api.setActivePage(targetPageId, get().meta?.revision);
+          if (nextMeta) set({ meta: nextMeta });
         } catch (err) {
+          if (isConflictError(err)) {
+            await syncMetaAfterConflict(targetPageId);
+            toast.info('移动后页面已同步', WORKSPACE_SYNCED_MESSAGE);
+            scheduleAllTasksRefresh();
+            return targetPageId;
+          }
           console.warn('setActivePage failed after moveNodes', err);
         }
 
@@ -240,6 +311,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         toast.info(`已移动到 ${targetTitle}`, details.join('，'));
         return targetPageId;
       } catch (err) {
+        if (isConflictError(err)) {
+          try {
+            await useTaskStore.getState().loadPage(sourcePageId);
+            scheduleAllTasksRefresh();
+            toast.error('移动节点失败', PAGE_RETRY_MESSAGE);
+          } catch {
+            toast.error('移动节点失败', '页面已被其他设备修改，重新加载最新数据失败，请刷新页面后重试');
+          }
+          return null;
+        }
         toast.error('移动节点失败', String((err as Error).message));
         return null;
       }
@@ -248,10 +329,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     updateSettings: async (settings) => {
       const meta = get().meta;
       try {
-        await api.updateSettings(settings);
-        if (meta) set({ meta: { ...meta, settings } });
+        const nextMeta = await api.updateSettings(settings, meta?.revision);
+        set({ meta: nextMeta });
       } catch (err) {
-        toast.error('保存设置失败', String((err as Error).message));
+        await handleWorkspaceError('保存设置失败', err);
       }
     },
 

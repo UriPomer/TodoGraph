@@ -20,6 +20,13 @@ export class VersionConflictError extends Error {
   }
 }
 
+export class MetaVersionConflictError extends Error {
+  constructor(public serverRevision: number) {
+    super(`版本冲突：工作区元信息已被其他设备修改（服务端 revision ${serverRevision}），请刷新后重试`);
+    this.name = 'MetaVersionConflictError';
+  }
+}
+
 /**
  * 工作区（多页面）持久化抽象。v2。
  *
@@ -44,12 +51,15 @@ export interface WorkspaceRepository {
    * 返回写入后的新版本号。
    */
   savePage(pageId: string, data: PageData, expectedVersion?: number): Promise<number>;
-  createPage(title: string): Promise<PageInfo>;
-  deletePage(pageId: string): Promise<void>;
-  renamePage(pageId: string, title: string): Promise<void>;
-  reorderPages(ids: string[]): Promise<void>;
-  setActivePage(pageId: string): Promise<void>;
-  updateSettings(settings: NonNullable<Meta['settings']>): Promise<void>;
+  savePages(
+    entries: Array<{ pageId: string; data: PageData; expectedVersion?: number }>,
+  ): Promise<number[]>;
+  createPage(title: string, expectedRevision?: number): Promise<{ page: PageInfo; meta: Meta }>;
+  deletePage(pageId: string, expectedRevision?: number): Promise<Meta>;
+  renamePage(pageId: string, title: string, expectedRevision?: number): Promise<Meta>;
+  reorderPages(ids: string[], expectedRevision?: number): Promise<Meta>;
+  setActivePage(pageId: string, expectedRevision?: number): Promise<Meta>;
+  updateSettings(settings: NonNullable<Meta['settings']>, expectedRevision?: number): Promise<Meta>;
   /** 将当前页面文件拷贝到 backups/ 目录，保留最近 50 份，按时间戳命名。 */
   createBackup(pageId: string): Promise<void>;
   /** 列出所有 page 的文件路径与 mtime —— 用于 /api/all-tasks 的缓存失效判断。 */

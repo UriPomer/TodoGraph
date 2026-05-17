@@ -12,7 +12,11 @@ import {
 import { buildAdj, isDAG } from '@todograph/core';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
-import { type WorkspaceRepository, VersionConflictError } from '../repositories/Repository.js';
+import {
+  MetaVersionConflictError,
+  type WorkspaceRepository,
+  VersionConflictError,
+} from '../repositories/Repository.js';
 import { generateWorkspaceMarkdown } from '../markdown.js';
 
 interface Opts {
@@ -22,24 +26,34 @@ interface Opts {
 const MoveNodesBodySchema = z.object({
   targetPageId: z.string().min(1),
   nodeIds: z.array(z.string().min(1)).min(1),
+  expectedSourceVersion: z.number().int().min(0).optional(),
+  expectedTargetVersion: z.number().int().min(0).optional(),
 });
 
 const CreatePageBodySchema = z.object({
   title: z.string(),
+  expectedRevision: z.number().int().min(0).optional(),
 });
 
 const PatchPageBodySchema = z.object({
   title: z.string().optional(),
   activate: z.boolean().optional(),
+  expectedRevision: z.number().int().min(0).optional(),
 });
 
 const ReorderBodySchema = z.object({
   ids: z.array(z.string().min(1)).min(1),
+  expectedRevision: z.number().int().min(0).optional(),
+});
+
+const DeletePageBodySchema = z.object({
+  expectedRevision: z.number().int().min(0).optional(),
 });
 
 const UpdateSettingsBodySchema = z.object({
   mergeHoverMs: z.number().int().min(0).max(5000).optional(),
   ungroupConfirmMs: z.number().int().min(0).max(5000).optional(),
+  expectedRevision: z.number().int().min(0).optional(),
 });
 
 /**
@@ -81,8 +95,22 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       reply.status(400);
       return { ok: false, error: 'invalid payload', issues: parsed.error.issues };
     }
-    await repo.updateSettings(parsed.data);
-    return { ok: true };
+    try {
+      const nextMeta = await repo.updateSettings(
+        {
+          mergeHoverMs: parsed.data.mergeHoverMs,
+          ungroupConfirmMs: parsed.data.ungroupConfirmMs,
+        },
+        parsed.data.expectedRevision,
+      );
+      return { ok: true, meta: nextMeta };
+    } catch (err) {
+      if (err instanceof MetaVersionConflictError) {
+        reply.status(409);
+        return { ok: false, error: err.message, serverRevision: err.serverRevision };
+      }
+      throw err;
+    }
   });
 
   // ---- pages ----
@@ -133,18 +161,35 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       reply.status(400);
       return { ok: false, error: 'invalid payload', issues: parsed.error.issues };
     }
-    const info = await repo.createPage(parsed.data.title);
-    invalidateAll();
-    return info;
+    try {
+      const result = await repo.createPage(parsed.data.title, parsed.data.expectedRevision);
+      invalidateAll();
+      return result;
+    } catch (err) {
+      if (err instanceof MetaVersionConflictError) {
+        reply.status(409);
+        return { ok: false, error: err.message, serverRevision: err.serverRevision };
+      }
+      throw err;
+    }
   });
 
   app.delete<{ Params: { id: string } }>('/api/pages/:id', async (req, reply) => {
     const repo = getRepo(req.session.userId!);
+    const parsed = DeletePageBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      reply.status(400);
+      return { ok: false, error: 'invalid payload', issues: parsed.error.issues };
+    }
     try {
-      await repo.deletePage(req.params.id);
+      const nextMeta = await repo.deletePage(req.params.id, parsed.data.expectedRevision);
       invalidateAll();
-      return { ok: true };
+      return { ok: true, meta: nextMeta };
     } catch (err) {
+      if (err instanceof MetaVersionConflictError) {
+        reply.status(409);
+        return { ok: false, error: err.message, serverRevision: err.serverRevision };
+      }
       reply.status(400);
       return { ok: false, error: (err as Error).message };
     }
@@ -158,15 +203,23 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       return { ok: false, error: 'invalid payload', issues: parsed.error.issues };
     }
     try {
+      let nextMeta: Meta | null = null;
       if (parsed.data.title !== undefined) {
-        await repo.renamePage(req.params.id, parsed.data.title);
+        nextMeta = await repo.renamePage(req.params.id, parsed.data.title, parsed.data.expectedRevision);
         invalidateAll();
       }
       if (parsed.data.activate) {
-        await repo.setActivePage(req.params.id);
+        nextMeta = await repo.setActivePage(
+          req.params.id,
+          nextMeta?.revision ?? parsed.data.expectedRevision,
+        );
       }
-      return { ok: true };
+      return { ok: true, meta: nextMeta };
     } catch (err) {
+      if (err instanceof MetaVersionConflictError) {
+        reply.status(409);
+        return { ok: false, error: err.message, serverRevision: err.serverRevision };
+      }
       reply.status(400);
       return { ok: false, error: (err as Error).message };
     }
@@ -180,10 +233,15 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       return { ok: false, error: 'invalid payload', issues: parsed.error.issues };
     }
     try {
-      await repo.reorderPages(parsed.data.ids);
+      await repo.reorderPages(parsed.data.ids, parsed.data.expectedRevision);
       invalidateAll();
-      return { ok: true };
+      const nextMeta = await repo.loadMeta();
+      return { ok: true, meta: nextMeta };
     } catch (err) {
+      if (err instanceof MetaVersionConflictError) {
+        reply.status(409);
+        return { ok: false, error: err.message, serverRevision: err.serverRevision };
+      }
       reply.status(400);
       return { ok: false, error: (err as Error).message };
     }
@@ -216,10 +274,21 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       return { ok: false, error: 'source and target are the same page' };
     }
     try {
-      const resp = await moveNodesBetweenPages(repo, sourceId, targetPageId, nodeIds);
+      const resp = await moveNodesBetweenPages(
+        repo,
+        sourceId,
+        targetPageId,
+        nodeIds,
+        parsed.data.expectedSourceVersion,
+        parsed.data.expectedTargetVersion,
+      );
       invalidateAll();
       return resp;
     } catch (err) {
+      if (err instanceof VersionConflictError) {
+        reply.status(409);
+        return { ok: false, error: err.message, pageId: err.pageId, serverVersion: err.serverVersion };
+      }
       reply.status(400);
       return { ok: false, error: (err as Error).message };
     }
@@ -295,6 +364,8 @@ async function moveNodesBetweenPages(
   sourceId: string,
   targetId: string,
   userSelected: string[],
+  expectedSourceVersion?: number,
+  expectedTargetVersion?: number,
 ): Promise<MoveNodesResponse> {
   const [source, target] = await Promise.all([repo.loadPage(sourceId), repo.loadPage(targetId)]);
 
@@ -385,8 +456,10 @@ async function moveNodesBetweenPages(
     throw new Error('resulting page would contain a cycle');
   }
 
-  await repo.savePage(sourceId, newSource);
-  await repo.savePage(targetId, newTarget);
+  await repo.savePages([
+    { pageId: sourceId, data: newSource, expectedVersion: expectedSourceVersion ?? source.version },
+    { pageId: targetId, data: newTarget, expectedVersion: expectedTargetVersion ?? target.version },
+  ]);
 
   return {
     movedNodes: toMove.size,

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  buildHierarchyMetrics,
   depthOf,
   subtreeHeight,
   wouldExceedMaxDepth,
@@ -47,6 +48,37 @@ describe('subtreeHeight', () => {
   it('grandparent with chain is 2', () => {
     const ns = [task('a'), task('b', 'a'), task('c', 'b')];
     expect(subtreeHeight(ns, 'a')).toBe(2);
+  });
+});
+
+describe('buildHierarchyMetrics', () => {
+  it('computes depth and subtree height for the whole hierarchy once', () => {
+    const ns = [task('root'), task('child', 'root'), task('grand', 'child'), task('solo')];
+    const metrics = buildHierarchyMetrics(ns);
+
+    expect(metrics.depthById.get('root')).toBe(0);
+    expect(metrics.depthById.get('child')).toBe(1);
+    expect(metrics.depthById.get('grand')).toBe(2);
+    expect(metrics.depthById.get('solo')).toBe(0);
+
+    expect(metrics.subtreeHeightById.get('grand')).toBe(0);
+    expect(metrics.subtreeHeightById.get('child')).toBe(1);
+    expect(metrics.subtreeHeightById.get('root')).toBe(2);
+    expect(metrics.subtreeHeightById.get('solo')).toBe(0);
+  });
+
+  it('stays finite on cyclic parent links', () => {
+    const ns: Task[] = [
+      { id: 'a', title: 'a', status: 'todo', parentId: 'b' },
+      { id: 'b', title: 'b', status: 'todo', parentId: 'a' },
+    ];
+
+    const metrics = buildHierarchyMetrics(ns);
+
+    expect(metrics.depthById.get('a')).toBe(2);
+    expect(metrics.depthById.get('b')).toBe(2);
+    expect(metrics.subtreeHeightById.get('a')).toBe(2);
+    expect(metrics.subtreeHeightById.get('b')).toBe(1);
   });
 });
 

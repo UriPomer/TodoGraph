@@ -103,17 +103,170 @@ const nextStatus: Record<TaskStatus, TaskStatus> = {
   done: 'todo',
 };
 
+interface HierarchyIndex {
+  byId: Map<string, Task>;
+  childIdsByParentId: Map<string, string[]>;
+}
+
+export interface HierarchyMetrics extends HierarchyIndex {
+  depthById: Map<string, number>;
+  subtreeHeightById: Map<string, number>;
+}
+
+function buildHierarchyIndex(nodes: Task[]): HierarchyIndex {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const childIdsByParentId = new Map<string, string[]>();
+  for (const n of nodes) {
+    if (!n.parentId) continue;
+    const arr = childIdsByParentId.get(n.parentId);
+    if (arr) arr.push(n.id);
+    else childIdsByParentId.set(n.parentId, [n.id]);
+  }
+  return { byId, childIdsByParentId };
+}
+
+function depthOfFromIndex(index: HierarchyIndex, id: string): number {
+  let depth = 0;
+  let cur = index.byId.get(id);
+  const seen = new Set<string>();
+  while (cur?.parentId) {
+    if (seen.has(cur.id)) break; // 防御环
+    seen.add(cur.id);
+    cur = index.byId.get(cur.parentId);
+    depth++;
+  }
+  return depth;
+}
+
+function collectDepths(index: HierarchyIndex): Map<string, number> {
+  const depthById = new Map<string, number>();
+  for (const startId of index.byId.keys()) {
+    if (depthById.has(startId)) continue;
+
+    const path: string[] = [];
+    const pathIndex = new Map<string, number>();
+    let cur: string | undefined = startId;
+    let baseDepth: number | null = null;
+    let cycleStart = -1;
+
+    while (cur) {
+      const cached = depthById.get(cur);
+      if (cached !== undefined) {
+        baseDepth = cached;
+        break;
+      }
+      const seenIndex = pathIndex.get(cur);
+      if (seenIndex !== undefined) {
+        cycleStart = seenIndex;
+        break;
+      }
+      pathIndex.set(cur, path.length);
+      path.push(cur);
+      cur = index.byId.get(cur)?.parentId;
+    }
+
+    if (cycleStart >= 0) {
+      const cycleDepth = path.length - cycleStart;
+      for (let i = cycleStart; i < path.length; i++) {
+        depthById.set(path[i]!, cycleDepth);
+      }
+      let nextDepth = cycleDepth;
+      for (let i = cycleStart - 1; i >= 0; i--) {
+        nextDepth += 1;
+        depthById.set(path[i]!, nextDepth);
+      }
+      continue;
+    }
+
+    let nextDepth = baseDepth ?? -1;
+    for (let i = path.length - 1; i >= 0; i--) {
+      nextDepth += 1;
+      depthById.set(path[i]!, nextDepth);
+    }
+  }
+  return depthById;
+}
+
+function subtreeHeightFromIndex(index: HierarchyIndex, id: string): number {
+  const walk = (root: string, seen = new Set<string>()): number => {
+    if (seen.has(root)) return 0;
+    seen.add(root);
+    const childIds = index.childIdsByParentId.get(root);
+    if (!childIds || childIds.length === 0) return 0;
+    let best = 0;
+    for (const childId of childIds) {
+      const height = 1 + walk(childId, seen);
+      if (height > best) best = height;
+    }
+    return best;
+  };
+  return walk(id);
+}
+
+function wouldExceedMaxDepthFromIndex(
+  index: HierarchyIndex,
+  childId: string,
+  newParentId: string | null,
+): boolean {
+  if (!newParentId) return false;
+  const parentDepth = depthOfFromIndex(index, newParentId); // 根=0 ...
+  const childHeight = subtreeHeightFromIndex(index, childId); // 叶=0 ...
+  // 挂上后 child 的深度 = parentDepth + 1；整棵子树最深 = (parentDepth + 1) + childHeight
+  // 层数（1-based）= 最深深度 + 1 ≤ MAX_HIERARCHY_DEPTH
+  return parentDepth + 1 + childHeight + 1 > MAX_HIERARCHY_DEPTH;
+}
+
+function collectSubtreeHeights(index: HierarchyIndex): Map<string, number> {
+  const memo = new Map<string, number>();
+  const visiting = new Set<string>();
+  const walk = (id: string): number => {
+    const cached = memo.get(id);
+    if (cached !== undefined) return cached;
+    if (visiting.has(id)) return 0;
+    visiting.add(id);
+    let best = 0;
+    for (const childId of index.childIdsByParentId.get(id) ?? []) {
+      const height = 1 + walk(childId);
+      if (height > best) best = height;
+    }
+    visiting.delete(id);
+    memo.set(id, best);
+    return best;
+  };
+
+  for (const startId of index.byId.keys()) walk(startId);
+  return memo;
+}
+
+export function buildHierarchyMetrics(nodes: Task[]): HierarchyMetrics {
+  const index = buildHierarchyIndex(nodes);
+  const depthById = collectDepths(index);
+  const subtreeHeightById = collectSubtreeHeights(index);
+  return {
+    ...index,
+    depthById,
+    subtreeHeightById,
+  };
+}
+
 /** 判断把 childId 的父设为 newParentId 是否会形成父子环。 */
 function wouldCreateParentCycle(nodes: Task[], childId: string, newParentId: string): boolean {
+  return wouldCreateParentCycleFromIndex(buildHierarchyIndex(nodes), childId, newParentId);
+}
+
+function wouldCreateParentCycleFromIndex(
+  index: HierarchyIndex,
+  childId: string,
+  newParentId: string,
+): boolean {
   if (childId === newParentId) return true;
-  const byId = new Map(nodes.map((n) => [n.id, n]));
   let cur: string | undefined = newParentId;
   const seen = new Set<string>();
   while (cur) {
     if (cur === childId) return true;
     if (seen.has(cur)) return true; // 防御已有环
     seen.add(cur);
-    cur = byId.get(cur)?.parentId;
+    cur = index.byId.get(cur)?.parentId;
   }
   return false;
 }
@@ -123,42 +276,12 @@ export const MAX_HIERARCHY_DEPTH = 3;
 
 /** 节点到根的距离（根 = 0；其父 = 1；祖父 = 2）。 */
 export function depthOf(nodes: Task[], id: string): number {
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  let d = 0;
-  let cur = byId.get(id);
-  const seen = new Set<string>();
-  while (cur?.parentId) {
-    if (seen.has(cur.id)) break; // 防御环
-    seen.add(cur.id);
-    cur = byId.get(cur.parentId);
-    d++;
-  }
-  return d;
+  return depthOfFromIndex(buildHierarchyIndex(nodes), id);
 }
 
 /** 以 id 为根的子树高度（叶 = 0；有直接子 = 1）。 */
 export function subtreeHeight(nodes: Task[], id: string): number {
-  const childrenOf = new Map<string, string[]>();
-  for (const n of nodes) {
-    if (n.parentId) {
-      const arr = childrenOf.get(n.parentId);
-      if (arr) arr.push(n.id);
-      else childrenOf.set(n.parentId, [n.id]);
-    }
-  }
-  const walk = (root: string, seen = new Set<string>()): number => {
-    if (seen.has(root)) return 0;
-    seen.add(root);
-    const cs = childrenOf.get(root);
-    if (!cs || cs.length === 0) return 0;
-    let best = 0;
-    for (const c of cs) {
-      const h = 1 + walk(c, seen);
-      if (h > best) best = h;
-    }
-    return best;
-  };
-  return walk(id);
+  return subtreeHeightFromIndex(buildHierarchyIndex(nodes), id);
 }
 
 /**
@@ -171,12 +294,7 @@ export function wouldExceedMaxDepth(
   childId: string,
   newParentId: string | null,
 ): boolean {
-  if (!newParentId) return false;
-  const parentDepth = depthOf(nodes, newParentId); // 根=0 ...
-  const childHeight = subtreeHeight(nodes, childId); // 叶=0 ...
-  // 挂上后 child 的深度 = parentDepth + 1；整棵子树最深 = (parentDepth + 1) + childHeight
-  // 层数（1-based）= 最深深度 + 1 ≤ MAX_HIERARCHY_DEPTH
-  return parentDepth + 1 + childHeight + 1 > MAX_HIERARCHY_DEPTH;
+  return wouldExceedMaxDepthFromIndex(buildHierarchyIndex(nodes), childId, newParentId);
 }
 
 /**
@@ -238,7 +356,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingPageId: string | null = null;
 
-  const doSave = async (): Promise<void> => {
+  const doSave = async (opts?: { propagateError?: boolean }): Promise<void> => {
     if (!pendingPageId) return;
     const pid = pendingPageId;
     pendingPageId = null;
@@ -250,7 +368,10 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     } catch (err) {
       const e = err as Error & { conflict?: boolean; serverVersion?: number };
       if (e.conflict) {
-        toast.error('保存冲突', '页面已被其他设备修改，已重新加载最新数据');
+        const message = opts?.propagateError
+          ? '页面已被其他设备修改，已重新加载最新数据，请重新执行刚才的操作'
+          : '页面已被其他设备修改，已重新加载最新数据';
+        toast.error('保存冲突', message);
         try {
           const g = await api.loadPage(pid);
           set({
@@ -265,9 +386,11 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         } catch (_reloadErr) {
           toast.error('重新加载失败', '请刷新页面');
         }
+        if (opts?.propagateError) throw e;
         return;
       }
       toast.error('保存失败', String(e.message ?? err));
+      if (opts?.propagateError) throw e;
     }
   };
 
@@ -288,7 +411,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
-    if (pendingPageId) await doSave();
+    if (pendingPageId) await doSave({ propagateError: true });
   };
 
   /**
@@ -513,6 +636,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     groupTasks: (childIds, opts) => {
       if (childIds.length === 0) return null;
       const state = get();
+      const index = buildHierarchyIndex(state.nodes);
       const byId = new Map(state.nodes.map((n) => [n.id, n]));
       const targets = childIds.filter((id) => byId.has(id));
       if (targets.length === 0) return null;
@@ -522,11 +646,11 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       //             超出 MAX_HIERARCHY_DEPTH 的直接拒绝整次操作
       if (opts?.existingParentId) {
         for (const cid of targets) {
-          if (wouldCreateParentCycle(state.nodes, cid, opts.existingParentId)) {
+          if (wouldCreateParentCycleFromIndex(index, cid, opts.existingParentId)) {
             toast.error('父子关系会形成循环', '已阻止');
             return null;
           }
-          if (wouldExceedMaxDepth(state.nodes, cid, opts.existingParentId)) {
+          if (wouldExceedMaxDepthFromIndex(index, cid, opts.existingParentId)) {
             toast.error(`嵌套不能超过 ${MAX_HIERARCHY_DEPTH} 层`, '已阻止');
             return null;
           }
@@ -535,7 +659,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         for (const cid of targets) {
           // 新父是顶层（depth=0），挂上后该子的深度 = 1；子树最深 = 1 + childHeight
           // 层数 = 1 + childHeight + 1 ≤ MAX
-          if (1 + subtreeHeight(state.nodes, cid) + 1 > MAX_HIERARCHY_DEPTH) {
+          if (1 + subtreeHeightFromIndex(index, cid) + 1 > MAX_HIERARCHY_DEPTH) {
             toast.error(`嵌套不能超过 ${MAX_HIERARCHY_DEPTH} 层`, '已阻止');
             return null;
           }
@@ -574,6 +698,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       const parentX = parentTask.x ?? 0;
       const parentY = parentTask.y ?? 0;
       const targetSet = new Set(targets);
+      const nextIndex = buildHierarchyIndex(isNewParent ? [...state.nodes, parentTask] : state.nodes);
 
       pushPre();
       set((s) => {
@@ -581,7 +706,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         if (isNewParent) next = [...next, parentTask];
         next = next.map((n) => {
           if (!targetSet.has(n.id)) return n;
-          if (wouldCreateParentCycle(next, n.id, parentId)) return n;
+          if (!isNewParent && wouldCreateParentCycleFromIndex(nextIndex, n.id, parentId)) return n;
           let worldX = n.x ?? 0;
           let worldY = n.y ?? 0;
           if (n.parentId) {

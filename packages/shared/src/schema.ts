@@ -75,6 +75,7 @@ export const WorkspaceSettingsSchema = z
  */
 export const MetaSchema = z.object({
   version: z.literal(2),
+  revision: z.number().int().min(0).default(0),
   activePageId: z.string().min(1),
   pages: z.array(PageInfoSchema),
   settings: WorkspaceSettingsSchema,
