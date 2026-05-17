@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, X } from 'lucide-react';
+import { MAX_TITLE_LENGTH } from '@/lib/measureText';
 
 interface Props {
   onCommit: (title: string) => void;
@@ -43,6 +44,7 @@ export function InlineCreateInput({ onCommit, onCancel }: Props) {
             ref={ref}
             value={value}
             onChange={(e) => setValue(e.target.value)}
+            maxLength={MAX_TITLE_LENGTH}
             placeholder="新任务标题…"
             className="flex-1 min-w-0 bg-transparent text-sm outline-none px-1 py-1.5"
             onKeyDown={(e) => {

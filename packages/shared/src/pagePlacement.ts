@@ -25,13 +25,14 @@ export function computeNodeSizeMap(nodes: Task[]): Map<string, { w: number; h: n
   const visit = (id: string, seen = new Set<string>()): { w: number; h: number } => {
     const cached = memo.get(id);
     if (cached) return cached;
-    if (seen.has(id) || !byId.has(id)) {
+    const node = byId.get(id);
+    if (!node || seen.has(id)) {
       return { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
     }
     seen.add(id);
     const childIds = childrenOf.get(id) ?? [];
     if (childIds.length === 0) {
-      const leaf = { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+      const leaf = { w: node.width ?? CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
       memo.set(id, leaf);
       return leaf;
     }

@@ -3,6 +3,8 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Check, ChevronRight, ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
 import type { Task } from '@todograph/shared';
 import { cn } from '@/lib/utils';
+import { LinkifiedText } from '@/components/LinkifiedText';
+import { MAX_TITLE_LENGTH } from '@/lib/measureText';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { MAX_HIERARCHY_DEPTH } from '@/stores/useTaskStore';
 import { toast } from '@/components/ui/toaster-store';
@@ -244,6 +246,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
+          maxLength={MAX_TITLE_LENGTH}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commit();
             if (e.key === 'Escape') {
@@ -262,7 +265,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
           )}
           title="双击编辑"
         >
-          {task.title}
+          <LinkifiedText text={task.title} className="truncate" />
         </span>
       )}
 
@@ -364,7 +367,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
           className="pb-1 pr-2 text-[11px] text-muted-foreground/80 line-clamp-1"
           style={{ paddingLeft: `${10 + 14 + 16}px` }}
         >
-          {task.description}
+          <LinkifiedText text={task.description} />
         </p>
       )}
       </div>

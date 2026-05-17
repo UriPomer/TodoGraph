@@ -63,7 +63,7 @@ const nodeTypes: NodeTypes = {
 };
 
 /** hover 进入目标后多久才显示 ghost 合并预览（ms） */
-const MERGE_HOVER_DEFAULT_MS = 500;
+const MERGE_HOVER_DEFAULT_MS = 700;
 /** 子节点中心离开父框后多久才真正 ungroup（ms）—— 期间父框显示红色抖动警告 */
 const UNGROUP_CONFIRM_DEFAULT_MS = 600;
 /** 认定为「明显离开父框」所需的最小像素 —— 轻微拖动不触发 ungroup 提示 */
@@ -235,7 +235,7 @@ function GraphViewInner() {
         childPositions.push({
           x: c.x ?? 0,
           y: c.y ?? 0,
-          w: childSize?.w ?? CHILD_DEFAULT_W,
+          w: childSize?.w ?? c.width ?? CHILD_DEFAULT_W,
           h: childSize?.h ?? CHILD_DEFAULT_H,
         });
       }
@@ -287,6 +287,7 @@ function GraphViewInner() {
               ready: readySet.has(n.id),
               recommended: recommended?.id === n.id,
               description: n.description,
+              nodeWidth: n.width,
             } as TaskNodeData);
 
         const cached = cache.get(n.id);
@@ -311,6 +312,9 @@ function GraphViewInner() {
           ...(isGroup && size
             ? { style: { width: size.w, height: size.h }, width: size.w, height: size.h }
             : {}),
+          ...(isGroup
+            ? {}
+            : { style: { width: n.width ?? CHILD_DEFAULT_W } }),
         };
         return node;
       });
@@ -525,8 +529,10 @@ function GraphViewInner() {
         const parentRfNode = rf.getNode(draggedNode.parentId);
         const pw = parentRfNode?.measured?.width ?? parentRfNode?.width ?? GROUP_MIN_W;
         const ph = parentRfNode?.measured?.height ?? parentRfNode?.height ?? GROUP_MIN_H;
-        const cx = draggedNode.position.x + CHILD_DEFAULT_W / 2;
-        const cy = draggedNode.position.y + CHILD_DEFAULT_H / 2;
+        const draggedW = draggedNode.width ?? CHILD_DEFAULT_W;
+        const draggedH = draggedNode.height ?? CHILD_DEFAULT_H;
+        const cx = draggedNode.position.x + draggedW / 2;
+        const cy = draggedNode.position.y + draggedH / 2;
         const escaped =
           cx < -UNGROUP_ESCAPE_PX ||
           cy < -UNGROUP_ESCAPE_PX ||

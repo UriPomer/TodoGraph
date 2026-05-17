@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { LinkifiedText } from '@/components/LinkifiedText';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { dialog } from '@/components/ui/dialog-store';
 import type { TaskStatus } from '@todograph/shared';
@@ -113,7 +114,7 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
 
         <span
           className={cn(
-            'flex-1 min-w-0 truncate text-sm font-medium select-none cursor-text',
+            'flex-1 min-w-0 overflow-hidden text-sm font-medium select-none cursor-text',
             d.status === 'done' && 'line-through text-muted-foreground',
           )}
           onDoubleClick={async (e) => {
@@ -123,7 +124,7 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
           }}
           title="双击编辑标题"
         >
-          {d.title}
+          <LinkifiedText text={d.title} className="truncate" />
         </span>
 
         <span className="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground/80">

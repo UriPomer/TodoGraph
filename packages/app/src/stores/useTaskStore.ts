@@ -4,6 +4,7 @@ import type { Edge, PageData, Task, TaskStatus } from '@todograph/shared';
 import { api } from '@/api/client';
 import { toast } from '@/components/ui/toaster-store';
 import { uid } from '@/lib/utils';
+import { measureTextWidth, MAX_TITLE_LENGTH } from '@/lib/measureText';
 import {
   GROUP_PADDING_X,
   GROUP_PADDING_Y,
@@ -338,12 +339,14 @@ export const useTaskStore = create<TaskStore>((set, get) => {
 
     addTask: ({ title, x, y, parentId }) => {
       pushPre();
+      const safeTitle = (title || '未命名').slice(0, MAX_TITLE_LENGTH);
       const t: Task = {
         id: uid(),
-        title: title || '未命名',
+        title: safeTitle,
         status: 'todo',
         x,
         y,
+        width: measureTextWidth(safeTitle),
         ...(parentId ? { parentId } : {}),
       };
       set((s) => ({ nodes: [...s.nodes, t] }));
@@ -358,7 +361,12 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         const next = s.nodes.map((n) => {
           if (n.id !== id) return n;
           changed = true;
-          return { ...n, ...patch };
+          const updated = { ...n, ...patch };
+          if (patch.title !== undefined) {
+            updated.title = patch.title.slice(0, MAX_TITLE_LENGTH);
+            updated.width = measureTextWidth(updated.title);
+          }
+          return updated;
         });
         return changed ? { nodes: next } : s;
       });

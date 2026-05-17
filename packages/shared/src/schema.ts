@@ -8,6 +8,7 @@ export const TaskSchema = z.object({
   status: TaskStatusSchema,
   x: z.number().optional(),
   y: z.number().optional(),
+  width: z.number().optional(),
   /**
    * 父任务 id（分组/compound node 用）。
    * - 当一个任务有 parentId 时，它在图中被渲染到父节点的容器内，

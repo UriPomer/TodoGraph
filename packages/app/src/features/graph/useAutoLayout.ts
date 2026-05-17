@@ -1,8 +1,6 @@
 import dagre from 'dagre';
 import type { Edge as RFEdge, Node as RFNode } from '@xyflow/react';
-
-export const NODE_WIDTH = 180;
-export const NODE_HEIGHT = 56;
+import { CHILD_DEFAULT_W, CHILD_DEFAULT_H } from '@todograph/shared';
 
 /**
  * 基于 dagre 的左→右层级布局。
@@ -21,7 +19,7 @@ export function dagreLayout<NodeData extends Record<string, unknown>>(
   g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80, marginx: 20, marginy: 20 });
 
   for (const n of nodes) {
-    const s = sizeOf?.(n) ?? { width: NODE_WIDTH, height: NODE_HEIGHT };
+    const s = sizeOf?.(n) ?? { width: CHILD_DEFAULT_W, height: CHILD_DEFAULT_H };
     g.setNode(n.id, s);
   }
   for (const e of edges) g.setEdge(e.source, e.target);
@@ -30,7 +28,7 @@ export function dagreLayout<NodeData extends Record<string, unknown>>(
 
   const laid = nodes.map((n) => {
     const p = g.node(n.id);
-    const s = sizeOf?.(n) ?? { width: NODE_WIDTH, height: NODE_HEIGHT };
+    const s = sizeOf?.(n) ?? { width: CHILD_DEFAULT_W, height: CHILD_DEFAULT_H };
     return {
       ...n,
       // dagre 返回中心点坐标，React Flow 期望左上角

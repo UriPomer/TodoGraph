@@ -42,6 +42,8 @@
   --success: 142 71% 45%;
   --success-foreground: 0 0% 100%;
 
+  --link: 221 83% 53%;
+
   --radius: 0.5rem;
 }
 
@@ -74,6 +76,8 @@
 
   --success: 142 71% 40%;
   --success-foreground: 0 0% 100%;
+
+  --link: 221 83% 53%;
 
   --radius: 0.5rem;
 }

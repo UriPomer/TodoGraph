@@ -2,8 +2,10 @@ import { memo, useState, useRef, useEffect } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Check, Trash2, Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { LinkifiedText } from '@/components/LinkifiedText';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { dialog } from '@/components/ui/dialog-store';
+import { MAX_TITLE_LENGTH } from '@/lib/measureText';
 import type { TaskStatus } from '@todograph/shared';
 
 export interface TaskNodeData extends Record<string, unknown> {
@@ -14,6 +16,7 @@ export interface TaskNodeData extends Record<string, unknown> {
   description?: string;
   isMergeTarget?: boolean;
   isMergePending?: boolean;
+  nodeWidth?: number;
 }
 
 function TaskNodeImpl({ id, data, selected }: NodeProps) {
@@ -42,7 +45,8 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
   return (
     <div
       className={cn(
-        'group relative flex h-14 w-[180px] items-center gap-2 rounded-lg border bg-card px-3 py-2 shadow-sm',
+        'group relative flex items-center gap-2 rounded-lg border bg-card px-3 py-2 shadow-sm',
+        'min-h-[56px] min-w-[180px]',
         'transition-[border-color,box-shadow,transform] duration-150 ease-out',
         'hover:-translate-y-[1px] hover:shadow-md',
         'border-border',
@@ -54,6 +58,7 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
         d.isMergeTarget && 'opacity-70',
         d.isMergePending && 'outline outline-2 outline-dashed outline-[hsl(var(--primary))] outline-offset-2',
       )}
+      style={{ width: d.nodeWidth ?? 180 }}
     >
       <Handle type="target" position={Position.Left} />
 
@@ -91,6 +96,7 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
+          maxLength={MAX_TITLE_LENGTH}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commit();
             if (e.key === 'Escape') {
@@ -101,19 +107,19 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
           className="flex-1 min-w-0 bg-transparent text-xs outline-none"
         />
       ) : (
-        <span
+        <div
           onDoubleClick={() => {
             setDraft(d.title);
             setEditing(true);
           }}
           className={cn(
-            'flex-1 min-w-0 truncate text-xs select-none cursor-text',
+            'flex-1 min-w-0 text-xs cursor-text',
             d.status === 'done' && 'line-through text-muted-foreground',
           )}
           title="双击编辑标题"
         >
-          {d.title}
-        </span>
+          <LinkifiedText text={d.title} className="whitespace-normal break-words" />
+        </div>
       )}
 
       {!editing && (
