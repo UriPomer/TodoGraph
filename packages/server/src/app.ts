@@ -41,7 +41,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
       httpOnly: true,
       secure: false, // Caddy handles HTTPS, internal traffic is HTTP
       sameSite: 'strict',
-      maxAge: 24 * 60 * 60, // 24h
+      maxAge: 5 * 24 * 60 * 60, // 5d
     },
   });
 
@@ -58,6 +58,13 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
 
   // Auth hook: protect /api/* after auth routes are registered
   app.addHook('onRequest', authHook(userRepo));
+
+  // Sliding session expiry: refresh cookie maxAge on each authenticated request
+  app.addHook('preHandler', async (req) => {
+    if (req.session.userId) {
+      req.session.userId = req.session.userId;
+    }
+  });
 
   // Static files (production)
   if (opts.staticDir) {

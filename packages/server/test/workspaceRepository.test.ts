@@ -192,7 +192,10 @@ describe('FileWorkspaceRepository concurrency guards', () => {
       const second = repo.createPage('并发二', meta.revision);
 
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(writeCalls).toBe(1);
+      // 等待第一个 createPage 进入 writeFile（可能还需要等 I/O）
+      await vi.waitFor(() => {
+        expect(writeCalls).toBe(1);
+      }, { timeout: 5000 });
 
       gate.resolve();
       const results = await Promise.allSettled([first, second]);
