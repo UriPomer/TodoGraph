@@ -1,11 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { client as ClientType } from '../client.js';
-
-// ── Helpers ──
-async function backupBeforeMutation(c: typeof ClientType, pageId: string): Promise<void> {
-  try { await c.post(`/api/pages/${encodeURIComponent(pageId)}/backup`); } catch { /* 静默 */ }
-}
+import { backupBeforeMutation } from './backup.js';
 
 // ── Handlers ──
 

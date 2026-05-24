@@ -5,15 +5,10 @@ import type { client as ClientType } from '../client.js';
 
 // ── Helpers ──
 
+import { backupBeforeMutation } from './backup.js';
+
 function generateId(): string {
   return 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
-/** 写操作前静默备份，失败不阻断主流程 */
-async function backupBeforeMutation(c: typeof ClientType, pageId: string): Promise<void> {
-  try {
-    await c.post(`/api/pages/${encodeURIComponent(pageId)}/backup`);
-  } catch { /* 静默 */ }
 }
 
 interface Layoutable {
