@@ -25,7 +25,7 @@ describe('MCP tools integration', () => {
     dataDir = path.join(os.tmpdir(), `todograph-mcp-test-${Date.now()}`);
 
     // Set env vars BEFORE importing modules that capture them at load time
-    process.env.MCP_API_KEY = 'test-key';
+    process.env.MCP_API_KEY = 'test-key-20chars-min-xxxxxxxxxxxxxxxxxxxxxxxx';
     process.env.MCP_USER_ID = 'u1';
 
     const serverMod = await import('../../../packages/server/src/app.js');
@@ -43,7 +43,7 @@ describe('MCP tools integration', () => {
     baseUrl = `http://127.0.0.1:${port}`;
 
     process.env.TODOGRAPH_API_BASE = baseUrl;
-    process.env.TODOGRAPH_API_KEY = 'test-key';
+    process.env.TODOGRAPH_API_KEY = 'test-key-20chars-min-xxxxxxxxxxxxxxxxxxxxxxxx';
     const clientMod = await import('../src/client.js');
     client = clientMod.client;
   });

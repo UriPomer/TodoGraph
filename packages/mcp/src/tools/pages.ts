@@ -59,6 +59,12 @@ export async function handleMergePages(
     throw new Error('source and target are the same page');
   }
 
+  // 备份两页
+  await Promise.allSettled([
+    c.post(`/api/pages/${encodeURIComponent(params.source_page_id)}/backup`),
+    c.post(`/api/pages/${encodeURIComponent(params.target_page_id)}/backup`),
+  ]);
+
   const source = await c.get<{ nodes: Array<{ id: string }>; version?: number }>(
     `/api/pages/${encodeURIComponent(params.source_page_id)}`,
   );

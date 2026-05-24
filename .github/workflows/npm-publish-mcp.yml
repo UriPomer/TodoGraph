@@ -1,0 +1,56 @@
+name: Publish @todograph/mcp to npm
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/mcp/**'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    name: Publish MCP package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build MCP package
+        run: pnpm --filter @todograph/mcp build
+
+      - name: Check if version changed
+        id: check
+        run: |
+          PKG_VERSION=$(node -p "require('./packages/mcp/package.json').version")
+          NPM_VERSION=$(npm view @todograph/mcp version 2>/dev/null || echo "0.0.0")
+          echo "local=$PKG_VERSION" >> $GITHUB_OUTPUT
+          echo "npm=$NPM_VERSION" >> $GITHUB_OUTPUT
+          if [ "$PKG_VERSION" != "$NPM_VERSION" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish to npm
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          cd packages/mcp
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

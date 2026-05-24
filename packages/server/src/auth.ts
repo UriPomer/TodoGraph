@@ -152,11 +152,14 @@ async function resolveUserId(
   // 1. 多用户模式（env）：MCP_API_KEYS JSON map
   const mcpKeys = parseMCPKeys();
   if (mcpKeys.size > 0) {
+    // 拒绝短 key（env 配置中 key < 20 字符视为 misconfiguration）
+    if (token.length < 20) return null;
     return mcpKeys.get(token) ?? null;
   }
 
   // 2. 单用户模式（env）：MCP_API_KEY + MCP_USER_ID
   if (MCP_API_KEY && MCP_USER_ID && token === MCP_API_KEY) {
+    if (MCP_API_KEY.length < 20) return null;
     return MCP_USER_ID;
   }
 

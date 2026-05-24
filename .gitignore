@@ -51,3 +51,4 @@ Desktop.ini
 # ===== 其它 =====
 *.tsbuildinfo
 coverage/
+docs/

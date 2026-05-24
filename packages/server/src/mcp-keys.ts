@@ -42,12 +42,14 @@ export class McpKeyStore {
       .map(([k, v]) => ({ key: k, label: v.label, createdAt: v.createdAt }));
   }
 
-  /** 为用户生成一个新 key，返回完整 key（仅此一次可获取原始值）。 */
+  /** 为用户生成一个新 key，返回完整 key（仅此一次可获取原始值）。最多 10 个/用户。 */
   async generate(userId: string, label: string): Promise<{ key: string; entry: McpKeyEntry }> {
     const key = generateKey();
     const entry: McpKeyEntry = { userId, label, createdAt: new Date().toISOString() };
     await this.withLock(async () => {
       const keys = await this.readKeys();
+      const userKeyCount = Object.values(keys.keys).filter((v) => v.userId === userId).length;
+      if (userKeyCount >= 10) throw new Error('每个用户最多 10 个 API Key，请先撤销不用的 Key');
       keys.keys[key] = entry;
       await this.writeKeys(keys);
     });

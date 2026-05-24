@@ -10,7 +10,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "publish:npm": "pnpm build && npm publish --access public"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
