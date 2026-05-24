@@ -243,4 +243,31 @@ export const api = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.text();
   },
+
+  async listMcpKeys(): Promise<
+    Array<{ key: string; label: string; createdAt: string }>
+  > {
+    const res = await fetch(`${getApiBase()}/api/mcp/keys`);
+    const data = await json<{ keys: Array<{ key: string; label: string; createdAt: string }> }>(res);
+    return data.keys;
+  },
+
+  async generateMcpKey(
+    label: string,
+  ): Promise<{ key: string; userId: string; label: string; createdAt: string }> {
+    const res = await fetch(`${getApiBase()}/api/mcp/keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label }),
+    });
+    return json<{ key: string; userId: string; label: string; createdAt: string }>(res);
+  },
+
+  async revokeMcpKey(key: string): Promise<void> {
+    const res = await fetch(
+      `${getApiBase()}/api/mcp/keys/${encodeURIComponent(key)}`,
+      { method: 'DELETE' },
+    );
+    await jsonOk(res);
+  },
 };

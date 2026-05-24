@@ -2,6 +2,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import '@fastify/secure-session';
 import type { UserRepository } from './repositories/UserRepository.js';
+import type { McpKeyStore } from './mcp-keys.js';
 
 const SALT_LEN = 32;
 const KEY_LEN = 64;
@@ -119,11 +120,74 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
   });
 }
 
-/** 全局 onRequest hook：保护所有 /api/* （除了 /api/auth/*） */
-export function authHook(userRepo: UserRepository) {
+const MCP_API_KEY = process.env.MCP_API_KEY;
+const MCP_USER_ID = process.env.MCP_USER_ID;
+
+/** MCP_API_KEYS: JSON map of apiKey → userId，用于多用户场景。
+ *  格式: {"key1": "userId1", "key2": "userId2"}
+ *  与 MCP_API_KEY 互斥 —— 设了 MCP_API_KEYS 则忽略 MCP_API_KEY。 */
+function parseMCPKeys(): Map<string, string> {
+  const raw = process.env.MCP_API_KEYS;
+  if (!raw) return new Map();
+  try {
+    const obj = JSON.parse(raw);
+    if (typeof obj !== 'object' || obj === null) return new Map();
+    const map = new Map<string, string>();
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === 'string' && v.length > 0) map.set(k, v);
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+async function resolveUserId(
+  authHeader: string | undefined,
+  keyStore: McpKeyStore | null,
+): Promise<string | null> {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const token = authHeader.slice(7);
+
+  // 1. 多用户模式（env）：MCP_API_KEYS JSON map
+  const mcpKeys = parseMCPKeys();
+  if (mcpKeys.size > 0) {
+    return mcpKeys.get(token) ?? null;
+  }
+
+  // 2. 单用户模式（env）：MCP_API_KEY + MCP_USER_ID
+  if (MCP_API_KEY && MCP_USER_ID && token === MCP_API_KEY) {
+    return MCP_USER_ID;
+  }
+
+  // 3. 动态 key（文件存储）：用户在 UI 里生成的 key
+  if (keyStore) {
+    return keyStore.findUserId(token);
+  }
+
+  return null;
+}
+
+/** 全局 onRequest hook：保护所有 /api/* （除了 /api/auth/*）。
+ *
+ *  认证优先级：
+ *  1. env MCP_API_KEYS（多用户）或 MCP_API_KEY（单用户）
+ *  2. 动态 key 文件（用户在 UI 里生成）
+ *  3. Session cookie（浏览器登录态）
+ */
+export function authHook(userRepo: UserRepository, keyStore: McpKeyStore | null = null) {
   return async function (req: FastifyRequest, reply: FastifyReply) {
     if (req.url.startsWith('/api/auth/')) return;
     if (!req.url.startsWith('/api/')) return;
+
+    // API key 优先：env 配置或动态 key 文件
+    const mcpUserId = await resolveUserId(req.headers.authorization, keyStore);
+    if (mcpUserId) {
+      req.session.userId = mcpUserId;
+      return;
+    }
+
+    // 回退到 session 认证
     const userId = req.session.userId;
     if (!userId) {
       reply.status(401);

@@ -6,7 +6,9 @@ import fastifyHelmet from '@fastify/helmet';
 import fastifyRateLimit from '@fastify/rate-limit';
 import path from 'node:path';
 import { workspaceRoutes } from './routes/workspace.js';
+import { mcpRoutes } from './routes/mcp.js';
 import { authRoutes, authHook } from './auth.js';
+import { McpKeyStore } from './mcp-keys.js';
 import { FileWorkspaceRepository } from './repositories/FileWorkspaceRepository.js';
 import { FileUserRepository } from './repositories/FileUserRepository.js';
 import type { WorkspaceRepository } from './repositories/Repository.js';
@@ -53,11 +55,15 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   const getRepo = (userId: string): WorkspaceRepository =>
     new FileWorkspaceRepository(path.join(opts.dataDir, 'users', userId), opts.dataDir);
 
+  // MCP key store — 持久化用户生成的 API key
+  const keyStore = new McpKeyStore(opts.dataDir);
+  await app.register(mcpRoutes, { keyStore });
+
   // Workspace routes — pass factory, not a single repo
   await app.register(workspaceRoutes, { getRepo });
 
   // Auth hook: protect /api/* after auth routes are registered
-  app.addHook('onRequest', authHook(userRepo));
+  app.addHook('onRequest', authHook(userRepo, keyStore));
 
   // Sliding session expiry: refresh cookie maxAge on each authenticated request
   app.addHook('preHandler', async (req) => {
