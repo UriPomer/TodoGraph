@@ -10,7 +10,6 @@ import {
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { dialog } from '@/components/ui/dialog-store';
-import { McpSetupButton } from '@/features/mcp/McpSetupDialog';
 
 export function PageBar() {
   const meta = useWorkspaceStore((s) => s.meta);
@@ -149,8 +148,6 @@ export function PageBar() {
             </div>
           );
         })}
-
-        <McpSetupButton />
 
         <Button
           type="button"
