@@ -58,6 +58,7 @@ interface WorkspaceStore {
  */
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   let allTasksTimer: ReturnType<typeof setTimeout> | null = null;
+  let metaPollTimer: ReturnType<typeof setInterval> | null = null;
   const WORKSPACE_SYNCED_MESSAGE = '工作区已被其他设备修改，已同步最新状态';
   const WORKSPACE_RETRY_MESSAGE = '工作区已被其他设备修改，已刷新最新状态，请重新执行刚才的操作';
   const PAGE_RETRY_MESSAGE = '页面已被其他设备修改，已重新加载最新数据，请重新执行刚才的操作';
@@ -67,6 +68,36 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       allTasksTimer = null;
       void get().refreshAllTasks();
     }, 300);
+  };
+
+  const stopMetaPolling = () => {
+    if (metaPollTimer) {
+      clearInterval(metaPollTimer);
+      metaPollTimer = null;
+    }
+  };
+
+  const startMetaPolling = () => {
+    stopMetaPolling();
+    metaPollTimer = setInterval(async () => {
+      try {
+        const latest = await api.loadMeta();
+        const current = get().meta;
+        if (!current || latest.revision === current.revision) return;
+        // 工作区元信息已变更：更新页面列表
+        set({ meta: latest });
+        scheduleAllTasksRefresh();
+        // 若当前活跃页被删或变更，切到新的活跃页
+        const storePageId = useTaskStore.getState().activePageId;
+        const pageIds = new Set(latest.pages.map((p) => p.id));
+        if (!pageIds.has(storePageId)) {
+          const next = latest.activePageId ?? latest.pages[0]?.id;
+          if (next) await useTaskStore.getState().loadPage(next);
+        }
+      } catch {
+        // 静默忽略网络错误
+      }
+    }, 5000);
   };
   const isConflictError = (
     err: unknown,
@@ -136,6 +167,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         await useTaskStore.getState().loadPage(active);
         set({ loaded: true });
         void get().refreshAllTasks();
+        startMetaPolling();
       } catch (err) {
         toast.error('加载失败', String((err as Error).message));
         set({ loaded: true });
