@@ -356,6 +356,28 @@ export const useTaskStore = create<TaskStore>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingPageId: string | null = null;
 
+  // 页面轮询：检测外部修改（MCP/其他设备）后自动刷新
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  const stopPolling = () => {
+    if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
+  };
+  const startPolling = (pageId: string) => {
+    stopPolling();
+    pollTimer = setInterval(async () => {
+      try {
+        const g = await api.loadPage(pageId);
+        const { activePageId, pageVersion } = get();
+        // 只在页面未切换且版本变更时刷新
+        if (g.version !== pageVersion && activePageId === pageId) {
+          set({ nodes: g.nodes, edges: g.edges, pageVersion: g.version ?? 0, backupDirty: false });
+          useHistoryStore.getState().clear();
+        }
+      } catch {
+        // 静默：网络波动不打扰用户
+      }
+    }, 5000);
+  };
+
   const doSave = async (opts?: { propagateError?: boolean }): Promise<void> => {
     if (!pendingPageId) return;
     const pid = pendingPageId;
@@ -450,6 +472,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         });
         // 页面切换 —— 历史栈清空
         useHistoryStore.getState().clear();
+        startPolling(pageId);
       } catch (err) {
         toast.error('加载页面失败', String((err as Error).message));
         // 维持 loaded=true 避免卡在加载态
