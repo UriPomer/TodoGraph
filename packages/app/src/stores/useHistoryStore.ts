@@ -10,6 +10,8 @@ interface HistoryStore {
   undoStack: Snapshot[];
   redoStack: Snapshot[];
   push: (s: Snapshot) => void;
+  pushToRedo: (s: Snapshot) => void;
+  pushToUndo: (s: Snapshot) => void;
   undo: () => Snapshot | null;
   redo: () => Snapshot | null;
   clear: () => void;
@@ -63,6 +65,9 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     set({ undoStack: [...undoStack, s], redoStack: redoStack.slice(0, -1) });
     return s;
   },
+
+  pushToRedo: (s: Snapshot) => set((st) => ({ redoStack: [...st.redoStack, s] })),
+  pushToUndo: (s: Snapshot) => set((st) => ({ undoStack: [...st.undoStack, s] })),
 
   clear: () => set({ undoStack: [], redoStack: [] }),
 

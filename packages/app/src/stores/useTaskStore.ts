@@ -770,6 +770,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     undo: () => {
       const prev = useHistoryStore.getState().undo();
       if (!prev) return false;
+      const current = { nodes: get().nodes, edges: get().edges };
+      useHistoryStore.getState().pushToRedo(current);
       set({ nodes: prev.nodes, edges: prev.edges });
       scheduleSave();
       return true;
@@ -778,6 +780,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     redo: () => {
       const next = useHistoryStore.getState().redo();
       if (!next) return false;
+      const current = { nodes: get().nodes, edges: get().edges };
+      useHistoryStore.getState().pushToUndo(current);
       set({ nodes: next.nodes, edges: next.edges });
       scheduleSave();
       return true;

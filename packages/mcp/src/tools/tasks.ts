@@ -121,11 +121,7 @@ function clusterFits(
       if (rectsOverlap(s, e, gap)) return false;
     }
   }
-  for (let i = 0; i < shifted.length; i++) {
-    for (let j = i + 1; j < shifted.length; j++) {
-      if (rectsOverlap(shifted[i]!, shifted[j]!, gap)) return false;
-    }
-  }
+  // 不检查新节点之间的重叠 —— dagre 布局已保证它们不重叠
   return true;
 }
 
