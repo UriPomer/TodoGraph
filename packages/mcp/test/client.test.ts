@@ -21,7 +21,6 @@ describe('HTTP client', () => {
     expect(mockFetch).toHaveBeenCalledWith('http://test:9999/api/meta', {
       method: 'GET',
       headers: {
-        'Content-Type': 'application/json',
         Authorization: 'Bearer test-key',
       },
       body: undefined,

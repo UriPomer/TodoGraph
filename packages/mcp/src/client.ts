@@ -1,8 +1,9 @@
 const API_BASE = process.env.TODOGRAPH_API_BASE ?? 'http://127.0.0.1:5173';
 const API_KEY = process.env.TODOGRAPH_API_KEY ?? '';
 
-function headers(): Record<string, string> {
-  const h: Record<string, string> = { 'Content-Type': 'application/json' };
+function headers(hasBody: boolean): Record<string, string> {
+  const h: Record<string, string> = {};
+  if (hasBody) h['Content-Type'] = 'application/json';
   if (API_KEY) h['Authorization'] = `Bearer ${API_KEY}`;
   return h;
 }
@@ -11,7 +12,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const url = `${API_BASE}${path}`;
   const res = await fetch(url, {
     method,
-    headers: headers(),
+    headers: headers(!!body),
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text().catch(() => '');

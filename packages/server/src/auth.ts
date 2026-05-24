@@ -177,6 +177,10 @@ async function resolveUserId(
  *  1. env MCP_API_KEYS（多用户）或 MCP_API_KEY（单用户）
  *  2. 动态 key 文件（用户在 UI 里生成）
  *  3. Session cookie（浏览器登录态）
+ *
+ *  API key 认证只能访问 MCP 工具所需的白名单端点；
+ *  禁止直接访问全量 REST API，防止 AI 绕过 MCP 的保护层
+ *  （布局计算、碰撞检测、自动备份）。
  */
 export function authHook(userRepo: UserRepository, keyStore: McpKeyStore | null = null) {
   return async function (req: FastifyRequest, reply: FastifyReply) {
@@ -186,11 +190,16 @@ export function authHook(userRepo: UserRepository, keyStore: McpKeyStore | null 
     // API key 优先：env 配置或动态 key 文件
     const mcpUserId = await resolveUserId(req.headers.authorization, keyStore);
     if (mcpUserId) {
+      // 白名单：API key 只能访问 MCP 工具所需的端点
+      if (!isAPIKeyAllowed(req.method, req.url)) {
+        reply.status(403);
+        return { ok: false, error: 'API key 不能直接访问此端点，请通过 MCP 工具操作' };
+      }
       req.session.userId = mcpUserId;
       return;
     }
 
-    // 回退到 session 认证
+    // 回退到 session 认证（浏览器用户，无限制）
     const userId = req.session.userId;
     if (!userId) {
       reply.status(401);
@@ -204,4 +213,43 @@ export function authHook(userRepo: UserRepository, keyStore: McpKeyStore | null 
       return { ok: false, error: '用户不存在，请重新登录' };
     }
   };
+}
+
+/**
+ * API key 端点白名单。
+ * key: "METHOD:/api/path/pattern"  用 {id} 代表动态段。
+ */
+const API_KEY_ALLOWLIST = new Set([
+  'GET:/api/meta',
+  'GET:/api/pages/{id}',
+  'GET:/api/all-tasks',
+  'POST:/api/pages',
+  'PUT:/api/pages/{id}',
+  'DELETE:/api/pages/{id}',
+  'POST:/api/pages/{id}/backup',
+  'POST:/api/pages/{id}/restore',
+  'POST:/api/pages/{id}/move-nodes',
+]);
+
+function isAPIKeyAllowed(method: string, url: string): boolean {
+  // 去除 query string
+  const path = url.split('?')[0]!;
+  for (const pattern of API_KEY_ALLOWLIST) {
+    const [pm, pp] = pattern.split(':', 2);
+    if (pm !== method) continue;
+    if (matchPath(pp!, path)) return true;
+  }
+  return false;
+}
+
+/** 简单路径匹配：{id} 匹配不含 / 的任意段 */
+function matchPath(pattern: string, path: string): boolean {
+  const pp = pattern.split('/');
+  const ps = path.split('/');
+  if (pp.length !== ps.length) return false;
+  for (let i = 0; i < pp.length; i++) {
+    if (pp[i] === '{id}') continue;
+    if (pp[i] !== ps[i]) return false;
+  }
+  return true;
 }
