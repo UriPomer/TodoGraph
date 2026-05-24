@@ -144,6 +144,8 @@ function clusterFits(
     x: rect.x + dx,
     y: rect.y + dy,
   }));
+  // 拒绝任何节点 y < 0
+  if (shifted.some((r) => r.y < 0)) return false;
   for (const rect of shifted) {
     for (const other of occupied) {
       if (rectsOverlap(rect, other, PAGE_MOVE_GAP)) return false;
