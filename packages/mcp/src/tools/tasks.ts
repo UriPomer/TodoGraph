@@ -139,6 +139,44 @@ function buildRects(nodes: Layoutable[]): CollisionRect[] {
 
 // ── Handlers ──
 
+export async function handleDeleteTasks(
+  c: typeof ClientType,
+  params: {
+    page_id: string;
+    task_ids: string[];
+  },
+) {
+  const page = await c.get<{
+    nodes: Array<{ id: string; title: string }>;
+    edges: Array<{ from: string; to: string }>;
+    version?: number;
+  }>(`/api/pages/${encodeURIComponent(params.page_id)}`);
+
+  const ids = new Set(params.task_ids);
+  const removed: string[] = [];
+  const keptNodes = page.nodes.filter((n) => {
+    if (ids.has(n.id)) {
+      removed.push(n.id);
+      return false;
+    }
+    return true;
+  });
+  const keptEdges = page.edges.filter((e) => !ids.has(e.from) && !ids.has(e.to));
+
+  if (removed.length === 0) {
+    return { removed: 0, warning: 'none of the requested task_ids were found' };
+  }
+
+  await backupBeforeMutation(c, params.page_id);
+  await c.put(`/api/pages/${encodeURIComponent(params.page_id)}`, {
+    nodes: keptNodes,
+    edges: keptEdges,
+    expectedVersion: page.version,
+  });
+
+  return { removed: removed.length, removedIds: removed };
+}
+
 export async function handleCreateTask(
   c: typeof ClientType,
   params: {
@@ -256,6 +294,7 @@ export async function handleCreateTasks(
   }
 
   try {
+    await backupBeforeMutation(c, params.page_id);
     await c.put(`/api/pages/${encodeURIComponent(params.page_id)}`, {
       nodes: allNodes,
       edges: newEdges,
@@ -329,6 +368,40 @@ export async function handleUpdateTask(
 // ── MCP Registration ──
 
 export function registerTaskTools(server: McpServer, c: typeof ClientType) {
+  server.registerTool(
+    'todograph_delete_tasks',
+    {
+      title: 'Delete tasks',
+      description:
+        '按 ID 删除一个或多个任务。同时自动移除与这些任务相关的所有依赖边（入边和出边）。删除后不会自动重新布局，如需调整布局请调用 auto_layout。删除前会自动备份。',
+      inputSchema: {
+        page_id: z.string().min(1).describe('页面 ID'),
+        task_ids: z.array(z.string().min(1)).min(1).max(100).describe('要删除的任务 ID 列表'),
+      },
+    },
+    async (params) => {
+      const result = await handleDeleteTasks(c, params);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  server.registerTool(
+    'todograph_restore_backup',
+    {
+      title: 'Restore page from backup',
+      description:
+        '从最新备份恢复页面数据。每次经由 MCP 的写操作（创建/更新/删除任务、管理依赖、合并页面）都会在操作前自动备份。此工具恢复最近一次备份的状态。注意：恢复后页面版本号会发生变化，前端会自动检测刷新。',
+      inputSchema: {
+        page_id: z.string().min(1).describe('要恢复备份的页面 ID'),
+      },
+    },
+    async (params) => {
+      const result = await c.post<{ ok: boolean; data?: unknown; error?: string }>(`/api/pages/${encodeURIComponent(params.page_id)}/restore`);
+      if (!result.ok) throw new Error(result.error ?? 'restore failed');
+      return { content: [{ type: 'text', text: JSON.stringify({ restored: true, data: result.data }, null, 2) }] };
+    },
+  );
+
   server.registerTool(
     'todograph_create_task',
     {

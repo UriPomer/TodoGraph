@@ -251,6 +251,25 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     });
   }
 
+  async restoreLatestBackup(pageId: string): Promise<PageData> {
+    return this.runLocked(async () => {
+      const backupDir = path.join(this.dataDir, 'backups', pageId);
+      const entries = await fs.readdir(backupDir);
+      const jsonFiles = entries
+        .filter((f) => f.endsWith('.json'))
+        .sort();
+      if (jsonFiles.length === 0) {
+        throw new Error(`no backup found for page ${pageId}`);
+      }
+      const latest = jsonFiles[jsonFiles.length - 1]!;
+      const src = path.join(backupDir, latest);
+      const dest = this.pageFilePath(pageId);
+      await fs.copyFile(src, dest);
+      const restored = JSON.parse(await fs.readFile(dest, 'utf-8'));
+      return restored as PageData;
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // internals
   // ---------------------------------------------------------------------------

@@ -259,6 +259,18 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
   });
 
+  // ---- 从最新备份恢复页面 ----
+  app.post<{ Params: { id: string } }>('/api/pages/:id/restore', async (req, reply) => {
+    const repo = getRepo(req.session.userId!);
+    try {
+      const data = await repo.restoreLatestBackup(req.params.id);
+      return { ok: true, data };
+    } catch (err) {
+      reply.status(500);
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
   // ---- 跨页转移：自动带上整棵子树 ----
   app.post<{ Params: { id: string } }>('/api/pages/:id/move-nodes', async (req, reply) => {
     const repo = getRepo(req.session.userId!);
