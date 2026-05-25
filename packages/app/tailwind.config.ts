@@ -1,14 +1,11 @@
 import type { Config } from 'tailwindcss';
 
 export default {
-  // Tailwind 的 darkMode tuple 形式只接受两项 ['class', selector]。
-  // 我们用 [data-theme="dark"] 作为暗色判据，solarized 已移除。
-  darkMode: ['class', '[data-theme="dark"]'],
+  darkMode: 'class',
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
-        // 所有颜色都引用 CSS 变量，便于主题切换
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
@@ -42,11 +39,18 @@ export default {
           DEFAULT: 'hsl(var(--success))',
           foreground: 'hsl(var(--success-foreground))',
         },
+        'surface-2': 'hsl(var(--surface-2))',
+        overlay: 'hsl(var(--overlay))',
       },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
+      },
+      boxShadow: {
+        'theme-sm': 'var(--shadow-sm)',
+        'theme': 'var(--shadow)',
+        'theme-lg': 'var(--shadow-lg)',
       },
     },
   },

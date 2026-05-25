@@ -130,7 +130,28 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [user]);
 
-  // 修复 iOS Safari sticky hover：告知浏览器 JS 在监听触摸，:hover 会在手指抬起后正确清除
+  // 全局 hover 水滴透镜：任何带 data-lens 的元素 hover 时，磨砂层挖洞露出锐利背景
+  useEffect(() => {
+    let current: HTMLElement | null = null;
+    const onOver = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement).closest('[data-lens]') as HTMLElement | null;
+      if (el === current) return;
+      current = el;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        const s = document.documentElement.style;
+        s.setProperty('--hole-x', (r.left + r.width / 2) + 'px');
+        s.setProperty('--hole-y', (r.top + r.height / 2) + 'px');
+        s.setProperty('--hole-r', '100px');
+      } else {
+        document.documentElement.style.setProperty('--hole-x', '-500px');
+      }
+    };
+    document.addEventListener('mouseover', onOver, { passive: true });
+    return () => document.removeEventListener('mouseover', onOver);
+  }, []);
+
+  // 修复 iOS Safari sticky hover
   useEffect(() => {
     const noop = () => {};
     document.addEventListener('touchstart', noop, { passive: true });

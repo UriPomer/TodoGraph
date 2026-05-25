@@ -1,0 +1,103 @@
+/* ============================================================
+ * 经典主题 — 无玻璃效果，纯色扁平风格
+ * ============================================================ */
+
+/* ---------- 经典·深色 ---------- */
+[data-theme='default-dark'] {
+  --background: 215 25% 9%;
+  --foreground: 213 31% 94%;
+
+  --card: 216 24% 13%;
+  --card-foreground: 213 31% 94%;
+
+  --border: 216 19% 21%;
+  --input: 216 19% 21%;
+  --ring: 217 91% 60%;
+
+  --primary: 217 91% 60%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 216 19% 17%;
+  --secondary-foreground: 213 31% 94%;
+
+  --muted: 216 19% 17%;
+  --muted-foreground: 215 14% 61%;
+
+  --accent: 216 19% 21%;
+  --accent-foreground: 213 31% 94%;
+
+  --destructive: 0 74% 65%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 142 71% 45%;
+  --success-foreground: 0 0% 100%;
+
+  --link: 221 83% 53%;
+
+  --glass-blur: 0px;
+  --glass-border: 0 0% 100% / 0;
+  --glass-highlight: 0 0% 100% / 0;
+
+  --gradient-from: 215 25% 9%;
+  --gradient-via: 215 25% 9%;
+  --gradient-to: 215 25% 9%;
+
+  --surface-2: 216 24% 13%;
+  --overlay: 0 0% 0% / 0.5;
+
+  --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.15);
+  --shadow: 0 2px 8px hsl(0 0% 0% / 0.2);
+  --shadow-lg: 0 8px 24px hsl(0 0% 0% / 0.3);
+
+  --radius: 0.625rem;
+}
+
+/* ---------- 经典·浅色 ---------- */
+[data-theme='default-light'] {
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+
+  --card: 0 0% 98%;
+  --card-foreground: 222 47% 11%;
+
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 217 91% 60%;
+
+  --primary: 217 91% 55%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 222 47% 11%;
+
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+
+  --accent: 210 40% 94%;
+  --accent-foreground: 222 47% 11%;
+
+  --destructive: 0 74% 55%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 142 71% 40%;
+  --success-foreground: 0 0% 100%;
+
+  --link: 221 83% 53%;
+
+  --glass-blur: 0px;
+  --glass-border: 0 0% 100% / 0;
+  --glass-highlight: 0 0% 100% / 0;
+
+  --gradient-from: 0 0% 100%;
+  --gradient-via: 0 0% 100%;
+  --gradient-to: 0 0% 100%;
+
+  --surface-2: 0 0% 98%;
+  --overlay: 0 0% 0% / 0.3;
+
+  --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.06);
+  --shadow: 0 2px 8px hsl(0 0% 0% / 0.1);
+  --shadow-lg: 0 8px 24px hsl(0 0% 0% / 0.15);
+
+  --radius: 0.625rem;
+}

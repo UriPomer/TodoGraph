@@ -189,10 +189,11 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       onTouchStart={onSwipeStart}
       onTouchMove={onSwipeMove}
       onTouchEnd={onSwipeEnd}
+      data-lens
       className={cn(
-        'group relative flex flex-col rounded-md select-none overflow-hidden',
-        'transition-colors duration-150',
-        'hover:bg-accent/40',
+        'group relative flex flex-col select-none mb-0.5 rounded-xl',
+        'transition-colors duration-200',
+        'hover:bg-white/10',
         isDragging && 'opacity-30 scale-[0.98]',
         isDropTarget && 'bg-primary/10 border-l-2 border-primary',
         task.status === 'done' && !isDragging && 'text-muted-foreground',
@@ -271,7 +272,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
 
       {dependencyInfo && dependencyInfo.undone > 0 && (
         <span
-          className="text-[11px] text-muted-foreground/80 whitespace-nowrap"
+          className="text-xs text-muted-foreground/80 whitespace-nowrap"
           title={`还有 ${dependencyInfo.undone} 个前置未完成:\n${dependencyInfo.parentTitles.map((t) => '• ' + t).join('\n')}`}
         >
           {dependencyInfo.undone}
@@ -364,7 +365,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       {/* 折叠态下的单行预览：有描述且未展开时显示 */}
       {!descExpanded && task.description && (
         <p
-          className="pb-1 pr-2 text-[11px] text-muted-foreground/80 line-clamp-1"
+          className="pb-1 pr-2 text-xs text-muted-foreground/80 line-clamp-1"
           style={{ paddingLeft: `${10 + 14 + 16}px` }}
         >
           <LinkifiedText text={task.description} />

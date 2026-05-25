@@ -1,0 +1,107 @@
+/* ============================================================
+ * 素色主题 — 适合长时间 todo/GTD 专注使用
+ * 低饱和、不刺眼、高可读性，2026 Calm Tech 风格
+ *
+ * 暖素：Cloud Dancer 暖调纸本色 + 鼠尾草绿
+ * 冷素：Linear/Notion 冷雾灰 + 石板蓝
+ * ============================================================ */
+
+/* ---------- 暖素 ---------- */
+[data-theme='muted-warm'] {
+  --background: 40 15% 96%;
+  --foreground: 30 8% 16%;
+
+  --card: 36 10% 99%;
+  --card-foreground: 30 8% 16%;
+
+  --border: 35 10% 86%;
+  --input: 35 10% 90%;
+  --ring: 140 16% 38%;
+
+  --primary: 140 16% 38%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 38 10% 93%;
+  --secondary-foreground: 30 8% 20%;
+
+  --muted: 38 8% 92%;
+  --muted-foreground: 30 4% 48%;
+
+  --accent: 35 12% 90%;
+  --accent-foreground: 30 8% 20%;
+
+  --destructive: 8 35% 46%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 130 18% 36%;
+  --success-foreground: 0 0% 100%;
+
+  --link: 140 20% 38%;
+
+  --glass-blur: 0px;
+  --glass-border: 0 0% 100% / 0;
+  --glass-highlight: 0 0% 100% / 0;
+
+  --gradient-from: 40 15% 96%;
+  --gradient-via: 40 15% 96%;
+  --gradient-to: 40 15% 96%;
+
+  --surface-2: 38 8% 94%;
+  --overlay: 30 5% 30% / 0.15;
+
+  --shadow-sm: 0 1px 2px hsl(30 5% 0% / 0.04);
+  --shadow: 0 2px 8px hsl(30 5% 0% / 0.06);
+  --shadow-lg: 0 8px 20px hsl(30 5% 0% / 0.08);
+
+  --radius: 0.625rem;
+}
+
+/* ---------- 冷素 ---------- */
+[data-theme='muted-cool'] {
+  --background: 220 10% 96%;
+  --foreground: 220 10% 15%;
+
+  --card: 220 6% 99%;
+  --card-foreground: 220 10% 15%;
+
+  --border: 220 8% 88%;
+  --input: 220 8% 92%;
+  --ring: 215 25% 42%;
+
+  --primary: 215 25% 42%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 220 8% 93%;
+  --secondary-foreground: 220 8% 20%;
+
+  --muted: 220 6% 92%;
+  --muted-foreground: 220 5% 48%;
+
+  --accent: 255 12% 92%;
+  --accent-foreground: 220 8% 20%;
+
+  --destructive: 5 30% 46%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 175 20% 34%;
+  --success-foreground: 0 0% 100%;
+
+  --link: 215 30% 44%;
+
+  --glass-blur: 0px;
+  --glass-border: 0 0% 100% / 0;
+  --glass-highlight: 0 0% 100% / 0;
+
+  --gradient-from: 220 10% 96%;
+  --gradient-via: 220 10% 96%;
+  --gradient-to: 220 10% 96%;
+
+  --surface-2: 220 6% 94%;
+  --overlay: 220 5% 30% / 0.15;
+
+  --shadow-sm: 0 1px 2px hsl(220 5% 0% / 0.04);
+  --shadow: 0 2px 8px hsl(220 5% 0% / 0.06);
+  --shadow-lg: 0 8px 20px hsl(220 5% 0% / 0.08);
+
+  --radius: 0.625rem;
+}

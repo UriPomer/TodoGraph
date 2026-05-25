@@ -1,0 +1,110 @@
+/* ============================================================
+ * 液态玻璃主题 — Apple iOS 26 Liquid Glass
+ *
+ * 设计原则：
+ * - 背景：磨砂暗面（噪点纹理 + 纯色），无彩色渐变
+ * - 卡片/节点/列表项：极度透明（~20%），强模糊，镜面高光
+ * - 品牌色：通过 --brand-hue 控制，仅用于交互强调
+ * ============================================================ */
+
+/* ---------- 玻璃·深色 ---------- */
+[data-theme='glass-dark'] {
+  /* 背景：极深 — 给玻璃面板提供暗底 */
+  --background: 250 5% 4%;
+  --foreground: 240 8% 93%;
+
+  /* 卡片：实色暗灰 — 文字可读性优先，玻璃效果由背景层提供 */
+  --card: 250 5% 12%;
+  --card-foreground: 240 8% 93%;
+
+  --border: 250 5% 22%;
+  --input: 250 5% 18%;
+
+  --ring: var(--brand-hue, 260) 80% 60%;
+  --primary: var(--brand-hue, 260) 75% 56%;
+  --primary-foreground: 0 0% 100%;
+  --link: var(--brand-hue, 260) 80% 64%;
+
+  --secondary: 250 5% 15%;
+  --secondary-foreground: 240 8% 88%;
+
+  --muted: 250 5% 15%;
+  --muted-foreground: 250 4% 55%;
+
+  --accent: calc(var(--brand-hue, 260) - 15) 20% 22%;
+  --accent-foreground: 240 8% 94%;
+
+  --destructive: 0 65% 54%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 150 50% 46%;
+  --success-foreground: 0 0% 100%;
+
+  --glass-blur: 0px;
+  --glass-border: 0 0% 100% / 0;
+  --glass-highlight: 0 0% 100% / 0;
+
+  --gradient-from: 250 5% 4%;
+  --gradient-via: 250 5% 4%;
+  --gradient-to: 250 5% 4%;
+
+  --surface-2: 250 5% 10%;
+  --overlay: 250 4% 2% / 0.7;
+
+  --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
+  --shadow: 0 4px 16px hsl(0 0% 0% / 0.4);
+  --shadow-lg: 0 12px 36px hsl(0 0% 0% / 0.5);
+
+  --radius: 0.75rem;
+}
+
+/* ---------- 玻璃·浅色 ---------- */
+[data-theme='glass-light'] {
+  /* 背景：暖灰白底 — 比卡片略暗/灰，制造反差 */
+  --background: 45 8% 94%;
+  --foreground: 30 6% 12%;
+
+  /* 卡片：实色白 — 文字可读性优先 */
+  --card: 0 0% 100%;
+  --card-foreground: 30 6% 12%;
+
+  --border: 240 5% 85%;
+  --input: 240 5% 90%;
+
+  --ring: var(--brand-hue, 260) 75% 50%;
+  --primary: var(--brand-hue, 260) 70% 46%;
+  --primary-foreground: 0 0% 100%;
+  --link: var(--brand-hue, 260) 75% 44%;
+
+  --secondary: 240 5% 94%;
+  --secondary-foreground: 30 6% 16%;
+
+  --muted: 240 5% 94%;
+  --muted-foreground: 40 4% 48%;
+
+  --accent: calc(var(--brand-hue, 260) - 10) 25% 90%;
+  --accent-foreground: 30 6% 12%;
+
+  --destructive: 0 60% 46%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 150 48% 34%;
+  --success-foreground: 0 0% 100%;
+
+  --glass-blur: 0px;
+  --glass-border: 0 0% 100% / 0;
+  --glass-highlight: 0 0% 100% / 0;
+
+  --gradient-from: 45 8% 94%;
+  --gradient-via: 45 8% 94%;
+  --gradient-to: 45 8% 94%;
+
+  --surface-2: 240 5% 94%;
+  --overlay: 240 5% 88% / 0.5;
+
+  --shadow-sm: 0 1px 2px hsl(30 4% 35% / 0.06);
+  --shadow: 0 2px 10px hsl(30 4% 35% / 0.1);
+  --shadow-lg: 0 8px 28px hsl(30 4% 35% / 0.15);
+
+  --radius: 0.75rem;
+}

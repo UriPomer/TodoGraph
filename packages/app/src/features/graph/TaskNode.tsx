@@ -44,11 +44,12 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
 
   return (
     <div
+      data-lens
       className={cn(
-        'group relative flex items-center gap-2 rounded-lg border bg-card px-3 py-2 shadow-sm',
+        'group relative flex items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-sm',
         'min-h-[56px] min-w-[180px]',
-        'transition-[border-color,box-shadow,transform] duration-150 ease-out',
-        'hover:-translate-y-[1px] hover:shadow-md',
+        'transition-colors duration-200',
+        'hover:bg-white/10',
         'border-border',
         d.status === 'doing' && 'border-[hsl(var(--primary))]',
         d.status === 'done' && 'opacity-70',
@@ -104,7 +105,7 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
               setEditing(false);
             }
           }}
-          className="flex-1 min-w-0 bg-transparent text-xs outline-none"
+          className="flex-1 min-w-0 bg-transparent text-sm outline-none"
         />
       ) : (
         <div
@@ -113,7 +114,7 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
             setEditing(true);
           }}
           className={cn(
-            'flex-1 min-w-0 text-xs cursor-text',
+            'flex-1 min-w-0 text-sm cursor-text',
             d.status === 'done' && 'line-through text-muted-foreground',
           )}
           title="双击编辑标题"

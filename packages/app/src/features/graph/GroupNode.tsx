@@ -42,10 +42,11 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
 
   return (
     <div
+      data-lens
       className={cn(
-        'relative h-full w-full rounded-xl border bg-[hsl(var(--card)/0.55)]',
-        'transition-[border-color,box-shadow,opacity] duration-150',
-        'border-[hsl(var(--border))]',
+        'relative h-full w-full rounded-xl bg-card',
+        'transition-colors duration-200',
+        'hover:bg-white/5',
         d.status === 'doing' && 'border-[hsl(var(--primary)/0.75)]',
         d.status === 'done' && 'opacity-60',
         d.recommended && 'shadow-[0_0_12px_hsl(var(--success)/0.3)]',
@@ -78,9 +79,8 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
         className={cn(
           'group-drag-handle',
           'absolute left-0 right-0 top-0 flex h-10 items-center gap-2 px-3',
-          'rounded-t-xl border-b bg-[hsl(var(--card))] shadow-sm cursor-move',
-          'border-[hsl(var(--border))]',
-          d.status === 'doing' && 'border-b-[hsl(var(--primary)/0.5)]',
+          'rounded-t-xl bg-card shadow-sm cursor-move',
+          d.status === 'doing' && 'shadow-[inset_0_-1px_0_hsl(var(--primary)/0.4)]',
         )}
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}

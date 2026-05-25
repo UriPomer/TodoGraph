@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { DEFAULT_THEME, THEMES, THEME_STORAGE_KEY } from './themes';
+import { DEFAULT_THEME, THEMES, THEME_STORAGE_KEY, type ThemeDef } from './themes';
 
 interface ThemeContextValue {
   theme: string;
   setTheme: (id: string) => void;
-  themes: typeof THEMES;
+  themes: readonly ThemeDef[];
+  currentThemeDef: ThemeDef | undefined;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -22,6 +23,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem(THEME_STORAGE_KEY, theme);
+
+    // Toggle .dark class on <html> for Tailwind dark: variant support
+    const def = THEMES.find((t) => t.id === theme);
+    if (def?.mode === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
   }, [theme]);
 
   const setTheme = useCallback((id: string) => {
@@ -29,8 +38,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setThemeState(id);
   }, []);
 
+  const currentThemeDef = THEMES.find((t) => t.id === theme);
+
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, themes: THEMES }}>
+    <ThemeContext.Provider value={{ theme, setTheme, themes: THEMES, currentThemeDef }}>
       {children}
     </ThemeContext.Provider>
   );
