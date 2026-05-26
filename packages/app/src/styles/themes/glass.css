@@ -1,19 +1,16 @@
 /* ============================================================
- * 液态玻璃主题 — Apple iOS 26 Liquid Glass
+ * 液态玻璃主题
  *
- * 设计原则：
- * - 背景：磨砂暗面（噪点纹理 + 纯色），无彩色渐变
- * - 卡片/节点/列表项：极度透明（~20%），强模糊，镜面高光
- * - 品牌色：通过 --brand-hue 控制，仅用于交互强调
+ * 玻璃/磨砂效果由 bg-sharp + bg-matte 双层 fixed div 提供（见 globals.css）。
+ * 本文件只定义颜色令牌。卡片为实色不透明，文字可读性优先。
+ * 品牌色通过 --brand-hue 控制（默认 260 紫），HueSlider 实时覆写。
  * ============================================================ */
 
 /* ---------- 玻璃·深色 ---------- */
 [data-theme='glass-dark'] {
-  /* 背景：极深 — 给玻璃面板提供暗底 */
   --background: 250 5% 4%;
   --foreground: 240 8% 93%;
 
-  /* 卡片：实色暗灰 — 文字可读性优先，玻璃效果由背景层提供 */
   --card: 250 5% 12%;
   --card-foreground: 240 8% 93%;
 
@@ -40,14 +37,6 @@
   --success: 150 50% 46%;
   --success-foreground: 0 0% 100%;
 
-  --glass-blur: 0px;
-  --glass-border: 0 0% 100% / 0;
-  --glass-highlight: 0 0% 100% / 0;
-
-  --gradient-from: 250 5% 4%;
-  --gradient-via: 250 5% 4%;
-  --gradient-to: 250 5% 4%;
-
   --surface-2: 250 5% 10%;
   --overlay: 250 4% 2% / 0.7;
 
@@ -60,11 +49,9 @@
 
 /* ---------- 玻璃·浅色 ---------- */
 [data-theme='glass-light'] {
-  /* 背景：暖灰白底 — 比卡片略暗/灰，制造反差 */
   --background: 45 8% 94%;
   --foreground: 30 6% 12%;
 
-  /* 卡片：实色白 — 文字可读性优先 */
   --card: 0 0% 100%;
   --card-foreground: 30 6% 12%;
 
@@ -90,14 +77,6 @@
 
   --success: 150 48% 34%;
   --success-foreground: 0 0% 100%;
-
-  --glass-blur: 0px;
-  --glass-border: 0 0% 100% / 0;
-  --glass-highlight: 0 0% 100% / 0;
-
-  --gradient-from: 45 8% 94%;
-  --gradient-via: 45 8% 94%;
-  --gradient-to: 45 8% 94%;
 
   --surface-2: 240 5% 94%;
   --overlay: 240 5% 88% / 0.5;

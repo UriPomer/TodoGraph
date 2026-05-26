@@ -77,17 +77,18 @@ export function PageBar() {
           return (
             <div
               key={page.id}
+              data-lens
               draggable
               onDragStart={(e) => handleDragStart(e, page.id)}
               onDragOver={handleDragOver}
               onDrop={(e) => handleDrop(e, page.id)}
               onDragEnd={handleDragEnd}
               className={cn(
-                'group flex shrink-0 items-center rounded-lg border transition-colors cursor-grab active:cursor-grabbing select-none',
+                'group flex shrink-0 items-center rounded-xl border transition-colors duration-200 cursor-grab active:cursor-grabbing select-none',
                 isDragging && 'opacity-40',
                 active
                   ? 'border-[hsl(var(--primary)/0.45)] bg-[hsl(var(--primary)/0.08)]'
-                  : 'border-border bg-background/80 hover:bg-accent/50',
+                  : 'border-border bg-background/80 hover:bg-foreground/5',
               )}
             >
               <span className="pl-1.5 text-muted-foreground/40 group-hover:text-muted-foreground/70 transition-colors">

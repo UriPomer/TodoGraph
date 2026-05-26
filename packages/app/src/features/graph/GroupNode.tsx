@@ -46,7 +46,7 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
       className={cn(
         'relative h-full w-full rounded-xl bg-card',
         'transition-colors duration-200',
-        'hover:bg-white/5',
+        'hover:bg-foreground/3',
         d.status === 'doing' && 'border-[hsl(var(--primary)/0.75)]',
         d.status === 'done' && 'opacity-60',
         d.recommended && 'shadow-[0_0_12px_hsl(var(--success)/0.3)]',

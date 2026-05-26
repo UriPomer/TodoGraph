@@ -1,7 +1,5 @@
 /* ============================================================
- * 素色主题 — 适合长时间 todo/GTD 专注使用
- * 低饱和、不刺眼、高可读性，2026 Calm Tech 风格
- *
+ * 素色主题 — 适合长时间 todo/GTD 专注
  * 暖素：Cloud Dancer 暖调纸本色 + 鼠尾草绿
  * 冷素：Linear/Notion 冷雾灰 + 石板蓝
  * ============================================================ */
@@ -37,14 +35,6 @@
   --success-foreground: 0 0% 100%;
 
   --link: 140 20% 38%;
-
-  --glass-blur: 0px;
-  --glass-border: 0 0% 100% / 0;
-  --glass-highlight: 0 0% 100% / 0;
-
-  --gradient-from: 40 15% 96%;
-  --gradient-via: 40 15% 96%;
-  --gradient-to: 40 15% 96%;
 
   --surface-2: 38 8% 94%;
   --overlay: 30 5% 30% / 0.15;
@@ -87,14 +77,6 @@
   --success-foreground: 0 0% 100%;
 
   --link: 215 30% 44%;
-
-  --glass-blur: 0px;
-  --glass-border: 0 0% 100% / 0;
-  --glass-highlight: 0 0% 100% / 0;
-
-  --gradient-from: 220 10% 96%;
-  --gradient-via: 220 10% 96%;
-  --gradient-to: 220 10% 96%;
 
   --surface-2: 220 6% 94%;
   --overlay: 220 5% 30% / 0.15;

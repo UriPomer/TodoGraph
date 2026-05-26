@@ -1,3 +1,4 @@
+import { ArrowRight } from 'lucide-react';
 import type { AllTasksItem } from '@todograph/shared';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
@@ -24,21 +25,27 @@ export function CrossPageReady() {
   }
 
   return (
-    <section className="mt-6">
-      <h3 className="mb-1 flex items-baseline gap-2 px-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+    <section className="pt-4 pb-8">
+      <h3 className="mb-1 flex items-baseline gap-2 px-3 text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
         <span>其他页面可做</span>
       </h3>
       {[...byPage.entries()].map(([pageId, { title, tasks }]) => (
         <div key={pageId} className="mb-2">
-          <p className="px-3 py-0.5 text-[10px] text-muted-foreground/60">{title}</p>
+          <p className="px-3 py-0.5 text-xs text-muted-foreground/60">{title}</p>
           <ul className="flex flex-col">
             {tasks.map((t) => (
-              <li key={t.id}>
+              <li key={t.id} className="mb-0.5">
                 <button
+                  data-lens
                   onClick={() => switchPage(pageId)}
-                  className="w-full text-left px-3 py-1.5 text-sm rounded hover:bg-accent/50 transition-colors truncate"
+                  className="w-full flex items-center gap-2 text-left py-1.5 pr-2 rounded-xl hover:bg-foreground/5 transition-colors duration-200"
+                  style={{ paddingLeft: '12px' }}
                 >
-                  {t.title}
+                  {/* 对齐 TaskItem.tsx 中 depth=0 的文本起始位置：spacer(10px) + dot(14px) + gap(8px) = 32px。
+                      如果 TaskItem 的 status dot 或 spacer 尺寸改动，这里需同步。 */}
+                  <span className="shrink-0 w-[10px]" />
+                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/55" />
+                  <span className="flex-1 min-w-0 truncate text-sm">{t.title}</span>
                 </button>
               </li>
             ))}

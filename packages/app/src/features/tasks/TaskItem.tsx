@@ -193,7 +193,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       className={cn(
         'group relative flex flex-col select-none mb-0.5 rounded-xl',
         'transition-colors duration-200',
-        'hover:bg-white/10',
+        'hover:bg-foreground/5',
         isDragging && 'opacity-30 scale-[0.98]',
         isDropTarget && 'bg-primary/10 border-l-2 border-primary',
         task.status === 'done' && !isDragging && 'text-muted-foreground',
@@ -220,7 +220,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
             e.stopPropagation();
             onToggleCollapse?.();
           }}
-          className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded hover:bg-accent transition-colors"
+          className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded hover:bg-foreground/5 transition-colors"
           title={isCollapsed ? '展开' : '折叠'}
         >
           {isCollapsed ? (
@@ -231,6 +231,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         </button>
       )}
 
+      {/* spacer 尺寸与 CrossPageReady.tsx 中保持一致 */}
       {!hasChildren && <span className="shrink-0 w-[10px]" />}<StatusDot
         status={task.status}
         recommended={recommended}
@@ -291,7 +292,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
             className={cn(
               'shrink-0 text-muted-foreground rounded p-1',
               'transition-[color,transform,background-color] duration-150 ease-out',
-              'hover:text-[hsl(var(--primary))] hover:bg-accent active:scale-90',
+              'hover:text-[hsl(var(--primary))] hover:bg-foreground/5 active:scale-90',
             )}
             title="添加子任务"
           >
@@ -308,7 +309,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
           className={cn(
             'shrink-0 rounded p-1',
             'transition-[color,transform,background-color] duration-150 ease-out',
-            'hover:bg-accent active:scale-90',
+            'hover:bg-foreground/5 active:scale-90',
             task.description ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground',
           )}
           title={task.description ? '查看/编辑描述' : '添加描述'}
@@ -327,7 +328,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
           className={cn(
             'shrink-0 text-muted-foreground rounded p-1.5 ml-1',
             'transition-[color,transform,background-color] duration-150 ease-out',
-            'hover:text-destructive hover:bg-destructive/10 active:scale-90',
+            'hover:text-destructive hover:bg-foreground/5 active:scale-90',
             'max-lg:min-h-[28px] max-lg:min-w-[28px]',
           )}
           title="删除"

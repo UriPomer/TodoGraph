@@ -35,13 +35,30 @@ html, body, #root {
   background: transparent;
 }
 
+/* 背景图层默认隐藏；仅玻璃主题显式启用。
+   新增非玻璃主题无需手动更新此列表。 */
+.bg-sharp,
+.bg-matte {
+  display: none;
+}
+
+[data-theme='glass-dark'] .bg-sharp,
+[data-theme='glass-light'] .bg-sharp,
+[data-theme='glass-dark'] .bg-matte,
+[data-theme='glass-light'] .bg-matte {
+  display: block;
+}
+
 .bg-sharp {
   position: fixed;
   inset: 0;
   z-index: -2;
-  background: var(--bg-url) center/cover no-repeat;
+  /* --bg-url 由 index.html 内联脚本设置；fallback 用第一张图 */
+  background: var(--bg-url, url('/bg-1.jpg')) center/cover no-repeat;
 }
 
+/* lens 透镜孔位置由 App.tsx 全局 mouseover handler 动态覆写。
+   这里的 inline 默认值仅在 JS 未执行时生效（透镜不可见）。 */
 .bg-matte {
   position: fixed;
   inset: 0;
@@ -71,22 +88,8 @@ html, body, #root {
   -webkit-backdrop-filter: blur(18px) brightness(0.9);
 }
 
-/* 非玻璃主题：隐藏背景图层，用纯色 */
-[data-theme='default-dark'] .bg-sharp,
-[data-theme='default-dark'] .bg-matte,
-[data-theme='default-light'] .bg-sharp,
-[data-theme='default-light'] .bg-matte,
-[data-theme='muted-warm'] .bg-sharp,
-[data-theme='muted-warm'] .bg-matte,
-[data-theme='muted-cool'] .bg-sharp,
-[data-theme='muted-cool'] .bg-matte {
-  display: none;
-}
-
-[data-theme='default-dark'] body,
-[data-theme='default-light'] body,
-[data-theme='muted-warm'] body,
-[data-theme='muted-cool'] body {
+/* 非玻璃主题：纯色底 */
+[data-theme]:not([data-theme='glass-dark']):not([data-theme='glass-light']) body {
   background: hsl(var(--background));
 }
 

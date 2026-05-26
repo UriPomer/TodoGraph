@@ -133,22 +133,38 @@ export default function App() {
   // 全局 hover 水滴透镜：任何带 data-lens 的元素 hover 时，磨砂层挖洞露出锐利背景
   useEffect(() => {
     let current: HTMLElement | null = null;
-    const onOver = (e: MouseEvent) => {
-      const el = (e.target as HTMLElement).closest('[data-lens]') as HTMLElement | null;
+    let hideTimer: ReturnType<typeof setTimeout>;
+    const s = document.documentElement.style;
+
+    const show = (el: HTMLElement) => {
       if (el === current) return;
       current = el;
-      if (el) {
-        const r = el.getBoundingClientRect();
-        const s = document.documentElement.style;
-        s.setProperty('--hole-x', (r.left + r.width / 2) + 'px');
-        s.setProperty('--hole-y', (r.top + r.height / 2) + 'px');
-        s.setProperty('--hole-r', '100px');
-      } else {
-        document.documentElement.style.setProperty('--hole-x', '-500px');
-      }
+      clearTimeout(hideTimer);
+      const r = el.getBoundingClientRect();
+      s.setProperty('--hole-x', (r.left + r.width / 2) + 'px');
+      s.setProperty('--hole-y', (r.top + r.height / 2) + 'px');
+      s.setProperty('--hole-r', '100px');
     };
+
+    const hide = () => {
+      current = null;
+      // 延迟消失，防止在子元素间移动时闪烁
+      hideTimer = setTimeout(() => {
+        s.setProperty('--hole-x', '-500px');
+      }, 100);
+    };
+
+    const onOver = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement).closest('[data-lens]') as HTMLElement | null;
+      if (el) show(el);
+      else hide();
+    };
+
     document.addEventListener('mouseover', onOver, { passive: true });
-    return () => document.removeEventListener('mouseover', onOver);
+    return () => {
+      document.removeEventListener('mouseover', onOver);
+      clearTimeout(hideTimer);
+    };
   }, []);
 
   // 修复 iOS Safari sticky hover

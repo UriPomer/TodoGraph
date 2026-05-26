@@ -49,7 +49,7 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
         'group relative flex items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-sm',
         'min-h-[56px] min-w-[180px]',
         'transition-colors duration-200',
-        'hover:bg-white/10',
+        'hover:bg-foreground/5',
         'border-border',
         d.status === 'doing' && 'border-[hsl(var(--primary))]',
         d.status === 'done' && 'opacity-70',

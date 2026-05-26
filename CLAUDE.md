@@ -45,7 +45,11 @@ This is a **pnpm monorepo** with four packages:
 - **Migration**: On first `loadMeta()` with no `meta.json`, `FileWorkspaceRepository` auto-migrates legacy `tasks.json` (v1) → page-per-user layout, or seeds demo data if no data exists.
 - **Electron**: Main process starts Fastify on a random port, preload injects `__API_BASE__` via `contextBridge`. Portable mode redirects `userData` to exe-adjacent `data/` folder.
 - **Vite dev proxy**: `vite.config.ts` proxies `/api` to `http://127.0.0.1:5173` (the Fastify dev server).
-- **Themes**: All colors as HSL CSS custom properties (`hsl(var(--xxx))`). Adding a theme = adding a `[data-theme="..."]` block in `globals.css`.
+- **Themes**: All colors as HSL CSS custom properties (`hsl(var(--xxx))`). 6 套主题（glass-dark/light、default-dark/light、muted-warm/cool）。每套主题一个独立 CSS 文件在 `styles/themes/`。`ThemeDef` 接口在 `features/theme/themes.ts`，包含 `id/label/mode/icon/preview`。新增主题只需：1) 创建 `styles/themes/<name>.css`，2) 在 `THEMES` 数组中加一条，3) 在 `globals.css` 顶部 `@import`。
+- **玻璃/磨砂背景引擎**：`index.html` 中 `bg-sharp`（锐利原图）+ `bg-matte`（backdrop-filter blur 18px）双层 fixed div。背景图 6 张随机（`public/bg-{1..6}.jpg`），`index.html` 内联脚本设 `--bg-url` CSS 变量。非玻璃主题自动隐藏这两层。
+- **Hover 透镜效果**：`App.tsx` 全局 mouseover 代理，任何带 `data-lens` 属性的元素 hover 时在 `bg-matte` 的 CSS mask 上挖洞（`--hole-x/y/r`），露出锐利原图。透镜消失有 100ms 延迟防闪烁。
+- **hover 交互统一**：所有交互元素使用 `hover:bg-foreground/5`（前景色 5% 不透明度，深浅主题均可见）+ `rounded-xl` + `transition-colors duration-200`。
+- **React Flow 覆盖**：`.react-flow__node-group` 强制 `border:none`，`.selected` 强制 `box-shadow:none`（覆盖 React Flow 默认 `#1a192b` 黑色选中态）。
 
 ## Cross-page node movement
 

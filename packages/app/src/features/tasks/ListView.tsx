@@ -446,65 +446,119 @@ export function ListView() {
     indicator.style.transform = `translateY(${INIT_INDICATOR_Y}px)`;
   }
 
+  // 上下分栏：上面是当前页任务，下面是跨页可做，中间可拖动调整高度
+  const [topPct, setTopPct] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const v = Number(localStorage.getItem('todograph.listSplitTopPct'));
+      if (v >= 25 && v <= 85) return v;
+    }
+    return 65;
+  });
+  const splitRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const splitPctRef = useRef(65);
+  const onSplitMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const totalH = rect.height;
+    const onMove = (ev: MouseEvent) => {
+      const pct = Math.max(25, Math.min(85, ((ev.clientY - rect.top) / totalH) * 100));
+      splitPctRef.current = pct;
+      setTopPct(pct);
+    };
+    const onUp = () => {
+      localStorage.setItem('todograph.listSplitTopPct', String(Math.round(splitPctRef.current)));
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
+
   return (
-    <div ref={scrollRef} className="relative h-full overflow-auto" style={{ overscrollBehaviorY: 'contain', touchAction: 'pan-y' }}>
-      {/* 下拉指示器：绝对定位不占布局空间，opacity/translateY 动画由 JS 操作 DOM */}
-      <div
-        ref={pullRef}
-        className="absolute top-0 left-0 right-0 flex items-center justify-center text-sm text-muted-foreground will-change-transform will-change-[opacity]"
-        style={{ height: 60, opacity: 0, transform: 'translateY(-20px)' }}
-      >
-        <span className={pullReady ? 'text-[hsl(var(--success))] font-semibold' : ''}>
-          {pullReady ? '松手新建' : '下拉新建'}
-        </span>
+    <div ref={containerRef} className="relative h-full flex flex-col">
+      {/* 上半部分：当前页任务（可滚动） */}
+      <div ref={scrollRef} className="overflow-auto" style={{ height: `${topPct}%`, overscrollBehaviorY: 'contain', touchAction: 'pan-y' }}>
+        {/* 下拉指示器 */}
+        <div
+          ref={pullRef}
+          className="absolute top-0 left-0 right-0 flex items-center justify-center text-sm text-muted-foreground will-change-transform will-change-[opacity]"
+          style={{ height: 60, opacity: 0, transform: 'translateY(-20px)' }}
+        >
+          <span className={pullReady ? 'text-[hsl(var(--success))] font-semibold' : ''}>
+            {pullReady ? '松手新建' : '下拉新建'}
+          </span>
+        </div>
+        <div ref={contentRef} className="will-change-transform mx-auto w-full max-w-md px-4 py-5" style={{ transform: 'translateY(0px)' }}>
+          <TaskInput focusTrigger={focusTrigger} />
+
+          <Section
+            title="Ready"
+            hint="可执行"
+            items={readyArr}
+            recommendedId={recommended?.id}
+            depInfo={depInfo}
+            childMap={childMap}
+            collapsed={collapsed}
+            onToggleCollapse={toggleCollapse}
+            dragTaskId={drag?.taskId ?? null}
+            dropTargetId={drag?.active ? drag.targetId ?? null : null}
+            onDragStart={handleDragStart}
+            onAddChild={handleAddChild}
+            empty="暂无可执行任务"
+          />
+          <Section
+            title="Blocked"
+            hint="有未完成的前置"
+            items={blockedArr}
+            recommendedId={recommended?.id}
+            depInfo={depInfo}
+            childMap={childMap}
+            collapsed={collapsed}
+            onToggleCollapse={toggleCollapse}
+            dragTaskId={drag?.taskId ?? null}
+            dropTargetId={drag?.active ? drag.targetId ?? null : null}
+            onDragStart={handleDragStart}
+            onAddChild={handleAddChild}
+          />
+          <Section
+            title="Done"
+            items={doneArr}
+            recommendedId={undefined}
+            depInfo={depInfo}
+            childMap={childMap}
+            collapsed={collapsed}
+            onToggleCollapse={toggleCollapse}
+            dragTaskId={drag?.taskId ?? null}
+            dropTargetId={drag?.active ? drag.targetId ?? null : null}
+            onDragStart={handleDragStart}
+            onAddChild={handleAddChild}
+          />
+        </div>
       </div>
-      <div ref={contentRef} className="will-change-transform mx-auto w-full max-w-md px-4 py-5 pb-24" style={{ transform: 'translateY(0px)' }}>
-        <TaskInput focusTrigger={focusTrigger} />
 
-        <Section
-          title="Ready"
-          hint="可执行"
-          items={readyArr}
-          recommendedId={recommended?.id}
-          depInfo={depInfo}
-          childMap={childMap}
-          collapsed={collapsed}
-          onToggleCollapse={toggleCollapse}
-          dragTaskId={drag?.taskId ?? null}
-          dropTargetId={drag?.active ? drag.targetId ?? null : null}
-          onDragStart={handleDragStart}
-          onAddChild={handleAddChild}
-          empty="暂无可执行任务"
-        />
-        <Section
-          title="Blocked"
-          hint="有未完成的前置"
-          items={blockedArr}
-          recommendedId={recommended?.id}
-          depInfo={depInfo}
-          childMap={childMap}
-          collapsed={collapsed}
-          onToggleCollapse={toggleCollapse}
-          dragTaskId={drag?.taskId ?? null}
-          dropTargetId={drag?.active ? drag.targetId ?? null : null}
-          onDragStart={handleDragStart}
-          onAddChild={handleAddChild}
-        />
-        <Section
-          title="Done"
-          items={doneArr}
-          recommendedId={undefined}
-          depInfo={depInfo}
-          childMap={childMap}
-          collapsed={collapsed}
-          onToggleCollapse={toggleCollapse}
-          dragTaskId={drag?.taskId ?? null}
-          dropTargetId={drag?.active ? drag.targetId ?? null : null}
-          onDragStart={handleDragStart}
-          onAddChild={handleAddChild}
-        />
+      {/* 拖动分隔条 */}
+      <div
+        ref={splitRef}
+        onMouseDown={onSplitMouseDown}
+        className="shrink-0 h-[5px] cursor-row-resize bg-border/30 hover:bg-[hsl(var(--primary))] transition-colors relative group"
+        title="拖动调整上下高度"
+      >
+        <span className="absolute inset-y-0 -top-[6px] -bottom-[6px] left-0 right-0" />
+      </div>
 
-        <CrossPageReady />
+      {/* 下半部分：其他页面可做（可滚动） */}
+      <div className="flex-1 overflow-auto">
+        <div className="mx-auto w-full max-w-md px-4">
+          <CrossPageReady />
+        </div>
       </div>
 
       {/* Ghost overlay：拖拽激活后跟随鼠标 */}
