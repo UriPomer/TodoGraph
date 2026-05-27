@@ -31,6 +31,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     } else {
       document.documentElement.classList.remove('dark');
     }
+
+    // 同步 theme-color meta（Android Chrome；Safari 26 已弃用）
+    // Safari 26 读 html 的 background-color 来定状态栏颜色，设 inline style 确保能读到
+    const card = getComputedStyle(document.documentElement).getPropertyValue('--card').trim();
+    if (card) {
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', `hsl(${card})`);
+      document.documentElement.style.backgroundColor = `hsl(${card})`;
+    }
   }, [theme]);
 
   const setTheme = useCallback((id: string) => {

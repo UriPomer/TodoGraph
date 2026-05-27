@@ -349,7 +349,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
             ref={descRef}
             value={descDraft}
             onChange={(e) => setDescDraft(e.target.value)}
-            onBlur={commitDesc}
+            onBlur={() => { commitDesc(); setDescExpanded(false); }}
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
                 setDescDraft(task.description ?? '');

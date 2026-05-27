@@ -482,6 +482,28 @@ export function ListView() {
     window.addEventListener('mouseup', onUp);
   }, []);
 
+  const onSplitTouchStart = useCallback((e: React.TouchEvent) => {
+    e.preventDefault();
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const totalH = rect.height;
+    const onMove = (ev: TouchEvent) => {
+      const touch = ev.touches[0];
+      if (!touch) return;
+      const pct = Math.max(25, Math.min(85, ((touch.clientY - rect.top) / totalH) * 100));
+      splitPctRef.current = pct;
+      setTopPct(pct);
+    };
+    const onEnd = () => {
+      localStorage.setItem('todograph.listSplitTopPct', String(Math.round(splitPctRef.current)));
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+    };
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
+  }, []);
+
   return (
     <div ref={containerRef} className="relative h-full flex flex-col">
       {/* 上半部分：当前页任务（可滚动） */}
@@ -548,6 +570,7 @@ export function ListView() {
       <div
         ref={splitRef}
         onMouseDown={onSplitMouseDown}
+        onTouchStart={onSplitTouchStart}
         className="shrink-0 h-[5px] cursor-row-resize bg-border/30 hover:bg-[hsl(var(--primary))] transition-colors relative group"
         title="拖动调整上下高度"
       >

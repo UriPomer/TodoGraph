@@ -16,6 +16,27 @@ html, body {
   padding: 0;
 }
 
+/*
+ * html 背景策略：
+ * - 非玻璃主题：纯色 hsl(var(--background))
+ * - 玻璃主题：同一张霓虹城市原图（无 blur）
+ *   手机 overscroll 时露出的区域与磨砂主视觉无缝衔接
+ */
+html {
+  background: hsl(var(--background));
+}
+
+/*
+ * iOS Safari 26+ 不认 <meta name="theme-color">，直接从 html 的 background-color
+ * 读取状态栏/刘海区域颜色。background 简写会重置 background-color 为 transparent，
+ * 导致 Safari 看到白色。下面先设简写（图片），再单独覆盖 background-color。
+ */
+[data-theme='glass-dark'] html,
+[data-theme='glass-light'] html {
+  background: var(--bg-url, url('/bg-1.jpg')) center/cover no-repeat;
+  background-color: hsl(var(--card));
+}
+
 html, body, #root {
   height: 100%;
 }
@@ -29,11 +50,6 @@ html, body, #root {
  *
  * 内容（z:auto）天然在磨砂层上方，不受 blur 影响
  * ============================================================ */
-
-[data-theme='glass-dark'] body,
-[data-theme='glass-light'] body {
-  background: transparent;
-}
 
 /* 背景图层默认隐藏；仅玻璃主题显式启用。
    新增非玻璃主题无需手动更新此列表。 */
