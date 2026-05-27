@@ -18,23 +18,20 @@ html, body {
 
 /*
  * html 背景策略：
- * - 非玻璃主题：纯色 hsl(var(--background))
- * - 玻璃主题：同一张霓虹城市原图（无 blur）
- *   手机 overscroll 时露出的区域与磨砂主视觉无缝衔接
+ * - background-color 统一用 --card（和 Header 同色），!important 确保不会被任何
+ *   主题 CSS 或 JS inline style 意外覆盖。iOS Safari 26 从此读取状态栏颜色。
+ * - 玻璃主题额外叠加背景原图，用于手机 overscroll 时的视觉衔接。
  */
 html {
-  background: hsl(var(--background));
+  background-color: hsl(var(--card)) !important;
 }
 
-/*
- * iOS Safari 26+ 不认 <meta name="theme-color">，直接从 html 的 background-color
- * 读取状态栏/刘海区域颜色。background 简写会重置 background-color 为 transparent，
- * 导致 Safari 看到白色。下面先设简写（图片），再单独覆盖 background-color。
- */
 [data-theme='glass-dark'] html,
 [data-theme='glass-light'] html {
-  background: var(--bg-url, url('/bg-1.jpg')) center/cover no-repeat;
-  background-color: hsl(var(--card));
+  background-image: var(--bg-url, url('/bg-1.jpg'));
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 html, body, #root {
@@ -106,7 +103,7 @@ html, body, #root {
 
 /* 非玻璃主题：纯色底 */
 [data-theme]:not([data-theme='glass-dark']):not([data-theme='glass-light']) body {
-  background: hsl(var(--background));
+  background: hsl(var(--card));
 }
 
 body {

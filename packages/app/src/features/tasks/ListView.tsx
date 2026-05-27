@@ -484,11 +484,16 @@ export function ListView() {
 
   const onSplitTouchStart = useCallback((e: React.TouchEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     const container = containerRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
     const totalH = rect.height;
+    const bottomEl = container.querySelector(':scope > div:last-child') as HTMLElement | null;
+    // 拖拽期间禁用下方区域交互，防止误触
+    if (bottomEl) bottomEl.style.pointerEvents = 'none';
     const onMove = (ev: TouchEvent) => {
+      ev.preventDefault();
       const touch = ev.touches[0];
       if (!touch) return;
       const pct = Math.max(25, Math.min(85, ((touch.clientY - rect.top) / totalH) * 100));
@@ -496,6 +501,7 @@ export function ListView() {
       setTopPct(pct);
     };
     const onEnd = () => {
+      if (bottomEl) bottomEl.style.pointerEvents = '';
       localStorage.setItem('todograph.listSplitTopPct', String(Math.round(splitPctRef.current)));
       window.removeEventListener('touchmove', onMove);
       window.removeEventListener('touchend', onEnd);
@@ -566,15 +572,16 @@ export function ListView() {
         </div>
       </div>
 
-      {/* 拖动分隔条 */}
+      {/* 拖动分隔条：移动端可见手柄（12px高 + 中间把手），桌面端细线 */}
       <div
         ref={splitRef}
         onMouseDown={onSplitMouseDown}
         onTouchStart={onSplitTouchStart}
-        className="shrink-0 h-[5px] cursor-row-resize bg-border/30 hover:bg-[hsl(var(--primary))] transition-colors relative group"
+        className="shrink-0 h-3 lg:h-[5px] flex items-center justify-center cursor-row-resize bg-border/30 hover:bg-[hsl(var(--primary))] active:bg-[hsl(var(--primary))] transition-colors relative group touch-none select-none"
         title="拖动调整上下高度"
       >
-        <span className="absolute inset-y-0 -top-[6px] -bottom-[6px] left-0 right-0" />
+        {/* 中间拖拽把手，仅移动端显示 */}
+        <span className="lg:hidden w-8 h-1 rounded-full bg-muted-foreground/30 group-active:bg-[hsl(var(--primary))] transition-colors" />
       </div>
 
       {/* 下半部分：其他页面可做（可滚动） */}
