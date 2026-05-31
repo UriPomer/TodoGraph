@@ -26,12 +26,14 @@ export const THEMES = [
     label: '经典·深色',
     mode: 'dark',
     icon: 'moon',
+    preview: '#1a1b1e',
   },
   {
     id: 'default-light',
     label: '经典·浅色',
     mode: 'light',
     icon: 'sun',
+    preview: '#ffffff',
   },
   {
     id: 'muted-warm',
@@ -46,6 +48,13 @@ export const THEMES = [
     mode: 'light',
     icon: 'moon',
     preview: 'linear-gradient(135deg, #F5F6F8, #e0e5ec, #b8c4d4)',
+  },
+  {
+    id: 'muted-dark',
+    label: '素色·深色',
+    mode: 'dark',
+    icon: 'moon',
+    preview: 'linear-gradient(135deg, #3d3a36, #4a4540, #5a5550)',
   },
 ] as const satisfies readonly ThemeDef[];
 

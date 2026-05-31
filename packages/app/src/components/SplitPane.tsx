@@ -87,7 +87,7 @@ export function SplitPane({
 
   return (
     <div ref={containerRef} className={cn('flex h-full min-h-0 w-full', className)}>
-      <div style={{ width: leftWidth }} className="shrink-0 min-w-0">
+      <div style={{ width: leftWidth }} className="shrink-0 min-w-0 split-pane-left">
         {left}
       </div>
 

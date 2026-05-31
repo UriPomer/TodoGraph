@@ -70,6 +70,7 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
           'hover:scale-110 active:scale-90',
         )}
         onClick={(e) => {
+          if (e.shiftKey) return;
           e.stopPropagation();
           toggleStatus(id);
         }}
@@ -109,12 +110,16 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
         />
       ) : (
         <div
-          onDoubleClick={() => {
+          onDoubleClick={(e) => {
+            if (e.shiftKey) return;
             setDraft(d.title);
             setEditing(true);
           }}
+          onMouseDown={(e) => {
+            if (e.shiftKey) e.preventDefault();
+          }}
           className={cn(
-            'flex-1 min-w-0 text-sm cursor-text',
+            'flex-1 min-w-0 text-sm cursor-text select-none',
             d.status === 'done' && 'line-through text-muted-foreground',
           )}
           title="双击编辑标题"
@@ -127,17 +132,17 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
         <button
           className={cn(
             'shrink-0 opacity-0 transition-[opacity,color,transform] duration-150 ease-out',
-            'group-hover:opacity-60 hover:!opacity-100 hover:text-destructive hover:scale-110 active:scale-90',
+            'group-hover:opacity-60 hover:!opacity-100 hover:text-[hsl(var(--primary))] hover:scale-110 active:scale-90',
           )}
           onClick={async (e) => {
+            if (e.shiftKey) return;
             e.stopPropagation();
-            const cur = d.description ?? '';
-            const next = await dialog.prompt('编辑描述', { defaultValue: cur, placeholder: '任务描述...' });
-            if (next !== null && next !== cur) {
-              updateTask(id, { description: next === '' ? undefined : next });
+            const next = await dialog.prompt('编辑标题', { defaultValue: d.title });
+            if (next !== null && next.trim() && next !== d.title) {
+              updateTask(id, { title: next.trim() });
             }
           }}
-          title={d.description ? '编辑描述' : '添加描述'}
+          title="编辑标题"
         >
           <Pencil className="h-3 w-3" />
         </button>
@@ -149,6 +154,7 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
           'group-hover:opacity-60 hover:!opacity-100 hover:text-destructive hover:scale-110 active:scale-90',
         )}
         onClick={async (e) => {
+          if (e.shiftKey) return;
           e.stopPropagation();
           const ok = await dialog.confirm(`删除「${d.title}」`, { danger: true });
           if (ok) deleteTask(id);

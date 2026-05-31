@@ -13,6 +13,7 @@ import type { ThemeDef } from './themes';
 
 const HUE_STORAGE_KEY = 'todograph.brand-hue';
 const DEFAULT_HUE = 256;
+const LEFT_PANEL_OPAQUE_KEY = 'todograph.left-panel-opaque';
 
 const ICON_MAP: Record<string, typeof Palette> = {
   droplets: Droplets,
@@ -61,6 +62,49 @@ function HueSlider() {
   );
 }
 
+function LeftPanelOpaqueToggle() {
+  const [opaque, setOpaque] = useState(() => {
+    return localStorage.getItem(LEFT_PANEL_OPAQUE_KEY) === 'true';
+  });
+
+  useEffect(() => {
+    if (opaque) {
+      document.documentElement.setAttribute('data-left-panel-opaque', 'true');
+    } else {
+      document.documentElement.removeAttribute('data-left-panel-opaque');
+    }
+    localStorage.setItem(LEFT_PANEL_OPAQUE_KEY, String(opaque));
+  }, [opaque]);
+
+  return (
+    <div className="px-2 py-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-muted-foreground">列表视图不透明</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={opaque}
+          onClick={() => setOpaque((v) => !v)}
+          className={cn(
+            'relative inline-flex h-4 w-7 shrink-0 rounded-full border-2 border-transparent',
+            'transition-colors duration-200 ease-in-out',
+            'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+            opaque ? 'bg-[hsl(var(--primary))]' : 'bg-muted',
+          )}
+        >
+          <span
+            className={cn(
+              'pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow-sm',
+              'transition-transform duration-200 ease-in-out',
+              opaque ? 'translate-x-3' : 'translate-x-0',
+            )}
+          />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function ThemeSwitcher() {
   const { theme, setTheme, themes, currentThemeDef } = useTheme();
   const isGlass = currentThemeDef?.id.startsWith('glass');
@@ -91,6 +135,7 @@ export function ThemeSwitcher() {
         {isGlass && (
           <div className="border-t border-border mt-1 pt-1">
             <HueSlider />
+            <LeftPanelOpaqueToggle />
           </div>
         )}
       </DropdownMenuContent>

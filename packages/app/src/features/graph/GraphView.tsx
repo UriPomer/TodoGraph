@@ -79,6 +79,7 @@ function GraphViewInner() {
   const addTask = useTaskStore((s) => s.addTask);
   const addEdge = useTaskStore((s) => s.addEdge);
   const removeEdge = useTaskStore((s) => s.removeEdge);
+  const insertBetween = useTaskStore((s) => s.insertBetween);
   const updateTasksBulk = useTaskStore((s) => s.updateTasksBulk);
   const deleteTask = useTaskStore((s) => s.deleteTask);
   const setParent = useTaskStore((s) => s.setParent);
@@ -102,12 +103,43 @@ function GraphViewInner() {
     lastMousePosRef.current = { x: e.clientX, y: e.clientY };
   }, []);
 
-  // ===== 空格/回车键：在鼠标位置创建新节点 =====
+  // ===== 本地 nodes state（放在 handleKeyDown 之前，避免 deps 引用 TDZ） =====
+  const [rfNodes, setRfNodes] = useState<RFTaskNode[]>([]);
+
+  // ===== 空格/回车键：在鼠标位置创建新节点；若选中单个父节点则创建为子节点 =====
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      // 只在非输入框聚焦时响应
       if ((e.key === ' ' || e.key === 'Enter') && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
         e.preventDefault();
+        const selIds = selectedIdsRef.current;
+        // 检查是否选中了唯一一个 group 节点 → 在其下创建子节点
+        if (selIds.length === 1) {
+          const selNode = nodes.find((n) => n.id === selIds[0]);
+          if (selNode) {
+            const selRFNode = rfNodes.find((n) => n.id === selIds[0]);
+            if (selRFNode && selRFNode.type === 'group') {
+              const metrics = buildHierarchyMetrics(nodes);
+              const depth = metrics.depthById.get(selIds[0]) ?? 0;
+              if (depth + 1 < MAX_HIERARCHY_DEPTH) {
+                const siblings = nodes.filter((n) => n.parentId === selIds[0]);
+                let childY = GROUP_PADDING_Y;
+                for (const s of siblings) {
+                  const b = (s.y ?? 0) + CHILD_DEFAULT_H;
+                  if (b > childY) childY = b;
+                }
+                setPendingCreate({
+                  flowX: GROUP_PADDING_X,
+                  flowY: childY + 12,
+                  fromId: '',
+                  fromHandleType: null,
+                  parentId: selIds[0],
+                });
+                return;
+              }
+              return;
+            }
+          }
+        }
         const flow = rf.screenToFlowPosition(lastMousePosRef.current);
         setPendingCreate({
           flowX: flow.x - 90,
@@ -117,12 +149,11 @@ function GraphViewInner() {
         });
       }
     },
-    [rf],
+    [rf, nodes, rfNodes],
   );
 
   // ===== 本地 nodes state =====
   // 拖动的位置先只更新本地 state（实时响应），drag stop 才 flush 回 store。
-  const [rfNodes, setRfNodes] = useState<RFTaskNode[]>([]);
   const draggingRef = useRef(false);
 
   interface DragState {
@@ -708,6 +739,7 @@ function GraphViewInner() {
     flowY: number;
     fromId: string;
     fromHandleType: string | null;
+    parentId?: string;
   } | null>(null);
 
   // ===== 全局 pointer 位置追踪：解决 React Flow v12 移动端 onConnectEnd 不传原生事件的问题 =====
@@ -764,11 +796,13 @@ function GraphViewInner() {
   const commitPendingCreate = useCallback(
     (title: string) => {
       if (!pendingCreate) return;
-      const task = addTask({
+      const opts: { title: string; x: number; y: number; parentId?: string } = {
         title,
         x: pendingCreate.flowX,
         y: pendingCreate.flowY,
-      });
+      };
+      if (pendingCreate.parentId) opts.parentId = pendingCreate.parentId;
+      const task = addTask(opts);
       // 空格键创建时 fromId 为空，不创建依赖边
       if (pendingCreate.fromId) {
         // 从右侧 source handle 拖出: 旧节点 → 新节点（旧阻碍新）
@@ -925,6 +959,29 @@ function GraphViewInner() {
     setSelectionMenu({ x: cx - rect.left, y: cy - rect.top, ids: [...ids] });
   }, []);
 
+  // Shift+点击多选后也弹出菜单：onSelectionEnd 只在框选拖拽时触发，
+  // 点选需要在 click 后延迟检查选中数量。
+  const lastClickPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const onNodeClick = useCallback(
+    (_e: React.MouseEvent, node: RFNode) => {
+      lastClickPosRef.current = { x: _e.clientX, y: _e.clientY };
+      // 延迟一帧等 React Flow 更新 selectedIdsRef
+      window.setTimeout(() => {
+        const ids = selectedIdsRef.current;
+        if (ids.length >= 2) {
+          const rect = containerRef.current?.getBoundingClientRect();
+          if (!rect) return;
+          setSelectionMenu({
+            x: lastClickPosRef.current.x - rect.left,
+            y: lastClickPosRef.current.y - rect.top,
+            ids: [...ids],
+          });
+        }
+      }, 0);
+    },
+    [],
+  );
+
   const promptMoveSelectionToPage = useCallback(
     async (idsInput?: string[]) => {
       const ids = [...new Set(idsInput ?? selectedNodeIds)];
@@ -975,6 +1032,16 @@ function GraphViewInner() {
         disabled: ids.length < 2,
       },
       {
+        label: '在中间插入',
+        hint: '依赖链插入',
+        onClick: async () => {
+          const title = await dialog.prompt('新任务名称', { defaultValue: '未命名' });
+          if (title === null) return;
+          insertBetween(ids[0], ids[1], title || '未命名');
+        },
+        disabled: ids.length !== 2,
+      },
+      {
         label: '解除分组',
         hint: '清除 parentId',
         onClick: () => {
@@ -1022,7 +1089,7 @@ function GraphViewInner() {
         },
       },
     ];
-  }, [selectionMenu, nodes, groupTasks, setParent, updateTasksBulk, deleteTask, promptMoveSelectionToPage]);
+  }, [selectionMenu, nodes, groupTasks, setParent, updateTasksBulk, deleteTask, promptMoveSelectionToPage, insertBetween]);
 
   return (
     <div ref={containerRef} className="relative h-full w-full" style={{ touchAction: 'none', WebkitTouchCallout: 'none' }} onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
@@ -1071,6 +1138,7 @@ function GraphViewInner() {
         onConnectEnd={onConnectEnd}
         isValidConnection={isValidConnection}
         onEdgeClick={onEdgeClick}
+        onNodeClick={onNodeClick}
         onSelectionChange={onSelectionChange}
         onSelectionEnd={onSelectionEnd}
         onMoveEnd={onMoveEnd}
@@ -1079,7 +1147,7 @@ function GraphViewInner() {
         // - 按住 Shift 左键拖 = 框选（selectionKeyCode）
         // React Flow 的语义：selectionKeyCode 被按下时 panOnDrag 自动让位给框选
         selectionKeyCode="Shift"
-        multiSelectionKeyCode={['Meta', 'Control']}
+        multiSelectionKeyCode={['Meta', 'Control', 'Shift']}
         // onlyRenderVisibleElements 需节点显式 width/height，否则首帧可能被误判到视口外。
         // 目前普通任务节点没有显式尺寸，保守起见不开启；改用 data 稳定化 + memo 缓解渲染开销。
         connectionRadius={48}

@@ -51,6 +51,8 @@ interface TaskStore {
   addEdge: (from: string, to: string) => boolean;
   removeEdge: (from: string, to: string) => void;
 
+  insertBetween: (aId: string, bId: string, title: string) => Task | null;
+
   // ---- hierarchy ----
   /**
    * 把 childId 归入 parentId 下（parentId === null 表示解除归属到顶层）。
@@ -599,6 +601,52 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       pushPre();
       set((s) => ({ edges: s.edges.filter((e) => !(e.from === from && e.to === to)) }));
       scheduleSave();
+    },
+
+    insertBetween: (aId, bId, title) => {
+      pushPre();
+      const state = get();
+      const nodeA = state.nodes.find((n) => n.id === aId);
+      const nodeB = state.nodes.find((n) => n.id === bId);
+      if (!nodeA || !nodeB) return null;
+
+      const mx = ((nodeA.x ?? 0) + (nodeB.x ?? 0)) / 2;
+      const my = ((nodeA.y ?? 0) + (nodeB.y ?? 0)) / 2;
+
+      const safeTitle = (title || '未命名').slice(0, MAX_TITLE_LENGTH);
+      const newTask: Task = {
+        id: uid(),
+        title: safeTitle,
+        status: 'todo',
+        x: mx - 90,
+        y: my - 28,
+        width: measureTextWidth(safeTitle),
+      };
+
+      const abEdge = state.edges.find((e) => e.from === aId && e.to === bId);
+      const baEdge = state.edges.find((e) => e.from === bId && e.to === aId);
+
+      const edges = state.edges.filter(
+        (e) => !(e.from === aId && e.to === bId) && !(e.from === bId && e.to === aId),
+      );
+
+      if (abEdge) {
+        edges.push({ from: aId, to: newTask.id }, { from: newTask.id, to: bId });
+      } else if (baEdge) {
+        edges.push({ from: bId, to: newTask.id }, { from: newTask.id, to: aId });
+      } else {
+        const aLeft = nodeA.x ?? 0;
+        const bLeft = nodeB.x ?? 0;
+        if (aLeft <= bLeft) {
+          edges.push({ from: aId, to: newTask.id }, { from: newTask.id, to: bId });
+        } else {
+          edges.push({ from: bId, to: newTask.id }, { from: newTask.id, to: aId });
+        }
+      }
+
+      set({ nodes: [...state.nodes, newTask], edges });
+      scheduleSave();
+      return newTask;
     },
 
     setParent: (childId, parentId, positionHint) => {

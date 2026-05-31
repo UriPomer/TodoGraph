@@ -2,6 +2,7 @@
 @import './themes/default.css';
 @import './themes/glass.css';
 @import './themes/muted.css';
+@import './themes/muted-dark.css';
 
 @tailwind base;
 @tailwind components;
@@ -104,6 +105,13 @@ html, body, #root {
 /* 非玻璃主题：纯色底 */
 [data-theme]:not([data-theme='glass-dark']):not([data-theme='glass-light']) body {
   background: hsl(var(--card));
+}
+
+/* 列表视图不透明 */
+[data-left-panel-opaque='true'] .split-pane-left {
+  background: hsl(var(--card));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 body {

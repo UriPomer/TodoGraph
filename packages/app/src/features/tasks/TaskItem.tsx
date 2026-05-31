@@ -260,7 +260,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         />
       ) : (
         <span
-          onDoubleClick={() => setEditing(true)}
+          onDoubleClick={() => { setDraft(task.title); setEditing(true); }}
           className={cn(
             'flex-1 min-w-0 truncate text-sm cursor-text',
             task.status === 'done' && 'line-through',
