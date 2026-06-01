@@ -651,20 +651,21 @@ export const useTaskStore = create<TaskStore>((set, get) => {
 
     setParent: (childId, parentId, positionHint) => {
       const state = get();
-      if (parentId && wouldCreateParentCycle(state.nodes, childId, parentId)) {
+      const idx = buildHierarchyIndex(state.nodes);
+      if (parentId && wouldCreateParentCycleFromIndex(idx, childId, parentId)) {
         toast.error('父子关系会形成循环', '已阻止');
         return false;
       }
-      if (wouldExceedMaxDepth(state.nodes, childId, parentId)) {
+      if (wouldExceedMaxDepthFromIndex(idx, childId, parentId)) {
         toast.error(`嵌套不能超过 ${MAX_HIERARCHY_DEPTH} 层`, '已阻止');
         return false;
       }
-      const child = state.nodes.find((n) => n.id === childId);
+      const child = idx.byId.get(childId);
       if (!child) return false;
       pushPre();
-      const newParent = parentId ? state.nodes.find((n) => n.id === parentId) : undefined;
+      const newParent = parentId ? idx.byId.get(parentId) : undefined;
       const oldParent = child.parentId
-        ? state.nodes.find((n) => n.id === child.parentId)
+        ? idx.byId.get(child.parentId)
         : undefined;
       // 父子坐标系转换：store 保存的坐标总是相对 parentId（若有）。
       // 转换规则：先把 child 变成世界坐标，再减去新父的世界坐标得到新的相对坐标。
@@ -708,8 +709,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       if (childIds.length === 0) return null;
       const state = get();
       const index = buildHierarchyIndex(state.nodes);
-      const byId = new Map(state.nodes.map((n) => [n.id, n]));
-      const targets = childIds.filter((id) => byId.has(id));
+      const targets = childIds.filter((id) => index.byId.has(id));
       if (targets.length === 0) return null;
 
       // 若复用已有父：按 setParent 规则逐个校验（循环 + 深度）
@@ -737,6 +737,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         }
       }
 
+      const byId = index.byId;
       const worldPosOf = (id: string): { x: number; y: number } => {
         const n = byId.get(id)!;
         if (!n.parentId) return { x: n.x ?? 0, y: n.y ?? 0 };
@@ -769,7 +770,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       const parentX = parentTask.x ?? 0;
       const parentY = parentTask.y ?? 0;
       const targetSet = new Set(targets);
-      const nextIndex = buildHierarchyIndex(isNewParent ? [...state.nodes, parentTask] : state.nodes);
 
       pushPre();
       set((s) => {
@@ -777,11 +777,12 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         if (isNewParent) next = [...next, parentTask];
         next = next.map((n) => {
           if (!targetSet.has(n.id)) return n;
-          if (!isNewParent && wouldCreateParentCycleFromIndex(nextIndex, n.id, parentId)) return n;
+          // 对已有父：再次校验（防止并发修改）
+          if (!isNewParent && wouldCreateParentCycleFromIndex(index, n.id, parentId)) return n;
           let worldX = n.x ?? 0;
           let worldY = n.y ?? 0;
           if (n.parentId) {
-            const oldParent = next.find((p) => p.id === n.parentId);
+            const oldParent = index.byId.get(n.parentId);
             if (oldParent) {
               worldX += oldParent.x ?? 0;
               worldY += oldParent.y ?? 0;

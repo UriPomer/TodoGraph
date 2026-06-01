@@ -22,24 +22,26 @@ export function computeNodeSizeMap(nodes: Task[]): Map<string, { w: number; h: n
   }
 
   const memo = new Map<string, { w: number; h: number }>();
-  const visit = (id: string, seen = new Set<string>()): { w: number; h: number } => {
+  const visiting = new Set<string>();
+  const visit = (id: string): { w: number; h: number } => {
     const cached = memo.get(id);
     if (cached) return cached;
     const node = byId.get(id);
-    if (!node || seen.has(id)) {
+    if (!node || visiting.has(id)) {
       return { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
     }
-    seen.add(id);
+    visiting.add(id);
     const childIds = childrenOf.get(id) ?? [];
     if (childIds.length === 0) {
       const leaf = { w: node.width ?? CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
       memo.set(id, leaf);
+      visiting.delete(id);
       return leaf;
     }
     const size = computeGroupSize(
       childIds.map((childId) => {
         const child = byId.get(childId)!;
-        const childSize = visit(childId, new Set(seen));
+        const childSize = visit(childId);
         return {
           x: child.x ?? 0,
           y: child.y ?? 0,
@@ -48,6 +50,7 @@ export function computeNodeSizeMap(nodes: Task[]): Map<string, { w: number; h: n
         };
       }),
     );
+    visiting.delete(id);
     memo.set(id, size);
     return size;
   };
@@ -139,13 +142,13 @@ function clusterFits(
   dx: number,
   dy: number,
 ): boolean {
-  const shifted = moving.map((rect) => ({
-    ...rect,
-    x: rect.x + dx,
-    y: rect.y + dy,
-  }));
-  // 拒绝任何节点 y < 0
-  if (shifted.some((r) => r.y < 0)) return false;
+  // 单遍构建 shifted + 提前拒绝 y < 0（省去建完整数组再检查的第二遍）
+  const shifted: CollisionRect[] = [];
+  for (const rect of moving) {
+    const sy = rect.y + dy;
+    if (sy < 0) return false;
+    shifted.push({ ...rect, x: rect.x + dx, y: sy });
+  }
   for (const rect of shifted) {
     for (const other of occupied) {
       if (rectsOverlap(rect, other, PAGE_MOVE_GAP)) return false;

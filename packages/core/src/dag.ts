@@ -49,8 +49,9 @@ export function topoSort(graph: Graph): string[] | null {
   const queue: string[] = [];
   for (const [id, d] of indeg) if (d === 0) queue.push(id);
   const order: string[] = [];
-  while (queue.length) {
-    const id = queue.shift()!;
+  let head = 0;
+  while (head < queue.length) {
+    const id = queue[head++]!;
     order.push(id);
     for (const c of children.get(id)!) {
       indeg.set(c, indeg.get(c)! - 1);

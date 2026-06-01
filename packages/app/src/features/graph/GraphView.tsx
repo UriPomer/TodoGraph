@@ -206,6 +206,8 @@ function GraphViewInner() {
    * 所有被选节点的新位置。否则 bug1：多选拖动末态错乱 + 误形成父子。
    */
   const isMultiDragRef = useRef(false);
+  // 拖拽开始时预计算被拖节点的所有后代 ID，拖拽期间 O(1) 检测替代递归 isDescendantOf
+  const dragDescendantIdsRef = useRef(new Set<string>());
 
   // 父节点 id → 子节点集合。用于计算父容器尺寸 & 批量移动。
   const parentMap = useMemo(() => {
@@ -518,7 +520,7 @@ function GraphViewInner() {
       for (const n of intersecting) {
         if (n.id === dragId) continue;
         if (n.id === GHOST_ID || n.type === 'mergeGhost') continue;
-        if (isDescendantOf(n.id, dragId)) continue;
+        if (dragDescendantIdsRef.current.has(n.id)) continue;
         // 已在该父下 —— 无需再合并
         if (draggedNode.parentId === n.id) continue;
         // 深度检查：挂上后不能超层
@@ -600,7 +602,6 @@ function GraphViewInner() {
     },
     [
       rf,
-      isDescendantOf,
       clearMergeTimer,
       clearUngroupTimer,
       mergeHoverMs,
@@ -613,12 +614,27 @@ function GraphViewInner() {
   const onNodeDragStart = useCallback(
     (_evt: React.MouseEvent, node: RFNode) => {
       draggingRef.current = true;
-      // 统计当前被选节点数：>1 即为多选拖动
-      const selectedCount = rfNodes.filter((n) => n.selected).length;
+      // 统计当前被选节点数：>1 即为多选拖动（用 ref 避免 O(n) filter）
+      const selectedCount = selectedIdsRef.current.length;
       isMultiDragRef.current = selectedCount > 1;
+      // 预计算被拖节点的所有后代，拖拽期间 O(1) 查询
+      const descSet = new Set<string>();
+      descSet.add(node.id);
+      const stack = [node.id];
+      while (stack.length) {
+        const id = stack.pop()!;
+        const children = parentMap.get(id) ?? [];
+        for (const cid of children) {
+          if (!descSet.has(cid)) {
+            descSet.add(cid);
+            stack.push(cid);
+          }
+        }
+      }
+      dragDescendantIdsRef.current = descSet;
       setDragState({ dragId: node.id, mergeCandidatePending: null, mergeTarget: null, ungroupFrom: null });
     },
-    [rfNodes],
+    [parentMap],
   );
 
   const onNodeDragStop = useCallback(

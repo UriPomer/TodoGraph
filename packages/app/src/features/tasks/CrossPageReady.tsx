@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { ArrowRight } from 'lucide-react';
 import type { AllTasksItem } from '@todograph/shared';
 import { useTaskStore } from '@/stores/useTaskStore';
@@ -8,8 +9,12 @@ export function CrossPageReady() {
   const allTasks = useWorkspaceStore((s) => s.allTasks);
   const switchPage = useWorkspaceStore((s) => s.switchPage);
 
-  const ready = allTasks.filter(
-    (t) => t._pageId !== activePageId && t._ready && !t.parentId,
+  const ready = useMemo(
+    () =>
+      allTasks.filter(
+        (t) => t._pageId !== activePageId && t._ready && !t.parentId,
+      ),
+    [allTasks, activePageId],
   );
 
   if (ready.length === 0) return null;

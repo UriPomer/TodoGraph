@@ -283,8 +283,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         targetPageId = info.id;
         targetTitle = info.title;
       } else {
-        targetTitle =
-          get().meta?.pages.find((page) => page.id === targetPageId)?.title ?? targetPageId;
+        const page = get().meta?.pages.find((page) => page.id === targetPageId);
+        targetTitle = page?.title ?? targetPageId;
       }
 
       if (targetPageId === sourcePageId) {

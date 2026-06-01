@@ -25,6 +25,28 @@ export const DROP_COLLISION_GAP = 12;
 const DROP_COLLISION_STEP = 24;
 const DROP_COLLISION_MAX_RING = 30;
 
+// 预计算螺旋偏移量，按环 × 欧几里得距离排序，消除每次调用的构建+排序开销
+interface SpiralOffset {
+  dx: number;
+  dy: number;
+  d2: number;
+}
+const SPIRAL_OFFSETS: SpiralOffset[] = (() => {
+  const offsets: SpiralOffset[] = [];
+  for (let r = 1; r <= DROP_COLLISION_MAX_RING; r++) {
+    const ring: SpiralOffset[] = [];
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        ring.push({ dx, dy, d2: dx * dx + dy * dy });
+      }
+    }
+    ring.sort((a, b) => a.d2 - b.d2 || a.dy - b.dy || a.dx - b.dx);
+    for (const off of ring) offsets.push(off);
+  }
+  return offsets;
+})();
+
 export function resolveDropCollision({
   x,
   y,
@@ -40,24 +62,12 @@ export function resolveDropCollision({
     return { x, y };
   }
 
-  for (let ring = 1; ring <= maxRing; ring++) {
-    const candidates: Array<{ x: number; y: number; d2: number }> = [];
-    for (let dx = -ring; dx <= ring; dx++) {
-      for (let dy = -ring; dy <= ring; dy++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
-        candidates.push({
-          x: x + dx * step,
-          y: y + dy * step,
-          d2: dx * dx + dy * dy,
-        });
-      }
-    }
-    candidates.sort((a, b) => a.d2 - b.d2 || a.y - b.y || a.x - b.x);
-    for (const candidate of candidates) {
-      const box = { x: candidate.x, y: candidate.y, w, h };
-      if (occupied.every((rect) => !rectsOverlap(box, rect, gap))) {
-        return { x: candidate.x, y: candidate.y };
-      }
+  const actualMaxRing = Math.min(maxRing, DROP_COLLISION_MAX_RING);
+  for (const off of SPIRAL_OFFSETS) {
+    if (Math.max(Math.abs(off.dx), Math.abs(off.dy)) > actualMaxRing) continue;
+    const box = { x: x + off.dx * step, y: y + off.dy * step, w, h };
+    if (occupied.every((rect) => !rectsOverlap(box, rect, gap))) {
+      return { x: box.x, y: box.y };
     }
   }
 
@@ -71,11 +81,16 @@ export function resolvePinnedDropPushAway({
   step = DROP_COLLISION_STEP,
   maxRing = DROP_COLLISION_MAX_RING,
 }: ResolvePinnedDropPushAwayInput): Array<{ id: string; x: number; y: number }> {
-  const impacted = occupied.filter((rect) => rectsOverlap(pinned, rect, gap));
+  const impacted: CollisionRect[] = [];
+  const staticRects: CollisionRect[] = [];
+  for (const rect of occupied) {
+    if (rectsOverlap(pinned, rect, gap)) {
+      impacted.push(rect);
+    } else {
+      staticRects.push(rect);
+    }
+  }
   if (impacted.length === 0) return [];
-
-  const impactedIds = new Set(impacted.map((rect) => rect.id));
-  const staticRects = occupied.filter((rect) => !impactedIds.has(rect.id));
   const placed: CollisionRect[] = [pinned, ...staticRects];
 
   impacted.sort((a, b) => {
