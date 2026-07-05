@@ -43,4 +43,18 @@ export class FileUserRepository implements UserRepository {
     await fs.writeFile(tmp, JSON.stringify(all, null, 2), 'utf-8');
     await fs.rename(tmp, this.filePath);
   }
+
+  async updatePasswordHash(userId: string, passwordHash: string, sessionVersion: number): Promise<void> {
+    const all = await this.findAll();
+    const user = all.find((u) => u.id === userId);
+    if (!user) {
+      throw new Error('user not found');
+    }
+    user.passwordHash = passwordHash;
+    user.sessionVersion = sessionVersion;
+    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+    const tmp = this.filePath + '.tmp';
+    await fs.writeFile(tmp, JSON.stringify(all, null, 2), 'utf-8');
+    await fs.rename(tmp, this.filePath);
+  }
 }

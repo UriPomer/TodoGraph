@@ -23,7 +23,13 @@ describe('FileUserRepository', () => {
   });
 
   it('creates and finds a user by username and id', async () => {
-    const user = { id: 'u1', username: 'alice', passwordHash: 'salt:hash', createdAt: new Date().toISOString() };
+    const user = {
+      id: 'u1',
+      username: 'alice',
+      passwordHash: 'salt:hash',
+      sessionVersion: 0,
+      createdAt: new Date().toISOString(),
+    };
     await repo.create(user);
     const byUsername = await repo.findByUsername('alice');
     expect(byUsername).toEqual(user);
@@ -37,8 +43,41 @@ describe('FileUserRepository', () => {
   });
 
   it('rejects duplicate usernames', async () => {
-    const user = { id: 'u1', username: 'bob', passwordHash: 'salt:hash', createdAt: new Date().toISOString() };
+    const user = {
+      id: 'u1',
+      username: 'bob',
+      passwordHash: 'salt:hash',
+      sessionVersion: 0,
+      createdAt: new Date().toISOString(),
+    };
     await repo.create(user);
     await expect(repo.create({ ...user, id: 'u2' })).rejects.toThrow('username already exists');
+  });
+
+  it('reads legacy users without sessionVersion and preserves fields when updating password hash', async () => {
+    const legacyUser = {
+      id: 'u1',
+      username: 'legacy-user',
+      passwordHash: 'old-hash',
+      createdAt: new Date().toISOString(),
+    };
+    const usersDir = path.join(dataDir, 'users');
+    const usersFile = path.join(usersDir, 'users.json');
+    await fs.mkdir(usersDir, { recursive: true });
+    await fs.writeFile(usersFile, JSON.stringify([legacyUser], null, 2), 'utf-8');
+
+    const all = await repo.findAll();
+    expect(all).toEqual([{ ...legacyUser, sessionVersion: 0 }]);
+
+    await repo.updatePasswordHash('u1', 'new-hash', 1);
+
+    const persisted = JSON.parse(await fs.readFile(usersFile, 'utf-8')) as Array<Record<string, unknown>>;
+    expect(persisted).toEqual([
+      {
+        ...legacyUser,
+        passwordHash: 'new-hash',
+        sessionVersion: 1,
+      },
+    ]);
   });
 });

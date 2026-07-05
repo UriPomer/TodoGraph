@@ -31,6 +31,10 @@ interface TaskStore {
   // ---- lifecycle ----
   /** 加载（或切换到）指定页面；会把之前页面的 nodes/edges 整体替换。 */
   loadPage: (pageId: string) => Promise<void>;
+  /** 用服务端返回的数据替换当前页，不先 flush pending local edits。 */
+  replaceLoadedPage: (pageId: string, data: PageData) => void;
+  /** 暂停当前防抖队列中的未写出保存；返回函数可在操作失败时恢复队列。 */
+  discardPendingSave: () => () => void;
   /** 立即把 pending 的保存写出去 —— 切页/卸载前调用。 */
   flush: () => Promise<void>;
 
@@ -438,6 +442,28 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     if (pendingPageId) await doSave({ propagateError: true });
   };
 
+  const discardPendingSave = (): (() => void) => {
+    const previousPendingPageId = pendingPageId;
+    const hadSaveTimer = saveTimer !== null;
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    pendingPageId = null;
+    let restored = false;
+    return () => {
+      if (restored || !previousPendingPageId) return;
+      restored = true;
+      pendingPageId = previousPendingPageId;
+      if (hadSaveTimer && saveTimer === null) {
+        saveTimer = setTimeout(() => {
+          saveTimer = null;
+          void doSave();
+        }, 250);
+      }
+    };
+  };
+
   /**
    * 在 mutation 之前记录前态快照 —— undo 返回的就是这个前态。
    * nodes/edges 引用本身不可变（store 所有写都走 immutable 模式），
@@ -482,6 +508,22 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         throw err;
       }
     },
+
+    replaceLoadedPage: (pageId, data) => {
+      discardPendingSave();
+      set({
+        activePageId: pageId,
+        pageVersion: data.version ?? 0,
+        nodes: data.nodes,
+        edges: data.edges,
+        loaded: true,
+        backupDirty: false,
+      });
+      useHistoryStore.getState().clear();
+      startPolling(pageId);
+    },
+
+    discardPendingSave,
 
     flush,
 

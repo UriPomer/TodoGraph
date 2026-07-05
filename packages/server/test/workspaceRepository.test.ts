@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { createHash } from 'node:crypto';
 import { FileWorkspaceRepository } from '../src/repositories/FileWorkspaceRepository.js';
 import { MetaVersionConflictError, VersionConflictError } from '../src/repositories/Repository.js';
 
@@ -216,6 +217,520 @@ describe('FileWorkspaceRepository concurrency guards', () => {
       gate.resolve();
     }
   });
+
+  it('lists backups newest first and restores a selected backup', async () => {
+    const repo = new FileWorkspaceRepository(userDir, rootDir);
+    const meta = await repo.loadMeta();
+    const pageId = meta.pages[0]!.id;
+    const original = await repo.loadPage(pageId);
+
+    await repo.createBackup(pageId);
+    const first = (await repo.listBackups(pageId))[0]!;
+
+    await repo.savePage(pageId, {
+      nodes: [{ id: 'changed', title: 'Changed', status: 'todo', x: 1, y: 2 }],
+      edges: [],
+      version: original.version,
+    });
+    await repo.createBackup(pageId);
+
+    const backups = await repo.listBackups(pageId);
+    expect(backups.length).toBeGreaterThanOrEqual(2);
+    expect(backups[0]!.createdAt >= backups[1]!.createdAt).toBe(true);
+    expect(Number.isNaN(new Date(backups[0]!.createdAt).getTime())).toBe(false);
+    expect(backups[0]!.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+    const restored = await repo.restoreBackup(pageId, first.name);
+    expect(restored.nodes.map((n) => n.id)).toEqual(original.nodes.map((n) => n.id));
+  });
+
+  it('restores the latest backup while preserving newer un-backed changes', async () => {
+    const meta = await repo.loadMeta();
+    const pageId = meta.pages[0]!.id;
+    const original = await repo.loadPage(pageId);
+
+    await repo.createBackup(pageId);
+
+    await repo.savePage(pageId, {
+      nodes: [{ id: 'backup-version', title: 'Backup version', status: 'todo', x: 10, y: 20 }],
+      edges: [],
+      version: original.version,
+    });
+    await repo.createBackup(pageId);
+
+    const backedUp = await repo.loadPage(pageId);
+    await repo.savePage(pageId, {
+      nodes: [{ id: 'live-version', title: 'Live version', status: 'todo', x: 30, y: 40 }],
+      edges: [],
+      version: backedUp.version,
+    });
+
+    const restored = await repo.restoreLatestBackup(pageId);
+    expect(restored.nodes.map((n) => n.id)).toEqual(['backup-version']);
+
+    const current = await repo.loadPage(pageId);
+    expect(current).toEqual(restored);
+  });
+
+  it('exports and imports a complete workspace snapshot', async () => {
+    const repo = new FileWorkspaceRepository(userDir, rootDir);
+    const before = await repo.exportWorkspace();
+    const pageId = before.meta.pages[0]!.id;
+
+    await repo.savePage(pageId, {
+      nodes: [{ id: 'after-export', title: 'After export', status: 'todo', x: 10, y: 20 }],
+      edges: [],
+      version: before.pages[pageId]!.version,
+    });
+
+    const restoredMeta = await repo.importWorkspace(before);
+    const restored = await repo.loadPage(pageId);
+
+    expect(restoredMeta.pages.map((p) => p.id)).toEqual(before.meta.pages.map((p) => p.id));
+    expect(restored.nodes.map((n) => n.id)).toEqual(before.pages[pageId]!.nodes.map((n) => n.id));
+  });
+
+  it('rejects malformed workspace imports without mutating live workspace state', async () => {
+    const before = await repo.exportWorkspace();
+    const pageId = before.meta.pages[0]!.id;
+
+    await repo.savePage(pageId, {
+      nodes: [{ id: 'live-state', title: 'Live state', status: 'todo', x: 10, y: 20 }],
+      edges: [],
+      version: before.pages[pageId]!.version,
+    });
+
+    const liveMeta = await repo.loadMeta();
+    const livePage = await repo.loadPage(pageId);
+    const malformed = {
+      ...before,
+      meta: { ...before.meta, activePageId: 'missing-page' },
+      pages: {
+        ...before.pages,
+        rogue: before.pages[pageId]!,
+      },
+    };
+
+    await expect(repo.importWorkspace(malformed)).rejects.toThrow();
+    await expect(repo.loadMeta()).resolves.toEqual(liveMeta);
+    await expect(repo.loadPage(pageId)).resolves.toEqual(livePage);
+  });
+
+  it('preserves imported page versions', async () => {
+    const before = await repo.exportWorkspace();
+    const pageId = before.meta.pages[0]!.id;
+    const importedVersion = 42;
+    const imported = {
+      ...before,
+      pages: {
+        ...before.pages,
+        [pageId]: {
+          ...before.pages[pageId]!,
+          nodes: [{ id: 'imported-node', title: 'Imported node', status: 'todo', x: 15, y: 25 }],
+          version: importedVersion,
+        },
+      },
+    };
+
+    await repo.importWorkspace(imported);
+
+    const restored = await repo.loadPage(pageId);
+    expect(restored.version).toBe(importedVersion);
+    expect(restored.nodes).toEqual([
+      { id: 'imported-node', title: 'Imported node', status: 'todo', x: 15, y: 25 },
+    ]);
+  });
+
+  it('keeps a committed workspace import during startup recovery', async () => {
+    const before = await repo.exportWorkspace();
+    const pageId = before.meta.pages[0]!.id;
+    const imported = {
+      ...before,
+      meta: {
+        ...before.meta,
+        revision: before.meta.revision + 1,
+        pages: before.meta.pages.map((page) =>
+          page.id === pageId ? { ...page, title: 'Imported title' } : page,
+        ),
+      },
+      pages: {
+        ...before.pages,
+        [pageId]: {
+          ...before.pages[pageId]!,
+          version: before.pages[pageId]!.version + 1,
+          nodes: [{ id: 'imported-node', title: 'Imported node', status: 'todo', x: 50, y: 60 }],
+        },
+      },
+    };
+    const journalPath = path.join(userDir, '.workspace-import-journal.json');
+    const backupDirName = '.workspace-import-pages-backup-test';
+    const stagingDirName = '.workspace-import-staging-test';
+    const backupDir = path.join(userDir, backupDirName);
+    const stagingDir = path.join(userDir, stagingDirName);
+
+    await fs.rm(path.join(userDir, 'pages'), { recursive: true, force: true });
+    await fs.mkdir(path.join(userDir, 'pages'), { recursive: true });
+    await fs.mkdir(backupDir, { recursive: true });
+    await fs.mkdir(stagingDir, { recursive: true });
+    await fs.writeFile(repoPagePath(userDir, pageId), JSON.stringify(imported.pages[pageId], null, 2), 'utf-8');
+    await fs.writeFile(
+      path.join(backupDir, `${pageId}.json`),
+      JSON.stringify(before.pages[pageId], null, 2),
+      'utf-8',
+    );
+    await fs.writeFile(path.join(stagingDir, 'meta.json'), JSON.stringify(imported.meta, null, 2), 'utf-8');
+    await fs.writeFile(path.join(userDir, 'meta.json'), JSON.stringify(imported.meta, null, 2), 'utf-8');
+    await fs.writeFile(
+      journalPath,
+      JSON.stringify({
+        phase: 'committed',
+        previousMetaRaw: JSON.stringify(before.meta, null, 2),
+        backupPagesDirName: backupDirName,
+        stagingDirName,
+      }),
+      'utf-8',
+    );
+
+    const recoveredRepo = new FileWorkspaceRepository(userDir, rootDir);
+    const recoveredMeta = await recoveredRepo.loadMeta();
+    const recoveredPage = await recoveredRepo.loadPage(pageId);
+
+    expect(recoveredMeta.pages.find((page) => page.id === pageId)?.title).toBe('Imported title');
+    expect(recoveredMeta.revision).toBe(imported.meta.revision);
+    expect(recoveredPage).toEqual(imported.pages[pageId]);
+    await expect(fs.access(journalPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(backupDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(stagingDir)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('rolls back an incomplete workspace import during startup recovery', async () => {
+    const before = await repo.exportWorkspace();
+    const pageId = before.meta.pages[0]!.id;
+    const imported = {
+      ...before,
+      meta: {
+        ...before.meta,
+        revision: before.meta.revision + 1,
+        pages: before.meta.pages.map((page) =>
+          page.id === pageId ? { ...page, title: 'Imported title' } : page,
+        ),
+      },
+      pages: {
+        ...before.pages,
+        [pageId]: {
+          ...before.pages[pageId]!,
+          version: before.pages[pageId]!.version + 1,
+          nodes: [{ id: 'imported-node', title: 'Imported node', status: 'todo', x: 50, y: 60 }],
+        },
+      },
+    };
+    const journalPath = path.join(userDir, '.workspace-import-journal.json');
+    const backupDirName = '.workspace-import-pages-backup-test';
+    const stagingDirName = '.workspace-import-staging-test';
+    const backupDir = path.join(userDir, backupDirName);
+    const stagingDir = path.join(userDir, stagingDirName);
+
+    await fs.rm(path.join(userDir, 'pages'), { recursive: true, force: true });
+    await fs.mkdir(path.join(userDir, 'pages'), { recursive: true });
+    await fs.mkdir(backupDir, { recursive: true });
+    await fs.mkdir(stagingDir, { recursive: true });
+    await fs.writeFile(repoPagePath(userDir, pageId), JSON.stringify(imported.pages[pageId], null, 2), 'utf-8');
+    await fs.writeFile(
+      path.join(backupDir, `${pageId}.json`),
+      JSON.stringify(before.pages[pageId], null, 2),
+      'utf-8',
+    );
+    await fs.writeFile(path.join(stagingDir, 'meta.json'), JSON.stringify(imported.meta, null, 2), 'utf-8');
+    await fs.writeFile(path.join(userDir, 'meta.json'), JSON.stringify(before.meta, null, 2), 'utf-8');
+    await fs.writeFile(
+      journalPath,
+      JSON.stringify({
+        phase: 'staged_pages_live',
+        previousMetaRaw: JSON.stringify(before.meta, null, 2),
+        backupPagesDirName: backupDirName,
+        stagingDirName,
+      }),
+      'utf-8',
+    );
+
+    const recoveredRepo = new FileWorkspaceRepository(userDir, rootDir);
+    const recoveredMeta = await recoveredRepo.loadMeta();
+    const recoveredPage = await recoveredRepo.loadPage(pageId);
+
+    expect(recoveredMeta).toEqual(before.meta);
+    expect(recoveredPage).toEqual(before.pages[pageId]);
+    await expect(fs.access(journalPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(backupDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(stagingDir)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('rolls back when recovery restarts after rollback has started but before old pages are restored', async () => {
+    const before = await repo.exportWorkspace();
+    const pageId = before.meta.pages[0]!.id;
+    const imported = {
+      ...before,
+      meta: {
+        ...before.meta,
+        revision: before.meta.revision + 1,
+        pages: before.meta.pages.map((page) =>
+          page.id === pageId ? { ...page, title: 'Imported title' } : page,
+        ),
+      },
+      pages: {
+        ...before.pages,
+        [pageId]: {
+          ...before.pages[pageId]!,
+          version: before.pages[pageId]!.version + 1,
+          nodes: [{ id: 'imported-node', title: 'Imported node', status: 'todo', x: 50, y: 60 }],
+        },
+      },
+    };
+    const journalPath = path.join(userDir, '.workspace-import-journal.json');
+    const backupDirName = '.workspace-import-pages-backup-test';
+    const stagingDirName = '.workspace-import-staging-test';
+    const backupDir = path.join(userDir, backupDirName);
+    const stagingDir = path.join(userDir, stagingDirName);
+    const stagedPagesDir = path.join(stagingDir, 'pages');
+
+    await fs.rm(path.join(userDir, 'pages'), { recursive: true, force: true });
+    await fs.mkdir(path.join(userDir, 'pages'), { recursive: true });
+    await fs.mkdir(backupDir, { recursive: true });
+    await fs.mkdir(stagedPagesDir, { recursive: true });
+    await fs.writeFile(repoPagePath(userDir, pageId), JSON.stringify(imported.pages[pageId], null, 2), 'utf-8');
+    await fs.writeFile(
+      path.join(backupDir, `${pageId}.json`),
+      JSON.stringify(before.pages[pageId], null, 2),
+      'utf-8',
+    );
+    await fs.writeFile(path.join(stagingDir, 'meta.json'), JSON.stringify(imported.meta, null, 2), 'utf-8');
+    await fs.writeFile(
+      path.join(stagedPagesDir, `${pageId}.json`),
+      JSON.stringify(imported.pages[pageId], null, 2),
+      'utf-8',
+    );
+    await fs.writeFile(path.join(userDir, 'meta.json'), JSON.stringify(imported.meta, null, 2), 'utf-8');
+    await fs.writeFile(
+      journalPath,
+      JSON.stringify({
+        phase: 'rollback_started',
+        previousMetaRaw: JSON.stringify(before.meta, null, 2),
+        backupPagesDirName: backupDirName,
+        stagingDirName,
+        nextMetaSha256: hashJson(imported.meta),
+        nextPageSha256ById: {
+          [pageId]: hashJson(imported.pages[pageId]),
+        },
+      }),
+      'utf-8',
+    );
+
+    const recoveredRepo = new FileWorkspaceRepository(userDir, rootDir);
+    const recoveredMeta = await recoveredRepo.loadMeta();
+    const recoveredPage = await recoveredRepo.loadPage(pageId);
+
+    expect(recoveredMeta).toEqual(before.meta);
+    expect(recoveredPage).toEqual(before.pages[pageId]);
+    await expect(fs.access(journalPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(backupDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(stagingDir)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('continues rollback when recovery restarts after old pages are restored but old meta is not', async () => {
+    const before = await repo.exportWorkspace();
+    const pageId = before.meta.pages[0]!.id;
+    const imported = {
+      ...before,
+      meta: {
+        ...before.meta,
+        revision: before.meta.revision + 1,
+        pages: before.meta.pages.map((page) =>
+          page.id === pageId ? { ...page, title: 'Imported title' } : page,
+        ),
+      },
+      pages: {
+        ...before.pages,
+        [pageId]: {
+          ...before.pages[pageId]!,
+          version: before.pages[pageId]!.version + 1,
+          nodes: [{ id: 'imported-node', title: 'Imported node', status: 'todo', x: 50, y: 60 }],
+        },
+      },
+    };
+    const journalPath = path.join(userDir, '.workspace-import-journal.json');
+    const stagingDirName = '.workspace-import-staging-test';
+    const stagingDir = path.join(userDir, stagingDirName);
+    const stagedPagesDir = path.join(stagingDir, 'pages');
+
+    await fs.rm(path.join(userDir, 'pages'), { recursive: true, force: true });
+    await fs.mkdir(path.join(userDir, 'pages'), { recursive: true });
+    await fs.mkdir(stagingDir, { recursive: true });
+    await fs.mkdir(stagedPagesDir, { recursive: true });
+    await fs.writeFile(repoPagePath(userDir, pageId), JSON.stringify(before.pages[pageId], null, 2), 'utf-8');
+    await fs.writeFile(path.join(stagingDir, 'meta.json'), JSON.stringify(imported.meta, null, 2), 'utf-8');
+    await fs.writeFile(
+      path.join(stagedPagesDir, `${pageId}.json`),
+      JSON.stringify(imported.pages[pageId], null, 2),
+      'utf-8',
+    );
+    await fs.writeFile(path.join(userDir, 'meta.json'), JSON.stringify(imported.meta, null, 2), 'utf-8');
+    await fs.writeFile(
+      journalPath,
+      JSON.stringify({
+        phase: 'staged_pages_live',
+        previousMetaRaw: JSON.stringify(before.meta, null, 2),
+        backupPagesDirName: '.workspace-import-pages-backup-test',
+        stagingDirName,
+        nextMetaSha256: hashJson(imported.meta),
+        nextPageSha256ById: {
+          [pageId]: hashJson(imported.pages[pageId]),
+        },
+      }),
+      'utf-8',
+    );
+
+    const recoveredRepo = new FileWorkspaceRepository(userDir, rootDir);
+    const recoveredMeta = await recoveredRepo.loadMeta();
+    const recoveredPage = await recoveredRepo.loadPage(pageId);
+
+    expect(recoveredMeta).toEqual(before.meta);
+    expect(recoveredPage).toEqual(before.pages[pageId]);
+    await expect(fs.access(journalPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(stagingDir)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('finishes rollback when recovery restarts after old pages are restored but old meta is not', async () => {
+    const before = await repo.exportWorkspace();
+    const pageId = before.meta.pages[0]!.id;
+    const imported = {
+      ...before,
+      meta: {
+        ...before.meta,
+        revision: before.meta.revision + 1,
+        pages: before.meta.pages.map((page) =>
+          page.id === pageId ? { ...page, title: 'Imported title' } : page,
+        ),
+      },
+      pages: {
+        ...before.pages,
+        [pageId]: {
+          ...before.pages[pageId]!,
+          version: before.pages[pageId]!.version + 1,
+          nodes: [{ id: 'imported-node', title: 'Imported node', status: 'todo', x: 50, y: 60 }],
+        },
+      },
+    };
+    const journalPath = path.join(userDir, '.workspace-import-journal.json');
+    const stagingDirName = '.workspace-import-staging-test';
+    const stagingDir = path.join(userDir, stagingDirName);
+    const stagedPagesDir = path.join(stagingDir, 'pages');
+
+    await fs.rm(path.join(userDir, 'pages'), { recursive: true, force: true });
+    await fs.mkdir(path.join(userDir, 'pages'), { recursive: true });
+    await fs.mkdir(stagedPagesDir, { recursive: true });
+    await fs.writeFile(repoPagePath(userDir, pageId), JSON.stringify(before.pages[pageId], null, 2), 'utf-8');
+    await fs.writeFile(path.join(stagingDir, 'meta.json'), JSON.stringify(imported.meta, null, 2), 'utf-8');
+    await fs.writeFile(
+      path.join(stagedPagesDir, `${pageId}.json`),
+      JSON.stringify(imported.pages[pageId], null, 2),
+      'utf-8',
+    );
+    await fs.writeFile(path.join(userDir, 'meta.json'), JSON.stringify(imported.meta, null, 2), 'utf-8');
+    await fs.writeFile(
+      journalPath,
+      JSON.stringify({
+        phase: 'rollback_pages_restored',
+        previousMetaRaw: JSON.stringify(before.meta, null, 2),
+        backupPagesDirName: '.workspace-import-pages-backup-test',
+        stagingDirName,
+        nextMetaSha256: hashJson(imported.meta),
+        nextPageSha256ById: {
+          [pageId]: hashJson(imported.pages[pageId]),
+        },
+      }),
+      'utf-8',
+    );
+
+    const recoveredRepo = new FileWorkspaceRepository(userDir, rootDir);
+    const recoveredMeta = await recoveredRepo.loadMeta();
+    const recoveredPage = await recoveredRepo.loadPage(pageId);
+
+    expect(recoveredMeta).toEqual(before.meta);
+    expect(recoveredPage).toEqual(before.pages[pageId]);
+    await expect(fs.access(journalPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(stagingDir)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('preserves a successful import when recovery restarts after meta is written but before import cleanup', async () => {
+    const before = await repo.exportWorkspace();
+    const pageId = before.meta.pages[0]!.id;
+    const imported = {
+      ...before,
+      meta: {
+        ...before.meta,
+        revision: before.meta.revision + 1,
+        pages: before.meta.pages.map((page) =>
+          page.id === pageId ? { ...page, title: 'Imported title' } : page,
+        ),
+      },
+      pages: {
+        ...before.pages,
+        [pageId]: {
+          ...before.pages[pageId]!,
+          version: before.pages[pageId]!.version + 1,
+          nodes: [{ id: 'imported-node', title: 'Imported node', status: 'todo', x: 50, y: 60 }],
+        },
+      },
+    };
+    const journalPath = path.join(userDir, '.workspace-import-journal.json');
+    const backupDirName = '.workspace-import-pages-backup-test';
+    const stagingDirName = '.workspace-import-staging-test';
+    const backupDir = path.join(userDir, backupDirName);
+    const stagingDir = path.join(userDir, stagingDirName);
+    const stagedPagesDir = path.join(stagingDir, 'pages');
+
+    await fs.rm(path.join(userDir, 'pages'), { recursive: true, force: true });
+    await fs.mkdir(path.join(userDir, 'pages'), { recursive: true });
+    await fs.mkdir(backupDir, { recursive: true });
+    await fs.mkdir(stagedPagesDir, { recursive: true });
+    await fs.writeFile(repoPagePath(userDir, pageId), JSON.stringify(imported.pages[pageId], null, 2), 'utf-8');
+    await fs.writeFile(
+      path.join(backupDir, `${pageId}.json`),
+      JSON.stringify(before.pages[pageId], null, 2),
+      'utf-8',
+    );
+    await fs.writeFile(path.join(stagingDir, 'meta.json'), JSON.stringify(imported.meta, null, 2), 'utf-8');
+    await fs.writeFile(
+      path.join(stagedPagesDir, `${pageId}.json`),
+      JSON.stringify(imported.pages[pageId], null, 2),
+      'utf-8',
+    );
+    await fs.writeFile(path.join(userDir, 'meta.json'), JSON.stringify(imported.meta, null, 2), 'utf-8');
+    await fs.writeFile(
+      journalPath,
+      JSON.stringify({
+        phase: 'meta_commit_started',
+        previousMetaRaw: JSON.stringify(before.meta, null, 2),
+        backupPagesDirName: backupDirName,
+        stagingDirName,
+        nextMetaSha256: hashJson(imported.meta),
+        nextPageSha256ById: {
+          [pageId]: hashJson(imported.pages[pageId]),
+        },
+      }),
+      'utf-8',
+    );
+
+    const recoveredRepo = new FileWorkspaceRepository(userDir, rootDir);
+    const recoveredMeta = await recoveredRepo.loadMeta();
+    const recoveredPage = await recoveredRepo.loadPage(pageId);
+
+    expect(recoveredMeta.pages.find((page) => page.id === pageId)?.title).toBe('Imported title');
+    expect(recoveredMeta.revision).toBe(imported.meta.revision);
+    expect(recoveredPage).toEqual(imported.pages[pageId]);
+    await expect(fs.access(journalPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(backupDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(stagingDir)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 });
 
 function createDeferred<T>() {
@@ -228,4 +743,8 @@ function createDeferred<T>() {
 
 function repoPagePath(userDir: string, pageId: string): string {
   return path.join(userDir, 'pages', `${pageId}.json`);
+}
+
+function hashJson(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }

@@ -6,13 +6,15 @@ import { api } from '@/api/client';
 import { cn } from '@/lib/utils';
 
 interface McpKeyInfo {
-  key: string;
+  id: string;
+  prefix: string;
   label: string;
   createdAt: string;
+  lastUsedAt?: string;
 }
 
 interface GeneratedKey extends McpKeyInfo {
-  userId: string;
+  key: string;
 }
 
 interface Props {
@@ -62,11 +64,11 @@ export function McpSetupDialog({ open, onClose }: Props) {
     }
   };
 
-  const handleRevoke = async (key: string) => {
+  const handleRevoke = async (id: string) => {
     try {
-      setRevoking(key);
-      await api.revokeMcpKey(key);
-      if (generated?.key === key) setGenerated(null);
+      setRevoking(id);
+      await api.revokeMcpKey(id);
+      if (generated?.id === id) setGenerated(null);
       loadKeys();
     } catch (err) {
       console.error('revoke key failed', err);
@@ -286,13 +288,13 @@ export function McpSetupDialog({ open, onClose }: Props) {
             <div className="space-y-2">
               {keys.map((k) => (
                 <div
-                  key={k.key}
+                  key={k.id}
                   className="flex items-center justify-between border border-border rounded-md px-3 py-2"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-foreground">{k.label}</p>
                     <p className="text-[10px] text-muted-foreground font-mono truncate">
-                      {k.key.slice(0, 16)}...
+                      {k.prefix}...
                     </p>
                     <p className="text-[10px] text-muted-foreground">
                       {new Date(k.createdAt).toLocaleString()}
@@ -302,8 +304,8 @@ export function McpSetupDialog({ open, onClose }: Props) {
                     size="sm"
                     variant="ghost"
                     className="shrink-0 h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => handleRevoke(k.key)}
-                    disabled={revoking === k.key}
+                    onClick={() => handleRevoke(k.id)}
+                    disabled={revoking === k.id}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </Button>

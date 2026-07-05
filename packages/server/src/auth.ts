@@ -1,11 +1,17 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import '@fastify/secure-session';
-import type { UserRepository } from './repositories/UserRepository.js';
+import type { StoredUser, UserRepository } from './repositories/UserRepository.js';
 import type { McpKeyStore } from './mcp-keys.js';
 
 const SALT_LEN = 32;
 const KEY_LEN = 64;
+
+function validatePassword(password: string): string | null {
+  if (password.length < 8) return '密码至少 8 位';
+  if (password.length > 200) return '密码过长';
+  return null;
+}
 
 function hashPassword(password: string): string {
   const salt = randomBytes(SALT_LEN).toString('hex');
@@ -27,12 +33,47 @@ function verifyPassword(password: string, stored: string): boolean {
 declare module '@fastify/secure-session' {
   interface SessionData {
     userId: string;
+    sessionVersion?: number;
   }
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    authUserId?: string;
+  }
+}
+
+export function getAuthenticatedUserId(req: FastifyRequest): string {
+  const userId = req.authUserId ?? req.session.userId;
+  if (!userId) throw new Error('authenticated user id missing');
+  return userId;
 }
 
 interface AuthRouteOpts {
   userRepo: UserRepository;
   registrationKey: string;
+}
+
+type SessionValidationResult =
+  | { ok: true; user: StoredUser }
+  | { ok: false; error: 'unauthenticated' | 'invalidated' | 'missing-user' };
+
+async function validateSessionUser(
+  req: FastifyRequest,
+  userRepo: UserRepository,
+): Promise<SessionValidationResult> {
+  const userId = req.session.userId;
+  if (!userId) return { ok: false, error: 'unauthenticated' };
+
+  const user = await userRepo.findById(userId);
+  if (!user) return { ok: false, error: 'missing-user' };
+
+  const sessionVersion = req.session.sessionVersion ?? 0;
+  if (sessionVersion !== user.sessionVersion) {
+    return { ok: false, error: 'invalidated' };
+  }
+
+  return { ok: true, user };
 }
 
 export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
@@ -57,6 +98,7 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       return { ok: false, error: '用户名或密码错误' };
     }
     req.session.userId = user!.id;
+    req.session.sessionVersion = user!.sessionVersion;
     return { ok: true, username: user!.username };
   });
 
@@ -73,9 +115,10 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       reply.status(400);
       return { ok: false, error: '用户名长度 2-32 字符' };
     }
-    if (password.length < 6) {
+    const passwordError = validatePassword(password);
+    if (passwordError) {
       reply.status(400);
-      return { ok: false, error: '密码至少 6 位' };
+      return { ok: false, error: passwordError };
     }
     // 注册控制：有邀请码则需要匹配；无邀请码 + 不是首次启动 → 拒绝
     const existingUsers = await userRepo.findAll();
@@ -98,25 +141,59 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       id,
       username,
       passwordHash: hashPassword(password),
+      sessionVersion: 0,
       createdAt: new Date().toISOString(),
     });
     req.session.userId = id;
+    req.session.sessionVersion = 0;
     return { ok: true, username };
+  });
+
+  app.post('/api/auth/change-password', async (req: FastifyRequest, reply: FastifyReply) => {
+    const session = await validateSessionUser(req, userRepo);
+    if (!session.ok) {
+      reply.status(401);
+      return { ok: false, error: session.error === 'unauthenticated' ? '请先登录' : '会话已失效，请重新登录' };
+    }
+
+    const body = req.body as { currentPassword?: string; newPassword?: string } | null;
+    const currentPassword = body?.currentPassword;
+    const newPassword = body?.newPassword;
+    if (!currentPassword || !newPassword) {
+      reply.status(400);
+      return { ok: false, error: '当前密码和新密码不能为空' };
+    }
+
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) {
+      reply.status(400);
+      return { ok: false, error: passwordError };
+    }
+
+    if (!verifyPassword(currentPassword, session.user.passwordHash)) {
+      reply.status(401);
+      return { ok: false, error: '当前密码错误' };
+    }
+
+    const nextSessionVersion = session.user.sessionVersion + 1;
+    await userRepo.updatePasswordHash(session.user.id, hashPassword(newPassword), nextSessionVersion);
+    req.session.userId = session.user.id;
+    req.session.sessionVersion = nextSessionVersion;
+    return { ok: true };
   });
 
   // POST /api/auth/logout
   app.post('/api/auth/logout', async (req: FastifyRequest) => {
     req.session.userId = '';
+    req.session.sessionVersion = undefined;
     return { ok: true };
   });
 
   // GET /api/auth/me
   app.get('/api/auth/me', async (req: FastifyRequest) => {
-    const userId = req.session.userId;
-    if (!userId) return { ok: false };
-    const user = await userRepo.findById(userId);
-    if (!user) return { ok: false };
-    return { ok: true, id: user.id, username: user.username };
+    const session = await validateSessionUser(req, userRepo);
+    if (!session.ok) return { ok: false };
+    return { ok: true, id: session.user.id, username: session.user.username };
   });
 }
 
@@ -192,26 +269,28 @@ export function authHook(userRepo: UserRepository, keyStore: McpKeyStore | null 
     if (mcpUserId) {
       // 白名单：API key 只能访问 MCP 工具所需的端点
       if (!isAPIKeyAllowed(req.method, req.url)) {
-        reply.status(403);
-        return { ok: false, error: 'API key 不能直接访问此端点，请通过 MCP 工具操作' };
+        return reply.status(403).send({ ok: false, error: 'API key 不能直接访问此端点，请通过 MCP 工具操作' });
       }
-      req.session.userId = mcpUserId;
+      req.authUserId = mcpUserId;
       return;
     }
 
     // 回退到 session 认证（浏览器用户，无限制）
-    const userId = req.session.userId;
-    if (!userId) {
-      reply.status(401);
-      return { ok: false, error: '请先登录' };
+    const session = await validateSessionUser(req, userRepo);
+    if (!session.ok) {
+      if (session.error === 'invalidated' || session.error === 'missing-user') {
+        req.session.userId = '';
+        req.session.sessionVersion = undefined;
+      }
+      return reply.status(401).send({
+        ok: false,
+        error:
+          session.error === 'unauthenticated' ? '请先登录'
+          : session.error === 'missing-user' ? '用户不存在，请重新登录'
+        : '会话已失效，请重新登录',
+      });
     }
-    // 校验用户仍存在
-    const user = await userRepo.findById(userId);
-    if (!user) {
-      req.session.userId = '';
-      reply.status(401);
-      return { ok: false, error: '用户不存在，请重新登录' };
-    }
+    req.authUserId = session.user.id;
   };
 }
 
@@ -222,6 +301,7 @@ export function authHook(userRepo: UserRepository, keyStore: McpKeyStore | null 
 const API_KEY_ALLOWLIST = new Set([
   'GET:/api/meta',
   'GET:/api/pages/{id}',
+  'GET:/api/pages/{id}/backups',
   'GET:/api/all-tasks',
   'POST:/api/pages',
   'PUT:/api/pages/{id}',

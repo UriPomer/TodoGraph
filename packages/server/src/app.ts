@@ -18,6 +18,7 @@ export interface AppOptions {
   staticDir?: string;
   registrationKey: string;
   sessionSecret: string;
+  cookieSecure?: boolean;
   logger?: boolean;
 }
 
@@ -41,7 +42,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     cookie: {
       path: '/',
       httpOnly: true,
-      secure: false, // Caddy handles HTTPS, internal traffic is HTTP
+      secure: opts.cookieSecure ?? false,
       sameSite: 'strict',
       maxAge: 5 * 24 * 60 * 60, // 5d
     },
@@ -49,26 +50,27 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
 
   // User repo + auth routes
   const userRepo = new FileUserRepository(opts.dataDir);
+  const keyStore = new McpKeyStore(opts.dataDir);
   await app.register(authRoutes, { userRepo, registrationKey: opts.registrationKey });
 
   // Per-user workspace repo factory
   const getRepo = (userId: string): WorkspaceRepository =>
     new FileWorkspaceRepository(path.join(opts.dataDir, 'users', userId), opts.dataDir);
 
-  // MCP key store — 持久化用户生成的 API key
-  const keyStore = new McpKeyStore(opts.dataDir);
-  await app.register(mcpRoutes, { keyStore });
-
-  // Workspace routes — pass factory, not a single repo
-  await app.register(workspaceRoutes, { getRepo });
-
-  // Auth hook: protect /api/* after auth routes are registered
-  app.addHook('onRequest', authHook(userRepo, keyStore));
+  // Protected API routes share one auth hook scope so every request is validated consistently.
+  await app.register(async (protectedApi) => {
+    protectedApi.addHook('onRequest', authHook(userRepo, keyStore));
+    await protectedApi.register(mcpRoutes, { keyStore });
+    await protectedApi.register(workspaceRoutes, { getRepo });
+  });
 
   // Sliding session expiry: refresh cookie maxAge on each authenticated request
   app.addHook('preHandler', async (req) => {
     if (req.session.userId) {
       req.session.userId = req.session.userId;
+      if (typeof req.session.sessionVersion === 'number') {
+        req.session.sessionVersion = req.session.sessionVersion;
+      }
     }
   });
 

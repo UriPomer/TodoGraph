@@ -12,6 +12,30 @@ import {
   type WorkspaceSettings,
 } from '@todograph/shared';
 
+export interface McpKeyInfo {
+  id: string;
+  prefix: string;
+  label: string;
+  createdAt: string;
+  lastUsedAt?: string;
+}
+
+export interface GeneratedMcpKey extends McpKeyInfo {
+  key: string;
+}
+
+export interface BackupInfo {
+  name: string;
+  createdAt: string;
+  size: number;
+}
+
+export interface WorkspaceExport {
+  exportedAt: string;
+  meta: Meta;
+  pages: Record<string, PageData>;
+}
+
 /**
  * 取 API base URL。
  * - Electron：preload 通过 contextBridge 注入 window.__API_BASE__
@@ -232,6 +256,22 @@ export const api = {
     await jsonOk(res);
   },
 
+  async listBackups(pageId: string): Promise<BackupInfo[]> {
+    const res = await fetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/backups`);
+    const data = await json<{ backups: BackupInfo[] }>(res);
+    return data.backups;
+  },
+
+  async restoreBackup(pageId: string, backupName?: string): Promise<PageData> {
+    const res = await fetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/restore`, {
+      method: 'POST',
+      headers: backupName ? { 'Content-Type': 'application/json' } : undefined,
+      body: backupName ? JSON.stringify({ backupName }) : undefined,
+    });
+    const body = await json<{ data?: unknown }>(res);
+    return PageDataSchema.parse(body.data);
+  },
+
   async loadAllTasks(): Promise<AllTasksResponse> {
     const res = await fetch(`${getApiBase()}/api/all-tasks`);
     const data = await json<unknown>(res);
@@ -244,30 +284,57 @@ export const api = {
     return res.text();
   },
 
-  async listMcpKeys(): Promise<
-    Array<{ key: string; label: string; createdAt: string }>
-  > {
+  async exportWorkspaceJson(): Promise<WorkspaceExport> {
+    const res = await fetch(`${getApiBase()}/api/workspace/export.json`);
+    const data = await json<WorkspaceExport>(res);
+    return {
+      exportedAt: data.exportedAt,
+      meta: MetaSchema.parse(data.meta),
+      pages: Object.fromEntries(
+        Object.entries(data.pages).map(([id, page]) => [id, PageDataSchema.parse(page)]),
+      ),
+    };
+  },
+
+  async importWorkspaceJson(data: WorkspaceExport): Promise<Meta> {
+    const res = await fetch(`${getApiBase()}/api/workspace/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const body = await json<{ meta?: unknown }>(res);
+    return MetaSchema.parse(body.meta);
+  },
+
+  async listMcpKeys(): Promise<McpKeyInfo[]> {
     const res = await fetch(`${getApiBase()}/api/mcp/keys`);
-    const data = await json<{ keys: Array<{ key: string; label: string; createdAt: string }> }>(res);
+    const data = await json<{ keys: McpKeyInfo[] }>(res);
     return data.keys;
   },
 
-  async generateMcpKey(
-    label: string,
-  ): Promise<{ key: string; userId: string; label: string; createdAt: string }> {
+  async generateMcpKey(label: string): Promise<GeneratedMcpKey> {
     const res = await fetch(`${getApiBase()}/api/mcp/keys`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ label }),
     });
-    return json<{ key: string; userId: string; label: string; createdAt: string }>(res);
+    return json<GeneratedMcpKey>(res);
   },
 
-  async revokeMcpKey(key: string): Promise<void> {
+  async revokeMcpKey(id: string): Promise<void> {
     const res = await fetch(
-      `${getApiBase()}/api/mcp/keys/${encodeURIComponent(key)}`,
+      `${getApiBase()}/api/mcp/keys/${encodeURIComponent(id)}`,
       { method: 'DELETE' },
     );
+    await jsonOk(res);
+  },
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    const res = await fetch(`${getApiBase()}/api/auth/change-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
     await jsonOk(res);
   },
 };

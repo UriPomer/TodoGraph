@@ -20,10 +20,21 @@ export interface ServerConfig {
   registrationKey: string;
   /** @fastify/secure-session 的加密密钥，至少 32 字节 */
   sessionSecret: string;
+  /** 生产环境默认启用 secure cookie；也可显式通过 env 覆盖 */
+  cookieSecure: boolean;
 }
 
 /** dev 模式下的默认 session 密钥（仅本地开发用，32 字节，生产必须通过 SESSION_SECRET 覆盖） */
 const DEV_SESSION_SECRET = 'todograph-dev-key-01234567890123'; // exactly 32 bytes
+
+function parseBooleanEnv(name: string): boolean | undefined {
+  const raw = process.env[name];
+  if (raw == null) return undefined;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  return undefined;
+}
 
 export function resolveConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
   const cwd = process.cwd();
@@ -41,6 +52,7 @@ export function resolveConfig(overrides: Partial<ServerConfig> = {}): ServerConf
     staticDir: process.env.STATIC_DIR,
     registrationKey: process.env.REGISTRATION_KEY ?? '',
     sessionSecret: process.env.SESSION_SECRET || (isProd ? '' : DEV_SESSION_SECRET),
+    cookieSecure: parseBooleanEnv('COOKIE_SECURE') ?? isProd,
     ...overrides,
   };
 }

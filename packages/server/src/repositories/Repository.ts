@@ -27,6 +27,18 @@ export class MetaVersionConflictError extends Error {
   }
 }
 
+export interface BackupInfo {
+  name: string;
+  createdAt: string;
+  size: number;
+}
+
+export interface WorkspaceExport {
+  exportedAt: string;
+  meta: Meta;
+  pages: Record<string, PageData>;
+}
+
 /**
  * 工作区（多页面）持久化抽象。v2。
  *
@@ -60,8 +72,12 @@ export interface WorkspaceRepository {
   reorderPages(ids: string[], expectedRevision?: number): Promise<Meta>;
   setActivePage(pageId: string, expectedRevision?: number): Promise<Meta>;
   updateSettings(settings: NonNullable<Meta['settings']>, expectedRevision?: number): Promise<Meta>;
+  exportWorkspace(): Promise<WorkspaceExport>;
+  importWorkspace(data: WorkspaceExport): Promise<Meta>;
   /** 将当前页面文件拷贝到 backups/ 目录，保留最近 50 份，按时间戳命名。 */
   createBackup(pageId: string): Promise<void>;
+  listBackups(pageId: string): Promise<BackupInfo[]>;
+  restoreBackup(pageId: string, backupName: string): Promise<PageData>;
   /** 从最新备份恢复页面文件。若不存在备份则抛异常。返回恢复后的页面数据。 */
   restoreLatestBackup(pageId: string): Promise<PageData>;
   /** 列出所有 page 的文件路径与 mtime —— 用于 /api/all-tasks 的缓存失效判断。 */

@@ -1,11 +1,23 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 export interface McpKeyEntry {
+  id: string;
   userId: string;
   label: string;
+  prefix: string;
+  hash: string;
   createdAt: string;
+  lastUsedAt?: string;
+}
+
+export interface PublicMcpKeyEntry {
+  id: string;
+  prefix: string;
+  label: string;
+  createdAt: string;
+  lastUsedAt?: string;
 }
 
 interface McpKeysFile {
@@ -14,6 +26,47 @@ interface McpKeysFile {
 
 function generateKey(): string {
   return 'tdg-' + randomBytes(24).toString('base64url');
+}
+
+function hashKey(key: string): string {
+  return createHash('sha256').update(key, 'utf8').digest('hex');
+}
+
+function equalHex(a: string, b: string): boolean {
+  const ab = Buffer.from(a, 'hex');
+  const bb = Buffer.from(b, 'hex');
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
+
+function publicEntry(entry: McpKeyEntry): PublicMcpKeyEntry {
+  return {
+    id: entry.id,
+    prefix: entry.prefix,
+    label: entry.label,
+    createdAt: entry.createdAt,
+    ...(entry.lastUsedAt ? { lastUsedAt: entry.lastUsedAt } : {}),
+  };
+}
+
+function makeKeyId(seed?: string): string {
+  return seed ? `mk_${seed.slice(0, 24)}` : 'mk_' + randomBytes(12).toString('base64url');
+}
+
+function migrateLegacyEntry(rawKey: string, value: Partial<McpKeyEntry>): McpKeyEntry | null {
+  if (!value.userId || !value.label || !value.createdAt) {
+    return null;
+  }
+
+  const hash = hashKey(rawKey);
+  return {
+    id: makeKeyId(hash),
+    userId: value.userId,
+    label: value.label,
+    prefix: rawKey.slice(0, 16),
+    hash,
+    createdAt: value.createdAt,
+    ...(value.lastUsedAt ? { lastUsedAt: value.lastUsedAt } : {}),
+  };
 }
 
 export class McpKeyStore {
@@ -27,66 +80,101 @@ export class McpKeyStore {
     this.filePath = path.join(dataDir, 'mcp-keys.json');
   }
 
-  /** 根据 key 查找 userId。env var 优先级高于文件存储。 */
   async findUserId(key: string): Promise<string | null> {
+    const digest = hashKey(key);
     const keys = await this.readKeys();
-    const entry = keys.keys[key];
-    return entry?.userId ?? null;
+    for (const entry of Object.values(keys.keys)) {
+      if (equalHex(entry.hash, digest)) {
+        await this.touchLastUsed(entry.id).catch(() => {});
+        return entry.userId;
+      }
+    }
+    return null;
   }
 
-  /** 列出用户的所有 key（返回 key 前缀，不暴露完整 key 内容以便确认身份）。 */
-  async listByUser(userId: string): Promise<Array<{ key: string; label: string; createdAt: string }>> {
+  async listByUser(userId: string): Promise<PublicMcpKeyEntry[]> {
     const keys = await this.readKeys();
-    return Object.entries(keys.keys)
-      .filter(([, v]) => v.userId === userId)
-      .map(([k, v]) => ({ key: k, label: v.label, createdAt: v.createdAt }));
+    return Object.values(keys.keys)
+      .filter((entry) => entry.userId === userId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(publicEntry);
   }
 
-  /** 为用户生成一个新 key，返回完整 key（仅此一次可获取原始值）。最多 10 个/用户。 */
-  async generate(userId: string, label: string): Promise<{ key: string; entry: McpKeyEntry }> {
+  async generate(userId: string, label: string): Promise<{ key: string; entry: PublicMcpKeyEntry }> {
     const key = generateKey();
-    const entry: McpKeyEntry = { userId, label, createdAt: new Date().toISOString() };
+    const id = makeKeyId();
+    const entry: McpKeyEntry = {
+      id,
+      userId,
+      label,
+      prefix: key.slice(0, 16),
+      hash: hashKey(key),
+      createdAt: new Date().toISOString(),
+    };
     await this.withLock(async () => {
       const keys = await this.readKeys();
       const userKeyCount = Object.values(keys.keys).filter((v) => v.userId === userId).length;
       if (userKeyCount >= 10) throw new Error('每个用户最多 10 个 API Key，请先撤销不用的 Key');
-      keys.keys[key] = entry;
+      keys.keys[id] = entry;
       await this.writeKeys(keys);
     });
-    return { key, entry };
+    return { key, entry: publicEntry(entry) };
   }
 
-  /** 撤销一个 key。调用方必须验证 key 属于当前用户。 */
-  async revoke(key: string, userId: string): Promise<boolean> {
+  async revokeById(id: string, userId: string): Promise<boolean> {
     return this.withLock(async () => {
       const keys = await this.readKeys();
-      const entry = keys.keys[key];
+      const entry = keys.keys[id];
       if (!entry || entry.userId !== userId) return false;
-      delete keys.keys[key];
+      delete keys.keys[id];
       await this.writeKeys(keys);
       return true;
     });
   }
 
-  // ── private ──
+  private async touchLastUsed(id: string): Promise<void> {
+    await this.withLock(async () => {
+      const keys = await this.readKeys();
+      const entry = keys.keys[id];
+      if (!entry) return;
+      entry.lastUsedAt = new Date().toISOString();
+      await this.writeKeys(keys);
+    });
+  }
 
   private async readKeys(): Promise<McpKeysFile> {
-    // 内存缓存 5 秒，降低 auth hook 的磁盘 IO
     if (this.cache && Date.now() - this.cacheTime < 5000) {
       return this.cache;
     }
     try {
       const raw = await fs.readFile(this.filePath, 'utf-8');
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(raw) as { keys?: Record<string, Partial<McpKeyEntry>> };
       const keys: Record<string, McpKeyEntry> = {};
-      if (parsed && typeof parsed === 'object' && parsed.keys) {
-        for (const [k, v] of Object.entries(parsed.keys)) {
-          const entry = v as McpKeyEntry;
-          if (entry.userId && entry.label) keys[k] = entry;
+      let migratedLegacy = false;
+      for (const [id, value] of Object.entries(parsed.keys ?? {})) {
+        if (
+          value.id &&
+          value.userId &&
+          value.label &&
+          value.prefix &&
+          value.hash &&
+          value.createdAt
+        ) {
+          keys[id] = value as McpKeyEntry;
+          continue;
+        }
+
+        const migrated = migrateLegacyEntry(id, value);
+        if (migrated) {
+          keys[migrated.id] = migrated;
+          migratedLegacy = true;
         }
       }
       this.cache = { keys };
       this.cacheTime = Date.now();
+      if (migratedLegacy) {
+        await this.writeKeys(this.cache);
+      }
       return this.cache;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -101,9 +189,14 @@ export class McpKeyStore {
 
   private async writeKeys(data: McpKeysFile): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tmp = this.filePath + '.tmp.' + Date.now();
+    const tmp = `${this.filePath}.tmp.${randomBytes(6).toString('hex')}`;
     await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf-8');
-    await fs.rename(tmp, this.filePath);
+    try {
+      await fs.rename(tmp, this.filePath);
+    } catch (error) {
+      await fs.rm(tmp, { force: true }).catch(() => {});
+      throw error;
+    }
     this.cache = data;
     this.cacheTime = Date.now();
   }

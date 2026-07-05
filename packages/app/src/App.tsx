@@ -8,6 +8,7 @@ import { SplitPane } from '@/components/SplitPane';
 import { ThemeProvider } from '@/features/theme/ThemeProvider';
 import { ThemeSwitcher } from '@/features/theme/ThemeSwitcher';
 import { McpSetupButton } from '@/features/mcp/McpSetupDialog';
+import { SecurityButton } from '@/features/security/SecurityDialog';
 import { ListView } from '@/features/tasks/ListView';
 import { GraphView } from '@/features/graph/GraphView';
 import { useTaskStore } from '@/stores/useTaskStore';
@@ -57,6 +58,7 @@ function Header({ tab, onTab, user, onLogout }: { tab: string; onTab: (v: string
         </span>
       </button>
 
+      <SecurityButton />
       <McpSetupButton />
       <ThemeSwitcher />
       <button

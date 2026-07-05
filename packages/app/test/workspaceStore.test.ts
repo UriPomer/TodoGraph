@@ -296,4 +296,35 @@ describe('workspace/task store conflict handling', () => {
       '页面已被其他设备修改，已重新加载最新数据，请重新执行刚才的操作',
     );
   });
+
+  it('can re-arm a discarded pending save after a failed destructive action', async () => {
+    api.savePage.mockResolvedValue({ version: 2 });
+
+    useTaskStore.setState({
+      activePageId: 'p-1',
+      pageVersion: 1,
+      nodes: [],
+      edges: [],
+      loaded: true,
+      backupDirty: false,
+    });
+
+    useTaskStore.getState().addTask({ title: 'local change' });
+    const rearmPendingSave = useTaskStore.getState().discardPendingSave();
+
+    await useTaskStore.getState().flush();
+    expect(api.savePage).not.toHaveBeenCalled();
+
+    rearmPendingSave();
+    await useTaskStore.getState().flush();
+
+    expect(api.savePage).toHaveBeenCalledWith(
+      'p-1',
+      expect.objectContaining({
+        nodes: [expect.objectContaining({ title: 'local change' })],
+        edges: [],
+      }),
+      1,
+    );
+  });
 });

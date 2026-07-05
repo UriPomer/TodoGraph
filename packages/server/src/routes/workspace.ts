@@ -18,6 +18,7 @@ import {
   VersionConflictError,
 } from '../repositories/Repository.js';
 import { generateWorkspaceMarkdown } from '../markdown.js';
+import { getAuthenticatedUserId } from '../auth.js';
 
 interface Opts {
   getRepo: (userId: string) => WorkspaceRepository;
@@ -50,10 +51,23 @@ const DeletePageBodySchema = z.object({
   expectedRevision: z.number().int().min(0).optional(),
 });
 
+const RestoreBackupBodySchema = z.object({
+  backupName: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.json$/, 'invalid backup name')
+    .optional(),
+});
+
 const UpdateSettingsBodySchema = z.object({
   mergeHoverMs: z.number().int().min(0).max(5000).optional(),
   ungroupConfirmMs: z.number().int().min(0).max(5000).optional(),
   expectedRevision: z.number().int().min(0).optional(),
+});
+
+const WorkspaceImportSchema = z.object({
+  exportedAt: z.string(),
+  meta: MetaSchema,
+  pages: z.record(PageDataSchema),
 });
 
 /**
@@ -84,12 +98,12 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
   // ---- meta ----
   app.get('/api/meta', async (req) => {
-    const repo = getRepo(req.session.userId!);
+    const repo = getRepo(getAuthenticatedUserId(req));
     return repo.loadMeta();
   });
 
   app.patch('/api/meta/settings', async (req, reply) => {
-    const repo = getRepo(req.session.userId!);
+    const repo = getRepo(getAuthenticatedUserId(req));
     const parsed = UpdateSettingsBodySchema.safeParse(req.body);
     if (!parsed.success) {
       reply.status(400);
@@ -115,7 +129,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
   // ---- pages ----
   app.get<{ Params: { id: string } }>('/api/pages/:id', async (req, reply) => {
-    const repo = getRepo(req.session.userId!);
+    const repo = getRepo(getAuthenticatedUserId(req));
     try {
       return await repo.loadPage(req.params.id);
     } catch (err) {
@@ -129,7 +143,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   });
 
   app.put<{ Params: { id: string } }>('/api/pages/:id', async (req, reply) => {
-    const repo = getRepo(req.session.userId!);
+    const repo = getRepo(getAuthenticatedUserId(req));
     const body = req.body as Record<string, unknown> | null;
     const expectedVersion = typeof body?.expectedVersion === 'number' ? body.expectedVersion : undefined;
     const parsed = PageDataSchema.safeParse(req.body);
@@ -155,7 +169,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   });
 
   app.post('/api/pages', async (req, reply) => {
-    const repo = getRepo(req.session.userId!);
+    const repo = getRepo(getAuthenticatedUserId(req));
     const parsed = CreatePageBodySchema.safeParse(req.body);
     if (!parsed.success) {
       reply.status(400);
@@ -175,7 +189,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   });
 
   app.delete<{ Params: { id: string } }>('/api/pages/:id', async (req, reply) => {
-    const repo = getRepo(req.session.userId!);
+    const repo = getRepo(getAuthenticatedUserId(req));
     const parsed = DeletePageBodySchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       reply.status(400);
@@ -196,7 +210,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   });
 
   app.patch<{ Params: { id: string } }>('/api/pages/:id', async (req, reply) => {
-    const repo = getRepo(req.session.userId!);
+    const repo = getRepo(getAuthenticatedUserId(req));
     const parsed = PatchPageBodySchema.safeParse(req.body);
     if (!parsed.success) {
       reply.status(400);
@@ -226,7 +240,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   });
 
   app.post('/api/pages/reorder', async (req, reply) => {
-    const repo = getRepo(req.session.userId!);
+    const repo = getRepo(getAuthenticatedUserId(req));
     const parsed = ReorderBodySchema.safeParse(req.body);
     if (!parsed.success) {
       reply.status(400);
@@ -249,7 +263,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
   // ---- 自动备份：拷贝当前页面文件到 backups/ 目录 ----
   app.post<{ Params: { id: string } }>('/api/pages/:id/backup', async (req, reply) => {
-    const repo = getRepo(req.session.userId!);
+    const repo = getRepo(getAuthenticatedUserId(req));
     try {
       await repo.createBackup(req.params.id);
       return { ok: true };
@@ -259,21 +273,39 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
   });
 
+  app.get<{ Params: { id: string } }>('/api/pages/:id/backups', async (req, reply) => {
+    const repo = getRepo(getAuthenticatedUserId(req));
+    try {
+      return { backups: await repo.listBackups(req.params.id) };
+    } catch (err) {
+      reply.status(400);
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
   // ---- 从最新备份恢复页面 ----
   app.post<{ Params: { id: string } }>('/api/pages/:id/restore', async (req, reply) => {
-    const repo = getRepo(req.session.userId!);
+    const repo = getRepo(getAuthenticatedUserId(req));
+    const parsed = RestoreBackupBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      reply.status(400);
+      return { ok: false, error: 'invalid payload', issues: parsed.error.issues };
+    }
     try {
-      const data = await repo.restoreLatestBackup(req.params.id);
+      const data = parsed.data.backupName
+        ? await repo.restoreBackup(req.params.id, parsed.data.backupName)
+        : await repo.restoreLatestBackup(req.params.id);
       return { ok: true, data };
     } catch (err) {
-      reply.status(500);
+      const e = err as NodeJS.ErrnoException;
+      reply.status(e.code === 'ENOENT' ? 404 : 400);
       return { ok: false, error: (err as Error).message };
     }
   });
 
   // ---- 跨页转移：自动带上整棵子树 ----
   app.post<{ Params: { id: string } }>('/api/pages/:id/move-nodes', async (req, reply) => {
-    const repo = getRepo(req.session.userId!);
+    const repo = getRepo(getAuthenticatedUserId(req));
     const parsed = MoveNodesBodySchema.safeParse(req.body);
     if (!parsed.success) {
       reply.status(400);
@@ -308,7 +340,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
   // ---- 全局任务聚合：左侧列表用 ----
   app.get('/api/all-tasks', async (req): Promise<AllTasksResponse> => {
-    const userId = req.session.userId!;
+    const userId = getAuthenticatedUserId(req);
     const repo = getRepo(userId);
     const meta = await repo.loadMeta();
     const key = cacheKeyFromMeta(meta);
@@ -351,12 +383,40 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
   // ---- workspace markdown export ----
   app.get('/api/workspace/markdown', async (req, reply) => {
-    const repo = getRepo(req.session.userId!);
+    const repo = getRepo(getAuthenticatedUserId(req));
     const meta = await repo.loadMeta();
     const md = await generateWorkspaceMarkdown(meta.pages, (id) => repo.loadPage(id));
     reply.header('Content-Type', 'text/plain; charset=utf-8');
     reply.header('Content-Disposition', `inline; filename="TodoGraph-${new Date().toISOString().slice(0, 10)}.md"`);
     return md;
+  });
+
+  app.get('/api/workspace/export.json', async (req, reply) => {
+    const repo = getRepo(getAuthenticatedUserId(req));
+    const data = await repo.exportWorkspace();
+    reply.header('Content-Type', 'application/json; charset=utf-8');
+    reply.header(
+      'Content-Disposition',
+      `attachment; filename="TodoGraph-${new Date().toISOString().slice(0, 10)}.json"`,
+    );
+    return data;
+  });
+
+  app.post('/api/workspace/import', async (req, reply) => {
+    const repo = getRepo(getAuthenticatedUserId(req));
+    const parsed = WorkspaceImportSchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.status(400);
+      return { ok: false, error: 'invalid payload', issues: parsed.error.issues };
+    }
+    try {
+      const meta = await repo.importWorkspace(parsed.data);
+      invalidateAll();
+      return { ok: true, meta };
+    } catch (err) {
+      reply.status(400);
+      return { ok: false, error: (err as Error).message };
+    }
   });
 };
 

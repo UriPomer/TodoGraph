@@ -30,6 +30,7 @@ packages/*/data/
 .claude/
 
 # ===== Agent 中间产物，不提交 =====
+.superpowers/
 docs/superpowers/
 
 # ===== 编辑器 / IDE =====

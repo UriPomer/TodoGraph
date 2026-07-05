@@ -8,6 +8,7 @@ async function main(): Promise<void> {
     staticDir: cfg.staticDir,
     registrationKey: cfg.registrationKey,
     sessionSecret: cfg.sessionSecret,
+    cookieSecure: cfg.cookieSecure,
   });
 
   try {
