@@ -1,5 +1,20 @@
 import { useEffect, useState } from 'react';
-import { Download, Sparkles } from 'lucide-react';
+import type { ReactNode } from 'react';
+import {
+  Bot,
+  ChevronRight,
+  Download,
+  FileDown,
+  FileUp,
+  Key,
+  ListChecks,
+  Lock,
+  MoreHorizontal,
+  Network,
+  Shield,
+  Sparkles,
+  type LucideIcon,
+} from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Toaster } from '@/components/ui/toaster';
 import { DialogContainer } from '@/components/ui/dialog-container';
@@ -7,8 +22,8 @@ import { PageBar } from '@/components/PageBar';
 import { SplitPane } from '@/components/SplitPane';
 import { ThemeProvider } from '@/features/theme/ThemeProvider';
 import { ThemeSwitcher } from '@/features/theme/ThemeSwitcher';
-import { McpSetupButton } from '@/features/mcp/McpSetupDialog';
-import { SecurityButton } from '@/features/security/SecurityDialog';
+import { McpSetupButton, McpSetupDialog } from '@/features/mcp/McpSetupDialog';
+import { SecurityButton, SecurityDialog } from '@/features/security/SecurityDialog';
 import { ListView } from '@/features/tasks/ListView';
 import { GraphView } from '@/features/graph/GraphView';
 import { useTaskStore } from '@/stores/useTaskStore';
@@ -24,7 +39,16 @@ import { LoginPage } from '@/features/auth/LoginPage';
  * - 宽屏（>=1024px，Tailwind lg 断点）：左 List / 右 Graph 双栏并列，无需切换
  * - 窄屏：Header 上显示 Tabs，点击切换 List / Graph
  */
-function Header({ tab, onTab, user, onLogout }: { tab: string; onTab: (v: string) => void; user: { username: string }; onLogout: () => void }) {
+function Header({
+  onTab,
+  user,
+  onLogout,
+}: {
+  tab: MobileTab;
+  onTab: (v: MobileTab) => void;
+  user: { username: string };
+  onLogout: () => void;
+}) {
   const { recommended } = useDerived();
   return (
     <header className="flex h-12 shrink-0 items-center gap-4 border-b border-border bg-card px-4">
@@ -58,36 +82,154 @@ function Header({ tab, onTab, user, onLogout }: { tab: string; onTab: (v: string
         </span>
       </button>
 
-      <SecurityButton />
-      <McpSetupButton />
-      <ThemeSwitcher />
-      <button
-        onClick={async () => {
-          try {
-            const md = await api.exportMarkdown();
-            const blob = new Blob([md], { type: 'text/markdown' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = `TodoGraph-${new Date().toISOString().slice(0, 10)}.md`;
-            a.click();
-            URL.revokeObjectURL(a.href);
-          } catch { /* ignore */ }
-        }}
-        className="text-muted-foreground hover:text-foreground transition-colors"
-        title="导出 Markdown"
-      >
-        <Download className="h-4 w-4" />
-      </button>
-      <span className="text-xs text-muted-foreground">{user.username}</span>
-      <button onClick={onLogout} className="text-xs text-muted-foreground hover:text-foreground transition-colors">退出</button>
+      <div className="ml-auto hidden items-center gap-2 lg:flex">
+        <SecurityButton />
+        <McpSetupButton />
+        <ThemeSwitcher />
+        <button
+          onClick={async () => {
+            try {
+              const md = await api.exportMarkdown();
+              const blob = new Blob([md], { type: 'text/markdown' });
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = `TodoGraph-${new Date().toISOString().slice(0, 10)}.md`;
+              a.click();
+              URL.revokeObjectURL(a.href);
+            } catch { /* ignore */ }
+          }}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          title="导出 Markdown"
+        >
+          <Download className="h-4 w-4" />
+        </button>
+        <span className="text-xs text-muted-foreground">{user.username}</span>
+        <button onClick={onLogout} className="text-xs text-muted-foreground hover:text-foreground transition-colors">退出</button>
+      </div>
     </header>
+  );
+}
+
+type MobileTab = 'list' | 'graph' | 'more';
+
+interface MobileMorePanelProps {
+  username: string;
+  onOpenSecurity: () => void;
+  onOpenMcp: () => void;
+  onLogout: () => void;
+}
+
+function MoreRow({
+  icon: Icon,
+  label,
+  value,
+  danger,
+  onClick,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value?: string;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex h-14 w-full items-center gap-3 border-b border-border px-4 text-left last:border-b-0 active:bg-accent"
+    >
+      <Icon className="h-5 w-5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{label}</span>
+      {value && (
+        <span className={cn('shrink-0 text-xs', danger ? 'text-destructive' : 'text-muted-foreground')}>
+          {value}
+        </span>
+      )}
+      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+    </button>
+  );
+}
+
+function MoreSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section>
+      <h2 className="mb-2 px-1 text-xs font-medium text-muted-foreground">{title}</h2>
+      <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">{children}</div>
+    </section>
+  );
+}
+
+export function MobileMorePanel({ username, onOpenSecurity, onOpenMcp, onLogout }: MobileMorePanelProps) {
+  return (
+    <div className="h-full overflow-auto bg-background px-4 py-4">
+      <div className="mb-5 flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-foreground">更多</h1>
+          <p className="mt-1 text-xs text-muted-foreground">{username}</p>
+        </div>
+        <ThemeSwitcher />
+      </div>
+
+      <div className="space-y-5">
+        <MoreSection title="安全">
+          <MoreRow icon={Shield} label="账号安全" value="存在风险" danger onClick={onOpenSecurity} />
+          <MoreRow icon={Lock} label="修改密码" onClick={onOpenSecurity} />
+          <MoreRow icon={Key} label="会话管理" value="当前会话" onClick={onOpenSecurity} />
+        </MoreSection>
+
+        <MoreSection title="数据">
+          <MoreRow icon={Download} label="数据备份" value="自动备份中" onClick={onOpenSecurity} />
+          <MoreRow icon={FileDown} label="导出 JSON" onClick={onOpenSecurity} />
+          <MoreRow icon={FileUp} label="导入 JSON" onClick={onOpenSecurity} />
+        </MoreSection>
+
+        <MoreSection title="集成与 AI">
+          <MoreRow icon={Bot} label="AI 接入" value="已连接" onClick={onOpenMcp} />
+          <MoreRow icon={Key} label="MCP Key" value="已配置" onClick={onOpenMcp} />
+        </MoreSection>
+
+        <MoreSection title="账号">
+          <MoreRow icon={Shield} label="退出登录" onClick={onLogout} />
+        </MoreSection>
+      </div>
+    </div>
+  );
+}
+
+export function MobileBottomNav({ tab, onTab }: { tab: MobileTab; onTab: (tab: MobileTab) => void }) {
+  const itemClass = (value: MobileTab) =>
+    cn(
+      'flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] transition-colors',
+      tab === value ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground',
+    );
+
+  return (
+    <div
+      className="lg:hidden fixed bottom-0 left-0 right-0 z-40 flex border-t border-border bg-card/95 backdrop-blur"
+      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+    >
+      <button type="button" onClick={() => onTab('list')} className={itemClass('list')} aria-label="任务">
+        <ListChecks className="h-5 w-5" />
+        任务
+      </button>
+      <button type="button" onClick={() => onTab('graph')} className={itemClass('graph')} aria-label="依赖图">
+        <Network className="h-5 w-5" />
+        依赖图
+      </button>
+      <button type="button" onClick={() => onTab('more')} className={itemClass('more')} aria-label="更多">
+        <MoreHorizontal className="h-5 w-5" />
+        更多
+      </button>
+    </div>
   );
 }
 
 export default function App() {
   const bootstrap = useWorkspaceStore((s) => s.bootstrap);
   const loaded = useWorkspaceStore((s) => s.loaded);
-  const [tab, setTab] = useState('list');
+  const [tab, setTab] = useState<MobileTab>('list');
+  const [securityOpen, setSecurityOpen] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
 
   // Auth gate: must check before any API calls to avoid 401 toasts on login page
   const { user, loading, login, register, logout } = useAuth();
@@ -200,7 +342,9 @@ export default function App() {
     <ThemeProvider>
       <div className="flex h-full flex-col">
         <Header tab={tab} onTab={setTab} user={user} onLogout={logout} />
-        <PageBar />
+        <div className={tab === 'more' ? 'hidden lg:block' : undefined}>
+          <PageBar />
+        </div>
 
         {!loaded ? (
           <LoadingState />
@@ -220,12 +364,20 @@ export default function App() {
 
             {/* ===== 窄屏：Tabs 切换 ===== */}
             <div className="lg:hidden flex-1 min-h-0" style={{ paddingBottom: 'calc(3rem + env(safe-area-inset-bottom))' }}>
-              <Tabs value={tab} onValueChange={setTab} className="h-full">
+              <Tabs value={tab} onValueChange={(value) => setTab(value as MobileTab)} className="h-full">
                 <TabsContent value="list" className="h-full m-0 overflow-auto">
                   <ListView />
                 </TabsContent>
                 <TabsContent value="graph" className="h-full m-0">
                   <GraphView />
+                </TabsContent>
+                <TabsContent value="more" className="h-full m-0">
+                  <MobileMorePanel
+                    username={user.username}
+                    onOpenSecurity={() => setSecurityOpen(true)}
+                    onOpenMcp={() => setMcpOpen(true)}
+                    onLogout={logout}
+                  />
                 </TabsContent>
               </Tabs>
             </div>
@@ -234,28 +386,10 @@ export default function App() {
 
         <Toaster />
         <DialogContainer />
+        <SecurityDialog open={securityOpen} onClose={() => setSecurityOpen(false)} />
+        <McpSetupDialog open={mcpOpen} onClose={() => setMcpOpen(false)} />
       </div>
-      {/* Narrow-screen bottom nav bar */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 flex border-t border-border bg-card/95 backdrop-blur" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-        <button
-          onClick={() => setTab('list')}
-          className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] transition-colors ${tab === 'list' ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground'}`}
-        >
-          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
-          </svg>
-          列表
-        </button>
-        <button
-          onClick={() => setTab('graph')}
-          className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-[11px] transition-colors ${tab === 'graph' ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground'}`}
-        >
-          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="6" cy="6" r="2" /><circle cx="18" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="6" cy="18" r="2" /><circle cx="18" cy="18" r="2" /><line x1="8" y1="6" x2="16" y2="5" /><line x1="8" y1="6" x2="10" y2="12" /><line x1="16" y1="5" x2="14" y2="12" /><line x1="10" y1="12" x2="6" y2="18" /><line x1="14" y1="12" x2="18" y2="18" />
-          </svg>
-          依赖图
-        </button>
-      </div>
+      <MobileBottomNav tab={tab} onTab={setTab} />
     </ThemeProvider>
   );
 }

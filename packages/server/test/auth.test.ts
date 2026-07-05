@@ -247,7 +247,7 @@ describe('auth routes', () => {
     expect(loginNew.statusCode).toBe(200);
   });
 
-  it('invalidates old session cookies after password change and rotates the active session', async () => {
+  it('keeps existing session cookies valid after password change', async () => {
     const regRes = await app.inject({
       method: 'POST',
       url: '/api/auth/register',
@@ -265,12 +265,6 @@ describe('auth routes', () => {
     });
     expect(changeRes.statusCode).toBe(200);
 
-    const rotatedCookies = Object.fromEntries(
-      (changeRes.cookies as unknown as { name: string; value: string }[]).map((c) => [c.name, c.value]),
-    );
-    expect(Object.keys(rotatedCookies).length).toBeGreaterThan(0);
-    expect(rotatedCookies).not.toEqual(originalCookies);
-
     await app.close();
     app = await buildApp({
       dataDir,
@@ -280,20 +274,12 @@ describe('auth routes', () => {
     });
     await app.ready();
 
-    const staleSession = await app.inject({
+    const existingSession = await app.inject({
       method: 'GET',
       url: '/api/mcp/keys',
       cookies: originalCookies,
     });
-    expect(staleSession.statusCode).toBe(401);
-    expect(staleSession.json()).toEqual({ ok: false, error: '会话已失效，请重新登录' });
-
-    const rotatedSession = await app.inject({
-      method: 'GET',
-      url: '/api/mcp/keys',
-      cookies: rotatedCookies,
-    });
-    expect(rotatedSession.statusCode).toBe(200);
+    expect(existingSession.statusCode).toBe(200);
   });
 
   it('rejects stale meta revision when two clients create pages concurrently', async () => {

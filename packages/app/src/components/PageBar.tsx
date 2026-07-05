@@ -1,5 +1,6 @@
 import { useMemo, useState, useCallback } from 'react';
-import { GripVertical, MoreHorizontal, Plus } from 'lucide-react';
+import { Check, ChevronDown, GripVertical, MoreHorizontal, Plus, SquareStack } from 'lucide-react';
+import type { PageInfo } from '@todograph/shared';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -10,6 +11,91 @@ import {
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { dialog } from '@/components/ui/dialog-store';
+
+export function MobilePageSelectorView({
+  pages,
+  activePageId,
+  onSwitchPage,
+  onCreatePage,
+}: {
+  pages: PageInfo[];
+  activePageId: string;
+  onSwitchPage: (pageId: string) => void;
+  onCreatePage: () => void;
+}) {
+  const orderedPages = useMemo(
+    () => [...pages].sort((a, b) => a.order - b.order),
+    [pages],
+  );
+  const activePage = orderedPages.find((page) => page.id === activePageId) ?? orderedPages[0];
+
+  return (
+    <div className="flex items-center justify-between gap-2 px-3 py-2 lg:hidden">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label="选择页面"
+            data-mobile-page-trigger="true"
+            className={cn(
+              'group inline-flex h-9 max-w-[calc(100%-2.75rem)] items-center gap-2 rounded-lg border px-2.5 text-left',
+              'border-[hsl(var(--primary)/0.22)] bg-background shadow-sm',
+              'transition-[background-color,border-color,box-shadow,transform] duration-150 ease-out',
+              'hover:border-[hsl(var(--primary)/0.42)] hover:bg-accent/45 active:scale-[0.98]',
+              'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+            )}
+          >
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]">
+              <SquareStack className="h-3.5 w-3.5" />
+            </span>
+            <span className="min-w-0 truncate text-sm font-medium text-foreground">
+              {activePage?.title ?? '选择页面'}
+            </span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-[min(18rem,calc(100vw-1.5rem))] rounded-lg p-1.5">
+          {orderedPages.map((page) => {
+            const active = page.id === activePage?.id;
+            return (
+              <DropdownMenuItem
+                key={page.id}
+                onSelect={() => onSwitchPage(page.id)}
+                className={cn(
+                  'flex items-center gap-2 rounded-md px-2.5 py-2 text-sm',
+                  active && 'bg-[hsl(var(--primary)/0.08)] text-foreground',
+                )}
+              >
+                <span
+                  className={cn(
+                    'flex h-6 w-6 shrink-0 items-center justify-center rounded-md border',
+                    active
+                      ? 'border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]'
+                      : 'border-border bg-background text-muted-foreground',
+                  )}
+                >
+                  {active ? <Check className="h-3.5 w-3.5" /> : <SquareStack className="h-3.5 w-3.5" />}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{page.title}</span>
+              </DropdownMenuItem>
+            );
+          })}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        className="h-9 w-9 shrink-0 rounded-lg"
+        onClick={onCreatePage}
+        aria-label="新建页面"
+        title="新建页面"
+      >
+        <Plus className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
 
 export function PageBar() {
   const meta = useWorkspaceStore((s) => s.meta);
@@ -69,7 +155,14 @@ export function PageBar() {
 
   return (
     <div className="shrink-0 border-b border-border bg-card/65 backdrop-blur">
-      <div className="flex items-center gap-2 overflow-x-auto px-3 py-2">
+      <MobilePageSelectorView
+        pages={pages}
+        activePageId={meta.activePageId}
+        onSwitchPage={(pageId) => void switchPage(pageId)}
+        onCreatePage={() => void handleCreatePage()}
+      />
+
+      <div className="hidden items-center gap-2 overflow-x-auto px-3 py-2 lg:flex">
         {pages.map((page) => {
           const active = page.id === meta.activePageId;
           const disableDelete = pages.length <= 1;

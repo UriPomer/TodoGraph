@@ -55,7 +55,7 @@ export function LoginPage({ onLogin, onRegister }: Props) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              minLength={6}
+              minLength={mode === 'register' ? 8 : undefined}
               required
               className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-[hsl(var(--primary))]"
             />
