@@ -51,9 +51,9 @@ function Header({
 }) {
   const { recommended } = useDerived();
   return (
-    <header className="flex h-12 shrink-0 items-center gap-4 border-b border-border bg-card px-4">
+    <header className="flex h-12 shrink-0 items-center gap-4 border-b border-[#312d35] bg-[#17151a] px-4 text-[#f3f4f6] lg:border-border lg:bg-card lg:text-foreground">
       <div className="flex items-center gap-2 font-semibold">
-        <span className="text-[hsl(var(--primary))] text-lg">◈</span>
+        <span className="text-[#8b5cf6] text-lg">◈</span>
         <span>TodoGraph</span>
       </div>
 
@@ -89,6 +89,7 @@ function Header({
         <button
           onClick={async () => {
             try {
+              await useTaskStore.getState().flush();
               const md = await api.exportMarkdown();
               const blob = new Blob([md], { type: 'text/markdown' });
               const a = document.createElement('a');
@@ -136,16 +137,16 @@ function MoreRow({
     <button
       type="button"
       onClick={onClick}
-      className="flex h-14 w-full items-center gap-3 border-b border-border px-4 text-left last:border-b-0 active:bg-accent"
+      className="flex h-14 w-full items-center gap-3 border-b border-[#312d35] px-4 text-left last:border-b-0 active:bg-[#25212b]"
     >
-      <Icon className="h-5 w-5 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{label}</span>
+      <Icon className="h-5 w-5 shrink-0 text-[#9ca3af]" />
+      <span className="min-w-0 flex-1 truncate text-sm font-medium text-[#e5e7eb]">{label}</span>
       {value && (
-        <span className={cn('shrink-0 text-xs', danger ? 'text-destructive' : 'text-muted-foreground')}>
+        <span className={cn('shrink-0 text-xs', danger ? 'text-red-300' : 'text-[#9ca3af]')}>
           {value}
         </span>
       )}
-      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <ChevronRight className="h-4 w-4 shrink-0 text-[#77717d]" />
     </button>
   );
 }
@@ -153,19 +154,19 @@ function MoreRow({
 function MoreSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
-      <h2 className="mb-2 px-1 text-xs font-medium text-muted-foreground">{title}</h2>
-      <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">{children}</div>
+      <h2 className="mb-2 px-1 text-xs font-medium text-[#8b8491]">{title}</h2>
+      <div className="overflow-hidden rounded-lg border border-[#312d35] bg-[#1b181f] shadow-[0_10px_30px_rgba(0,0,0,0.22)]">{children}</div>
     </section>
   );
 }
 
 export function MobileMorePanel({ username, onOpenSecurity, onOpenMcp, onLogout }: MobileMorePanelProps) {
   return (
-    <div className="h-full overflow-auto bg-background px-4 py-4">
+    <div data-mobile-surface="dark" className="h-full overflow-auto bg-[#151317] px-4 py-4">
       <div className="mb-5 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-foreground">更多</h1>
-          <p className="mt-1 text-xs text-muted-foreground">{username}</p>
+          <h1 className="text-xl font-semibold text-[#f3f4f6]">更多</h1>
+          <p className="mt-1 text-xs text-[#8b8491]">{username}</p>
         </div>
         <ThemeSwitcher />
       </div>
@@ -200,12 +201,13 @@ export function MobileBottomNav({ tab, onTab }: { tab: MobileTab; onTab: (tab: M
   const itemClass = (value: MobileTab) =>
     cn(
       'flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] transition-colors',
-      tab === value ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground',
+      tab === value ? 'text-[#20d1aa]' : 'text-[#8b8491]',
     );
 
   return (
     <div
-      className="lg:hidden fixed bottom-0 left-0 right-0 z-40 flex border-t border-border bg-card/95 backdrop-blur"
+      data-mobile-chrome="dark"
+      className="lg:hidden fixed bottom-0 left-0 right-0 z-40 flex border-t border-[#312d35] bg-[#17151a]/95 shadow-[0_-10px_30px_rgba(0,0,0,0.28)] backdrop-blur"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <button type="button" onClick={() => onTab('list')} className={itemClass('list')} aria-label="任务">
@@ -362,8 +364,8 @@ export default function App() {
               />
             </div>
 
-            {/* ===== 窄屏：Tabs 切换 ===== */}
-            <div className="lg:hidden flex-1 min-h-0" style={{ paddingBottom: 'calc(3rem + env(safe-area-inset-bottom))' }}>
+            {/* ===== 窄屏：底部导航切换，主体保持当前产品的暗色图谱/列表风格 ===== */}
+            <div className="mobile-frosted-bg lg:hidden flex-1 min-h-0" style={{ paddingBottom: 'calc(3rem + env(safe-area-inset-bottom))' }}>
               <Tabs value={tab} onValueChange={(value) => setTab(value as MobileTab)} className="h-full">
                 <TabsContent value="list" className="h-full m-0 overflow-auto">
                   <ListView />

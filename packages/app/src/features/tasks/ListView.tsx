@@ -511,7 +511,7 @@ export function ListView() {
   }, []);
 
   return (
-    <div ref={containerRef} className="relative h-full flex flex-col">
+    <div ref={containerRef} className="mobile-list-glass relative h-full flex flex-col">
       {/* 上半部分：当前页任务（可滚动） */}
       <div ref={scrollRef} className="overflow-auto" style={{ height: `${topPct}%`, overscrollBehaviorY: 'contain', touchAction: 'pan-y' }}>
         {/* 下拉指示器 */}
@@ -524,11 +524,12 @@ export function ListView() {
             {pullReady ? '松手新建' : '下拉新建'}
           </span>
         </div>
-        <div ref={contentRef} className="will-change-transform mx-auto w-full max-w-md px-4 py-5" style={{ transform: 'translateY(0px)' }}>
+        <div ref={contentRef} className="will-change-transform w-full px-5 py-5 max-lg:py-3" style={{ transform: 'translateY(0px)' }}>
           <TaskInput focusTrigger={focusTrigger} />
 
           <Section
             title="Ready"
+            mobileKey="ready"
             hint="可执行"
             items={readyArr}
             recommendedId={recommended?.id}
@@ -544,6 +545,7 @@ export function ListView() {
           />
           <Section
             title="Blocked"
+            mobileKey="blocked"
             hint="有未完成的前置"
             items={blockedArr}
             recommendedId={recommended?.id}
@@ -558,6 +560,7 @@ export function ListView() {
           />
           <Section
             title="Done"
+            mobileKey="done"
             items={doneArr}
             recommendedId={undefined}
             depInfo={depInfo}
@@ -586,7 +589,7 @@ export function ListView() {
 
       {/* 下半部分：其他页面可做（可滚动） */}
       <div className="flex-1 overflow-auto">
-        <div className="mx-auto w-full max-w-md px-4">
+        <div className="w-full px-5">
           <CrossPageReady />
         </div>
       </div>
@@ -654,6 +657,7 @@ interface FlatItem {
 
 interface SectionProps {
   title: string;
+  mobileKey: 'ready' | 'blocked' | 'done';
   hint?: string;
   items: FlatItem[];
   recommendedId: string | undefined;
@@ -668,37 +672,43 @@ interface SectionProps {
   empty?: string;
 }
 
-function Section({ title, hint, items, recommendedId, depInfo, childMap, collapsed, onToggleCollapse, dragTaskId, dropTargetId, onDragStart, onAddChild, empty }: SectionProps) {
+function Section({ title, mobileKey, hint, items, recommendedId, depInfo, childMap, collapsed, onToggleCollapse, dragTaskId, dropTargetId, onDragStart, onAddChild, empty }: SectionProps) {
   return (
-    <section className="mt-5 first:mt-6">
-      <h3 className="mb-1 flex items-baseline gap-2 px-3 text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
-        <span>{title}</span>
-        {hint && <span className="text-[10px] normal-case tracking-normal opacity-70">{hint}</span>}
+    <section
+      data-mobile-task-section={mobileKey}
+      className="mt-5 first:mt-6 max-lg:border-t max-lg:border-[#34303a]/70 max-lg:pt-3"
+    >
+      <h3 className="mb-1 flex items-baseline gap-2 px-3 text-xs font-medium uppercase tracking-wider text-muted-foreground/70 max-lg:mb-1 max-lg:h-7 max-lg:items-center max-lg:px-1 max-lg:text-[#b7b0be] max-lg:tracking-[0.08em]">
+        <span className="hidden lg:inline">{title}</span>
+        <span className="lg:hidden">{title}</span>
+        <span className="inline-flex px-1 text-[10px] font-medium leading-none text-[#70e3d1] lg:hidden">
+          {items.length}
+        </span>
+        {hint && <span className="text-[10px] normal-case tracking-normal opacity-70 max-lg:ml-auto max-lg:text-[#8f8796]">{hint}</span>}
       </h3>
       {items.length === 0 ? (
-        <p className="px-3 py-1.5 text-xs text-muted-foreground/50 italic">{empty ?? '空'}</p>
+        <p className="px-3 py-1.5 text-xs text-muted-foreground/50 italic max-lg:px-1 max-lg:py-1.5 max-lg:text-[#7d7784]">{empty ?? '空'}</p>
       ) : (
-        <ul className="flex flex-col">
+        <ul className="flex flex-col max-lg:divide-y max-lg:divide-[#2b2730]/70">
           {items.map(({ task, depth }) => {
             const children = childMap.get(task.id);
             const hasChildren = children !== undefined && children.length > 0;
             const isCollapsed = collapsed[task.id];
             return (
-              <li key={task.id}>
-                <TaskItem
-                  task={task}
-                  recommended={task.id === recommendedId}
-                  dependencyInfo={depInfo.get(task.id)}
-                  depth={depth}
-                  hasChildren={hasChildren}
-                  isCollapsed={isCollapsed}
-                  onToggleCollapse={() => onToggleCollapse(task.id)}
-                  isDragging={task.id === dragTaskId}
-                  isDropTarget={task.id === dropTargetId}
-                  onDragStart={onDragStart}
-                  onAddChild={onAddChild}
-                />
-              </li>
+              <TaskItem
+                key={task.id}
+                task={task}
+                recommended={task.id === recommendedId}
+                dependencyInfo={depInfo.get(task.id)}
+                depth={depth}
+                hasChildren={hasChildren}
+                isCollapsed={isCollapsed}
+                onToggleCollapse={() => onToggleCollapse(task.id)}
+                isDragging={task.id === dragTaskId}
+                isDropTarget={task.id === dropTargetId}
+                onDragStart={onDragStart}
+                onAddChild={onAddChild}
+              />
             );
           })}
         </ul>

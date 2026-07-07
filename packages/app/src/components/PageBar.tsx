@@ -30,7 +30,7 @@ export function MobilePageSelectorView({
   const activePage = orderedPages.find((page) => page.id === activePageId) ?? orderedPages[0];
 
   return (
-    <div className="flex items-center justify-between gap-2 px-3 py-2 lg:hidden">
+    <div className="flex items-center justify-between gap-2 border-b border-[#312d35] bg-[#17151a] px-3 py-2 lg:hidden">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -39,19 +39,19 @@ export function MobilePageSelectorView({
             data-mobile-page-trigger="true"
             className={cn(
               'group inline-flex h-9 max-w-[calc(100%-2.75rem)] items-center gap-2 rounded-lg border px-2.5 text-left',
-              'border-[hsl(var(--primary)/0.22)] bg-background shadow-sm',
+              'border-[#43384d] bg-[#211d26] shadow-sm',
               'transition-[background-color,border-color,box-shadow,transform] duration-150 ease-out',
-              'hover:border-[hsl(var(--primary)/0.42)] hover:bg-accent/45 active:scale-[0.98]',
+              'hover:border-[#6d4aa2] hover:bg-[#28232f] active:scale-[0.98]',
               'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
             )}
           >
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]">
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[#2d2440] text-[#20d1aa]">
               <SquareStack className="h-3.5 w-3.5" />
             </span>
-            <span className="min-w-0 truncate text-sm font-medium text-foreground">
+            <span className="min-w-0 truncate text-sm font-medium text-[#f3f4f6]">
               {activePage?.title ?? '选择页面'}
             </span>
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#8b8491] transition-transform group-data-[state=open]:rotate-180" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[min(18rem,calc(100vw-1.5rem))] rounded-lg p-1.5">
@@ -86,7 +86,7 @@ export function MobilePageSelectorView({
         type="button"
         variant="outline"
         size="icon"
-        className="h-9 w-9 shrink-0 rounded-lg"
+        className="h-9 w-9 shrink-0 rounded-lg border-[#43384d] bg-[#211d26] text-[#f3f4f6] hover:bg-[#28232f]"
         onClick={onCreatePage}
         aria-label="新建页面"
         title="新建页面"

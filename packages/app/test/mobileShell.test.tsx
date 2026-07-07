@@ -37,4 +37,25 @@ describe('mobile shell', () => {
     expect(html).toContain('AI 接入');
     expect(html).toContain('MCP Key');
   });
+
+  it('uses the dark product surface for mobile chrome', () => {
+    const navHtml = renderToStaticMarkup(
+      <MobileBottomNav tab="graph" onTab={vi.fn()} />,
+    );
+    const moreHtml = renderToStaticMarkup(
+      <ThemeProvider>
+        <MobileMorePanel
+          username="codex"
+          onOpenSecurity={vi.fn()}
+          onOpenMcp={vi.fn()}
+          onLogout={vi.fn()}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(navHtml).toContain('data-mobile-chrome="dark"');
+    expect(navHtml).toContain('bg-[#17151a]');
+    expect(moreHtml).toContain('data-mobile-surface="dark"');
+    expect(moreHtml).toContain('bg-[#151317]');
+  });
 });

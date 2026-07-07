@@ -175,9 +175,10 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       return { ok: false, error: '当前密码错误' };
     }
 
-    await userRepo.updatePasswordHash(session.user.id, hashPassword(newPassword), session.user.sessionVersion);
+    const nextSessionVersion = session.user.sessionVersion + 1;
+    await userRepo.updatePasswordHash(session.user.id, hashPassword(newPassword), nextSessionVersion);
     req.session.userId = session.user.id;
-    req.session.sessionVersion = session.user.sessionVersion;
+    req.session.sessionVersion = nextSessionVersion;
     return { ok: true };
   });
 

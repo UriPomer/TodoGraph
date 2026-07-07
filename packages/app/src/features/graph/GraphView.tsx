@@ -1109,30 +1109,30 @@ function GraphViewInner() {
 
   return (
     <div ref={containerRef} className="relative h-full w-full" style={{ touchAction: 'none', WebkitTouchCallout: 'none' }} onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
-      <div className="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-lg border border-border bg-card/90 p-2 backdrop-blur">
+      <div className="absolute left-3 right-3 top-3 z-10 flex items-center justify-center gap-2 rounded-xl border border-border bg-card/90 p-2 backdrop-blur lg:right-auto lg:justify-start lg:rounded-lg">
         <span className="text-xs text-muted-foreground hidden lg:inline">
           拖 <b>●</b> 连边；拖到空白处创建新节点；<kbd className="text-[10px]">Shift</kbd>+左键框选
         </span>
         <div className="mx-1 h-4 w-px bg-border" />
         <UndoRedoButtons />
         <div className="mx-1 h-4 w-px bg-border" />
-        <Button variant="outline" size="sm" className="gap-1 h-7" onClick={applyAutoLayout}>
+        <Button variant="outline" size="sm" className="h-8 min-w-9 gap-1 px-2 lg:h-7 lg:min-w-0" onClick={applyAutoLayout}>
           <Layout className="h-3.5 w-3.5" />
-          自动布局
+          <span className="hidden sm:inline">自动布局</span>
         </Button>
         <Button
           variant="outline"
           size="sm"
-          className="gap-1 h-7"
+          className="h-8 min-w-9 gap-1 px-2 lg:h-7 lg:min-w-0"
           onClick={() => rf.fitView({ padding: 0.2 })}
         >
           <Maximize2 className="h-3.5 w-3.5" />
-          适配
+          <span className="hidden sm:inline">适配</span>
         </Button>
         <Button
           variant="outline"
           size="sm"
-          className="h-7"
+          className="h-8 px-3 text-xs lg:h-7"
           disabled={selectedNodeIds.length < 1}
           onClick={() => void promptMoveSelectionToPage()}
           title={selectedNodeIds.length < 1 ? '先选中节点' : '移到已有页面或新建页面'}

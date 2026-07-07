@@ -39,7 +39,7 @@ export function TaskInput({ focusTrigger }: { focusTrigger?: number }) {
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={onKey}
-        className="h-8 border-transparent bg-transparent px-1 text-sm focus-visible:ring-0 focus-visible:border-border"
+        className="h-8 border-transparent bg-transparent px-3 text-sm focus-visible:ring-0 focus-visible:border-border"
       />
     </div>
   );

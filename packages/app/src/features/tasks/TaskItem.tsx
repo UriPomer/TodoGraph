@@ -191,9 +191,9 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       onTouchEnd={onSwipeEnd}
       data-lens
       className={cn(
-        'group relative flex flex-col select-none mb-0.5 rounded-xl',
+        'group relative flex flex-col select-none',
         'transition-colors duration-200',
-        'hover:bg-foreground/5',
+        'hover:bg-foreground/[0.035]',
         isDragging && 'opacity-30 scale-[0.98]',
         isDropTarget && 'bg-primary/10 border-l-2 border-primary',
         task.status === 'done' && !isDragging && 'text-muted-foreground',

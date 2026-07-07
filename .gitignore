@@ -15,6 +15,7 @@ release/
 # 本地运行 / Electron portable 产生的用户数据
 data/
 packages/*/data/
+packages/*/data.backup-*/
 # Fastify dev 日志等
 *.log
 

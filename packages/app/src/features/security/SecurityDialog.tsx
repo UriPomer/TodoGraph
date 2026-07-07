@@ -91,6 +91,7 @@ export function SecurityDialog({ open, onClose }: Props) {
 
   const exportJson = () =>
     runAction('export', async () => {
+      await useTaskStore.getState().flush();
       const data = await api.exportWorkspaceJson();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);

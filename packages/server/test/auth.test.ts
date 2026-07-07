@@ -247,7 +247,7 @@ describe('auth routes', () => {
     expect(loginNew.statusCode).toBe(200);
   });
 
-  it('keeps existing session cookies valid after password change', async () => {
+  it('invalidates existing session cookies after password change', async () => {
     const regRes = await app.inject({
       method: 'POST',
       url: '/api/auth/register',
@@ -264,6 +264,9 @@ describe('auth routes', () => {
       payload: { currentPassword: 'secret123', newPassword: 'newsecret123' },
     });
     expect(changeRes.statusCode).toBe(200);
+    const refreshedCookies = Object.fromEntries(
+      (changeRes.cookies as unknown as { name: string; value: string }[]).map((c) => [c.name, c.value]),
+    );
 
     await app.close();
     app = await buildApp({
@@ -279,7 +282,14 @@ describe('auth routes', () => {
       url: '/api/mcp/keys',
       cookies: originalCookies,
     });
-    expect(existingSession.statusCode).toBe(200);
+    expect(existingSession.statusCode).toBe(401);
+
+    const refreshedSession = await app.inject({
+      method: 'GET',
+      url: '/api/mcp/keys',
+      cookies: refreshedCookies,
+    });
+    expect(refreshedSession.statusCode).toBe(200);
   });
 
   it('rejects stale meta revision when two clients create pages concurrently', async () => {
