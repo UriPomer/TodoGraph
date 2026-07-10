@@ -1,7 +1,10 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { randomBytes } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildApp, FileRepository } from '@todograph/server';
+import { buildApp } from '@todograph/server';
+import { isSafeExternalUrl, isSameOrigin } from '../src/lib/externalUrl';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,16 +23,50 @@ if (!isDev) {
 
 let apiBase = '';
 
+async function loadOrCreateSessionSecret(dataDir: string): Promise<string> {
+  const secretPath = path.join(dataDir, '.session-secret');
+  try {
+    const existing = (await fs.readFile(secretPath, 'utf-8')).trim();
+    if (Buffer.byteLength(existing) !== 32) {
+      throw new Error(`Invalid Electron session secret: ${secretPath}`);
+    }
+    return existing;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+
+  const secret = randomBytes(24).toString('base64');
+  await fs.mkdir(dataDir, { recursive: true });
+  try {
+    await fs.writeFile(secretPath, secret, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
+    return secret;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    const existing = (await fs.readFile(secretPath, 'utf-8')).trim();
+    if (Buffer.byteLength(existing) !== 32) {
+      throw new Error(`Invalid Electron session secret: ${secretPath}`);
+    }
+    return existing;
+  }
+}
+
 async function startServer(): Promise<void> {
-  const dataFile = path.join(app.getPath('userData'), 'tasks.json');
-  const repo = new FileRepository(dataFile);
+  const dataDir = app.getPath('userData');
+  const sessionSecret = await loadOrCreateSessionSecret(dataDir);
   // 生产模式下让 Fastify 也托管静态资源（和 Web 模式同构，双保险）
   const staticDir = isDev ? undefined : path.join(__dirname, '../renderer');
-  const server = await buildApp({ repo, staticDir, logger: isDev });
+  const server = await buildApp({
+    dataDir,
+    staticDir,
+    registrationKey: '',
+    sessionSecret,
+    cookieSecure: false,
+    logger: isDev,
+  });
   const addr = await server.listen({ port: 0, host: '127.0.0.1' });
   apiBase = addr;
   console.log('[electron-main] Fastify listening at', addr);
-  console.log('[electron-main] Data file:', dataFile);
+  console.log('[electron-main] Data directory:', dataDir);
 }
 
 function createWindow(): void {
@@ -43,11 +80,29 @@ function createWindow(): void {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
 
+  const rendererUrl = isDev && process.env.ELECTRON_RENDERER_URL
+    ? process.env.ELECTRON_RENDERER_URL
+    : apiBase;
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (!isSameOrigin(url, rendererUrl) && isSafeExternalUrl(url)) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isSameOrigin(url, rendererUrl)) return;
+    event.preventDefault();
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
+  });
+
   if (isDev && process.env.ELECTRON_RENDERER_URL) {
-    void win.loadURL(process.env.ELECTRON_RENDERER_URL);
+    void win.loadURL(rendererUrl);
     win.webContents.openDevTools({ mode: 'right' });
   } else {
     // 走 Fastify 的静态托管，这样渲染进程的 /api/graph 请求和页面同源

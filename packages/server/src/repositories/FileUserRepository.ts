@@ -5,6 +5,7 @@ import { StoredUserSchema, type StoredUser, type UserRepository } from './UserRe
 
 export class FileUserRepository implements UserRepository {
   private filePath: string;
+  private writeLock: Promise<void> = Promise.resolve();
 
   constructor(dataDir: string) {
     this.filePath = path.join(dataDir, 'users', 'users.json');
@@ -33,28 +34,47 @@ export class FileUserRepository implements UserRepository {
   }
 
   async create(user: StoredUser): Promise<void> {
-    const all = await this.findAll();
-    if (all.some((u) => u.username === user.username)) {
-      throw new Error('username already exists');
-    }
-    all.push(user);
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tmp = this.filePath + '.tmp';
-    await fs.writeFile(tmp, JSON.stringify(all, null, 2), 'utf-8');
-    await fs.rename(tmp, this.filePath);
+    await this.withWriteLock(async () => {
+      const all = await this.findAll();
+      if (all.some((u) => u.username === user.username)) {
+        throw new Error('username already exists');
+      }
+      all.push(user);
+      await this.writeUsers(all);
+    });
   }
 
   async updatePasswordHash(userId: string, passwordHash: string, sessionVersion: number): Promise<void> {
-    const all = await this.findAll();
-    const user = all.find((u) => u.id === userId);
-    if (!user) {
-      throw new Error('user not found');
-    }
-    user.passwordHash = passwordHash;
-    user.sessionVersion = sessionVersion;
+    await this.withWriteLock(async () => {
+      const all = await this.findAll();
+      const user = all.find((u) => u.id === userId);
+      if (!user) {
+        throw new Error('user not found');
+      }
+      user.passwordHash = passwordHash;
+      user.sessionVersion = sessionVersion;
+      await this.writeUsers(all);
+    });
+  }
+
+  private async writeUsers(users: StoredUser[]): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     const tmp = this.filePath + '.tmp';
-    await fs.writeFile(tmp, JSON.stringify(all, null, 2), 'utf-8');
+    await fs.writeFile(tmp, JSON.stringify(users, null, 2), 'utf-8');
     await fs.rename(tmp, this.filePath);
+  }
+
+  private async withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+    const previous = this.writeLock;
+    let release!: () => void;
+    this.writeLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
   }
 }

@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import '@fastify/secure-session';
 import type { StoredUser, UserRepository } from './repositories/UserRepository.js';
@@ -6,10 +6,20 @@ import type { McpKeyStore } from './mcp-keys.js';
 
 const SALT_LEN = 32;
 const KEY_LEN = 64;
+const DUMMY_PASSWORD_HASH = `${'00'.repeat(SALT_LEN)}:${'00'.repeat(KEY_LEN)}`;
+
+function secureStringEqual(left: string, right: string): boolean {
+  const leftHash = createHash('sha256').update(left, 'utf8').digest();
+  const rightHash = createHash('sha256').update(right, 'utf8').digest();
+  return timingSafeEqual(leftHash, rightHash);
+}
 
 function validatePassword(password: string): string | null {
   if (password.length < 8) return '密码至少 8 位';
   if (password.length > 200) return '密码过长';
+  if (!/\p{L}/u.test(password) || !/\p{N}/u.test(password)) {
+    return '密码必须同时包含字母和数字';
+  }
   return null;
 }
 
@@ -78,9 +88,12 @@ async function validateSessionUser(
 
 export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
   const { userRepo, registrationKey } = opts;
+  let registrationLock: Promise<void> = Promise.resolve();
 
   // POST /api/auth/login
-  app.post('/api/auth/login', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/auth/login', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (req: FastifyRequest, reply: FastifyReply) => {
     const body = req.body as { username?: string; password?: string } | null;
     const username = body?.username?.trim();
     const password = body?.password;
@@ -88,10 +101,14 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       reply.status(400);
       return { ok: false, error: '用户名和密码不能为空' };
     }
+    if (username.length > 32 || password.length > 200) {
+      reply.status(401);
+      return { ok: false, error: '用户名或密码错误' };
+    }
     const user = await userRepo.findByUsername(username);
     // Always run scryptSync to prevent timing-based user enumeration.
     // When user doesn't exist, verify against a synthetic hash with identical cost.
-    const hash = user?.passwordHash ?? '00:00'; // dummy salt:hash, scryptSync runs the same
+    const hash = user?.passwordHash ?? DUMMY_PASSWORD_HASH;
     const ok = verifyPassword(password, hash) && user !== null;
     if (!ok) {
       reply.status(401);
@@ -103,7 +120,9 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
   });
 
   // POST /api/auth/register
-  app.post('/api/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/auth/register', {
+    config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
+  }, async (req: FastifyRequest, reply: FastifyReply) => {
     const body = req.body as { username?: string; password?: string; registrationKey?: string } | null;
     const username = body?.username?.trim();
     const password = body?.password;
@@ -120,48 +139,70 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       reply.status(400);
       return { ok: false, error: passwordError };
     }
-    // 注册控制：有邀请码则需要匹配；无邀请码 + 不是首次启动 → 拒绝
-    const existingUsers = await userRepo.findAll();
-    if (existingUsers.length > 0) {
-      if (!registrationKey) {
-        reply.status(403);
-        return { ok: false, error: '注册已关闭' };
-      }
-      if (body?.registrationKey !== registrationKey) {
-        reply.status(403);
-        return { ok: false, error: '邀请码错误' };
-      }
-    }
-    if (await userRepo.findByUsername(username)) {
-      reply.status(409);
-      return { ok: false, error: '用户名已存在' };
-    }
-    const id = 'u' + Date.now().toString(36) + randomBytes(8).toString('base64url');
-    await userRepo.create({
-      id,
-      username,
-      passwordHash: hashPassword(password),
-      sessionVersion: 0,
-      createdAt: new Date().toISOString(),
+    const previousRegistration = registrationLock;
+    let releaseRegistration!: () => void;
+    registrationLock = new Promise<void>((resolve) => {
+      releaseRegistration = resolve;
     });
-    req.session.userId = id;
-    req.session.sessionVersion = 0;
-    return { ok: true, username };
+    await previousRegistration;
+    try {
+      // 注册控制：有邀请码则需要匹配；无邀请码 + 不是首次启动 → 拒绝
+      const existingUsers = await userRepo.findAll();
+      if (existingUsers.length > 0) {
+        if (!registrationKey) {
+          reply.status(403);
+          return { ok: false, error: '注册已关闭' };
+        }
+        if (!secureStringEqual(body?.registrationKey ?? '', registrationKey)) {
+          reply.status(403);
+          return { ok: false, error: '邀请码错误' };
+        }
+      }
+      if (await userRepo.findByUsername(username)) {
+        reply.status(409);
+        return { ok: false, error: '用户名已存在' };
+      }
+      const id = 'u' + Date.now().toString(36) + randomBytes(8).toString('base64url');
+      await userRepo.create({
+        id,
+        username,
+        passwordHash: hashPassword(password),
+        sessionVersion: 0,
+        createdAt: new Date().toISOString(),
+      });
+      req.session.userId = id;
+      req.session.sessionVersion = 0;
+      return { ok: true, username };
+    } finally {
+      releaseRegistration();
+    }
   });
 
-  app.post('/api/auth/change-password', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/auth/change-password', {
+    config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
+  }, async (req: FastifyRequest, reply: FastifyReply) => {
     const session = await validateSessionUser(req, userRepo);
     if (!session.ok) {
       reply.status(401);
       return { ok: false, error: session.error === 'unauthenticated' ? '请先登录' : '会话已失效，请重新登录' };
     }
 
-    const body = req.body as { currentPassword?: string; newPassword?: string } | null;
+    const body = req.body as {
+      currentPassword?: string;
+      newPassword?: string;
+      confirmPassword?: string;
+    } | null;
     const currentPassword = body?.currentPassword;
     const newPassword = body?.newPassword;
-    if (!currentPassword || !newPassword) {
+    const confirmPassword = body?.confirmPassword;
+    if (!currentPassword || !newPassword || !confirmPassword) {
       reply.status(400);
-      return { ok: false, error: '当前密码和新密码不能为空' };
+      return { ok: false, error: '当前密码、新密码和确认密码不能为空' };
+    }
+
+    if (newPassword !== confirmPassword) {
+      reply.status(400);
+      return { ok: false, error: '两次输入的新密码不一致' };
     }
 
     const passwordError = validatePassword(newPassword);
@@ -173,6 +214,11 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
     if (!verifyPassword(currentPassword, session.user.passwordHash)) {
       reply.status(401);
       return { ok: false, error: '当前密码错误' };
+    }
+
+    if (verifyPassword(newPassword, session.user.passwordHash)) {
+      reply.status(400);
+      return { ok: false, error: '新密码不能与当前密码相同' };
     }
 
     const nextSessionVersion = session.user.sessionVersion + 1;
@@ -235,7 +281,7 @@ async function resolveUserId(
   }
 
   // 2. 单用户模式（env）：MCP_API_KEY + MCP_USER_ID
-  if (MCP_API_KEY && MCP_USER_ID && token === MCP_API_KEY) {
+  if (MCP_API_KEY && MCP_USER_ID && secureStringEqual(token, MCP_API_KEY)) {
     if (MCP_API_KEY.length < 20) return null;
     return MCP_USER_ID;
   }

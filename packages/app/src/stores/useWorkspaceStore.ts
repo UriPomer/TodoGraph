@@ -90,7 +90,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         // 若当前活跃页被删或变更，切到新的活跃页
         const storePageId = useTaskStore.getState().activePageId;
         const pageIds = new Set(latest.pages.map((p) => p.id));
-        if (!pageIds.has(storePageId)) {
+        if (!storePageId || !pageIds.has(storePageId)) {
           const next = latest.activePageId ?? latest.pages[0]?.id;
           if (next) await useTaskStore.getState().loadPage(next);
         }

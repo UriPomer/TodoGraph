@@ -18,7 +18,7 @@ export interface ServerConfig {
   staticDir?: string;
   /** 新用户注册邀请码，空字符串 = 关闭注册（但首次启动无用户时忽略此限制） */
   registrationKey: string;
-  /** @fastify/secure-session 的加密密钥，至少 32 字节 */
+  /** @fastify/secure-session 的加密密钥，必须正好 32 字节 */
   sessionSecret: string;
   /** 生产环境默认启用 secure cookie；也可显式通过 env 覆盖 */
   cookieSecure: boolean;

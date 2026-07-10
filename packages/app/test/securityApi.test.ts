@@ -29,12 +29,16 @@ describe('security API client', () => {
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
     );
 
-    await api.changePassword('old-password', 'new-password-123');
+    await api.changePassword('old-password', 'new-password-123', 'new-password-123');
 
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/change-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentPassword: 'old-password', newPassword: 'new-password-123' }),
+      body: JSON.stringify({
+        currentPassword: 'old-password',
+        newPassword: 'new-password-123',
+        confirmPassword: 'new-password-123',
+      }),
     });
   });
 

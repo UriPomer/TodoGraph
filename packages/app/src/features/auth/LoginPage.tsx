@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { PasswordInput } from '@/components/ui/password-input';
 
 interface Props {
   onLogin: (username: string, password: string) => Promise<string | null>;
@@ -50,12 +51,14 @@ export function LoginPage({ onLogin, onRegister }: Props) {
 
           <div>
             <label className="block text-sm font-medium text-muted-foreground mb-1">密码</label>
-            <input
-              type="password"
+            <PasswordInput
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              visibilityLabel="密码"
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              placeholder={mode === 'register' ? '至少 8 位，包含字母和数字' : undefined}
               minLength={mode === 'register' ? 8 : undefined}
+              maxLength={200}
               required
               className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-[hsl(var(--primary))]"
             />

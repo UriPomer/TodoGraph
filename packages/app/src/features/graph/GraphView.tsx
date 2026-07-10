@@ -114,14 +114,15 @@ function GraphViewInner() {
         const selIds = selectedIdsRef.current;
         // 检查是否选中了唯一一个 group 节点 → 在其下创建子节点
         if (selIds.length === 1) {
-          const selNode = nodes.find((n) => n.id === selIds[0]);
+          const selectedId = selIds[0]!;
+          const selNode = nodes.find((n) => n.id === selectedId);
           if (selNode) {
-            const selRFNode = rfNodes.find((n) => n.id === selIds[0]);
+            const selRFNode = rfNodes.find((n) => n.id === selectedId);
             if (selRFNode && selRFNode.type === 'group') {
               const metrics = buildHierarchyMetrics(nodes);
-              const depth = metrics.depthById.get(selIds[0]) ?? 0;
+              const depth = metrics.depthById.get(selectedId) ?? 0;
               if (depth + 1 < MAX_HIERARCHY_DEPTH) {
-                const siblings = nodes.filter((n) => n.parentId === selIds[0]);
+                const siblings = nodes.filter((n) => n.parentId === selectedId);
                 let childY = GROUP_PADDING_Y;
                 for (const s of siblings) {
                   const b = (s.y ?? 0) + CHILD_DEFAULT_H;
@@ -1053,7 +1054,7 @@ function GraphViewInner() {
         onClick: async () => {
           const title = await dialog.prompt('新任务名称', { defaultValue: '未命名' });
           if (title === null) return;
-          insertBetween(ids[0], ids[1], title || '未命名');
+          insertBetween(ids[0]!, ids[1]!, title || '未命名');
         },
         disabled: ids.length !== 2,
       },

@@ -54,6 +54,28 @@ describe('FileUserRepository', () => {
     await expect(repo.create({ ...user, id: 'u2' })).rejects.toThrow('username already exists');
   });
 
+  it('serializes concurrent user writes without losing data', async () => {
+    const createdAt = new Date().toISOString();
+    await Promise.all([
+      repo.create({
+        id: 'u1',
+        username: 'alice',
+        passwordHash: 'salt:hash1',
+        sessionVersion: 0,
+        createdAt,
+      }),
+      repo.create({
+        id: 'u2',
+        username: 'bob',
+        passwordHash: 'salt:hash2',
+        sessionVersion: 0,
+        createdAt,
+      }),
+    ]);
+
+    expect((await repo.findAll()).map((user) => user.username).sort()).toEqual(['alice', 'bob']);
+  });
+
   it('reads legacy users without sessionVersion and preserves fields when updating password hash', async () => {
     const legacyUser = {
       id: 'u1',

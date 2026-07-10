@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { PasswordInput } from '@/components/ui/password-input';
 import { api, type BackupInfo, type WorkspaceExport } from '@/api/client';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
@@ -41,6 +42,7 @@ export function SecurityDialog({ open, onClose }: Props) {
   const refreshAllTasks = useWorkspaceStore((s) => s.refreshAllTasks);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [selectedBackup, setSelectedBackup] = useState('');
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
@@ -74,6 +76,9 @@ export function SecurityDialog({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
     setMessage(null);
     setError(null);
     void loadBackups();
@@ -81,13 +86,22 @@ export function SecurityDialog({ open, onClose }: Props) {
 
   if (!open) return null;
 
-  const changePassword = () =>
-    runAction('password', async () => {
-      await api.changePassword(currentPassword, newPassword);
+  const passwordMismatch = confirmPassword.length > 0 && newPassword !== confirmPassword;
+
+  const changePassword = () => {
+    if (newPassword !== confirmPassword) {
+      setError('两次输入的新密码不一致');
+      return;
+    }
+    if (!window.confirm('修改密码后，其他设备上的登录会话将失效。确认继续？')) return;
+    void runAction('password', async () => {
+      await api.changePassword(currentPassword, newPassword, confirmPassword);
       setCurrentPassword('');
       setNewPassword('');
+      setConfirmPassword('');
       setMessage('密码已更新');
     });
+  };
 
   const exportJson = () =>
     runAction('export', async () => {
@@ -158,24 +172,48 @@ export function SecurityDialog({ open, onClose }: Props) {
           <section className="rounded-lg border border-border p-3">
             <h3 className="mb-2 text-xs font-semibold text-foreground">修改密码</h3>
             <div className="space-y-2">
-              <input
-                type="password"
+              <PasswordInput
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 placeholder="当前密码"
+                visibilityLabel="当前密码"
+                autoComplete="current-password"
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-[hsl(var(--primary))]"
               />
-              <input
-                type="password"
+              <PasswordInput
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="新密码，至少 8 位"
+                placeholder="新密码，至少 8 位且包含字母和数字"
+                visibilityLabel="新密码"
+                autoComplete="new-password"
+                minLength={8}
+                maxLength={200}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-[hsl(var(--primary))]"
               />
+              <PasswordInput
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="再次输入新密码"
+                visibilityLabel="确认新密码"
+                autoComplete="new-password"
+                minLength={8}
+                maxLength={200}
+                aria-invalid={passwordMismatch}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-[hsl(var(--primary))]"
+              />
+              {passwordMismatch && (
+                <p className="text-xs text-destructive">两次输入的新密码不一致</p>
+              )}
               <Button
                 size="sm"
                 onClick={changePassword}
-                disabled={!currentPassword || !newPassword || busyAction === 'password'}
+                disabled={
+                  !currentPassword ||
+                  !newPassword ||
+                  !confirmPassword ||
+                  passwordMismatch ||
+                  busyAction === 'password'
+                }
               >
                 {busyAction === 'password' && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
                 更新密码

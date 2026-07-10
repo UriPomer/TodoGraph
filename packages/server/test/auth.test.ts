@@ -31,6 +31,8 @@ describe('auth routes', () => {
   it('rejects unauthenticated /api/meta', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/meta' });
     expect(res.statusCode).toBe(401);
+    expect(res.headers['content-security-policy']).toContain("script-src 'self'");
+    expect(res.headers['content-security-policy']).toContain("script-src-attr 'none'");
   });
 
   it('registers first user without registration key', async () => {
@@ -55,6 +57,27 @@ describe('auth routes', () => {
       payload: { username: 'bob', password: 'secret123' },
     });
     expect(res.statusCode).toBe(403);
+  });
+
+  it('allows only one concurrent first registration without a key', async () => {
+    const responses = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        payload: { username: 'alice', password: 'secret123' },
+      }),
+      app.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        payload: { username: 'bob', password: 'secret123' },
+      }),
+    ]);
+
+    expect(responses.map((res) => res.statusCode).sort()).toEqual([200, 403]);
+    const users = JSON.parse(
+      await fs.readFile(path.join(dataDir, 'users', 'users.json'), 'utf-8'),
+    ) as unknown[];
+    expect(users).toHaveLength(1);
   });
 
   it('registers with correct registration key', async () => {
@@ -129,6 +152,35 @@ describe('auth routes', () => {
     });
     expect(res.statusCode).toBe(401);
     expect(res.json()).toEqual({ ok: false, error: '用户名或密码错误' });
+  });
+
+  it('rejects oversized login credentials before password hashing', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'alice', password: 'x'.repeat(201) },
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({ ok: false, error: '用户名或密码错误' });
+  });
+
+  it('rate limits repeated login attempts', async () => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'missing', password: 'wrong123' },
+      });
+      expect(res.statusCode).toBe(401);
+    }
+
+    const blocked = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'missing', password: 'wrong123' },
+    });
+    expect(blocked.statusCode).toBe(429);
   });
 
   it('/api/auth/me returns user info when logged in', async () => {
@@ -214,6 +266,17 @@ describe('auth routes', () => {
     expect(res.json()).toMatchObject({ error: '密码至少 8 位' });
   });
 
+  it('requires letters and numbers in passwords', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'abcdefgh' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: '密码必须同时包含字母和数字' });
+  });
+
   it('changes password when current password is correct', async () => {
     const regRes = await app.inject({
       method: 'POST',
@@ -228,7 +291,11 @@ describe('auth routes', () => {
       method: 'POST',
       url: '/api/auth/change-password',
       cookies,
-      payload: { currentPassword: 'secret123', newPassword: 'newsecret123' },
+      payload: {
+        currentPassword: 'secret123',
+        newPassword: 'newsecret123',
+        confirmPassword: 'newsecret123',
+      },
     });
     expect(change.statusCode).toBe(200);
 
@@ -261,7 +328,11 @@ describe('auth routes', () => {
       method: 'POST',
       url: '/api/auth/change-password',
       cookies: originalCookies,
-      payload: { currentPassword: 'secret123', newPassword: 'newsecret123' },
+      payload: {
+        currentPassword: 'secret123',
+        newPassword: 'newsecret123',
+        confirmPassword: 'newsecret123',
+      },
     });
     expect(changeRes.statusCode).toBe(200);
     const refreshedCookies = Object.fromEntries(
@@ -290,6 +361,56 @@ describe('auth routes', () => {
       cookies: refreshedCookies,
     });
     expect(refreshedSession.statusCode).toBe(200);
+  });
+
+  it('rejects password change when confirmation does not match', async () => {
+    const regRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'secret123' },
+    });
+    const cookies = Object.fromEntries(
+      (regRes.cookies as unknown as { name: string; value: string }[]).map((c) => [c.name, c.value]),
+    );
+
+    const change = await app.inject({
+      method: 'POST',
+      url: '/api/auth/change-password',
+      cookies,
+      payload: {
+        currentPassword: 'secret123',
+        newPassword: 'newsecret123',
+        confirmPassword: 'different123',
+      },
+    });
+
+    expect(change.statusCode).toBe(400);
+    expect(change.json()).toEqual({ ok: false, error: '两次输入的新密码不一致' });
+  });
+
+  it('rejects reusing the current password', async () => {
+    const regRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'secret123' },
+    });
+    const cookies = Object.fromEntries(
+      (regRes.cookies as unknown as { name: string; value: string }[]).map((c) => [c.name, c.value]),
+    );
+
+    const change = await app.inject({
+      method: 'POST',
+      url: '/api/auth/change-password',
+      cookies,
+      payload: {
+        currentPassword: 'secret123',
+        newPassword: 'secret123',
+        confirmPassword: 'secret123',
+      },
+    });
+
+    expect(change.statusCode).toBe(400);
+    expect(change.json()).toEqual({ ok: false, error: '新密码不能与当前密码相同' });
   });
 
   it('rejects stale meta revision when two clients create pages concurrently', async () => {
