@@ -65,6 +65,8 @@ Docker 部署：
 docker compose up -d  # 监听 127.0.0.1:3000，数据持久化在 ./data
 ```
 
+文件存储模式要求每个 `DATA_DIR` 只由一个 TodoGraph 服务进程写入；不要让多个副本共享同一数据目录。需要多实例部署时应先切换到支持事务的数据库存储。
+
 打包 Windows 便携版 EXE：双击 `build.bat`，产物在 `Build/`，拷到任何 Win10/11 机器双击即用。
 
 Electron 开发模式：`pnpm dev:electron`
@@ -107,15 +109,16 @@ interface Edge {
 
 ```
 packages/
-├─ core/        DAG 引擎（纯函数、零依赖）
+├─ core/        DAG 引擎（纯函数，类型复用 shared）
 ├─ shared/      Zod schema（前后端共享，单一真源）
 ├─ server/      Fastify 5 后端 + 可替换的 Repository
-└─ app/         React 18 前端 + Electron 壳
+├─ app/         React 18 前端 + Electron 壳
+└─ mcp/         独立发布的 MCP 服务与工具
 ```
 
-前端只和 Zustand store 交互，store 250ms 防抖写后端，后端校验 DAG 后原子写 JSON。换存储只需实现 `WorkspaceRepository` 接口。所有颜色走 `hsl(var(--xxx))` CSS 变量，加主题等于加一段 CSS。
+前端只和 Zustand store 交互，store 250ms 防抖写后端，后端同时校验依赖 DAG 与父子层级后原子写 JSON。退出或切换账号时统一清理 store、历史记录和轮询。换存储只需实现 `WorkspaceRepository` 接口。所有颜色走 `hsl(var(--xxx))` CSS 变量，加主题等于加一段 CSS。
 
-技术栈：TypeScript 5 · React 18 · Vite 5 · React Flow · Zustand · Fastify 5 · Tailwind CSS 3 · Electron 33 · pnpm workspace · Vitest
+技术栈：TypeScript 5 · React 18 · Vite 6 · React Flow · Zustand · Fastify 5 · Tailwind CSS 3 · Electron 39 · pnpm workspace · Vitest 3
 
 ---
 
@@ -126,8 +129,8 @@ packages/
 | `pnpm dev` | Fastify(5173) + Vite(5174) |
 | `pnpm dev:electron` | Electron + HMR |
 | `pnpm -r build` | 编译所有包 |
-| `pnpm test` | 跑 core 单测 |
-| `pnpm lint` | ESLint |
+| `pnpm test` | 构建依赖并运行所有包测试 |
+| `pnpm typecheck` | 运行所有包 TypeScript 检查 |
 | `pnpm package` | 打 Windows portable exe |
 
 改 `packages/shared/src/schema.ts` 后先 `pnpm --filter @todograph/shared build`，前端/后端才能拿到新类型。

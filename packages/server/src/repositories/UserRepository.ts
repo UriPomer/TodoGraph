@@ -21,6 +21,6 @@ export interface UserRepository {
   findAll(): Promise<StoredUser[]>;
   findByUsername(username: string): Promise<StoredUser | null>;
   findById(id: string): Promise<StoredUser | null>;
-  create(user: StoredUser): Promise<void>;
+  register(user: StoredUser, allowAdditionalUsers: boolean): Promise<'created' | 'closed' | 'duplicate'>;
   updatePasswordHash(userId: string, passwordHash: string, sessionVersion: number): Promise<void>;
 }

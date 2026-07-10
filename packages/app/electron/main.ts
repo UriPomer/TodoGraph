@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildApp } from '@todograph/server';
 import { isSafeExternalUrl, isSameOrigin } from '../src/lib/externalUrl';
+import { electronServerHost } from '../src/lib/electronServerHost';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -53,6 +54,9 @@ async function loadOrCreateSessionSecret(dataDir: string): Promise<string> {
 async function startServer(): Promise<void> {
   const dataDir = app.getPath('userData');
   const sessionSecret = await loadOrCreateSessionSecret(dataDir);
+  const rendererUrl = isDev && process.env.ELECTRON_RENDERER_URL
+    ? new URL(process.env.ELECTRON_RENDERER_URL)
+    : null;
   // 生产模式下让 Fastify 也托管静态资源（和 Web 模式同构，双保险）
   const staticDir = isDev ? undefined : path.join(__dirname, '../renderer');
   const server = await buildApp({
@@ -61,10 +65,13 @@ async function startServer(): Promise<void> {
     registrationKey: '',
     sessionSecret,
     cookieSecure: false,
+    corsOrigin: rendererUrl?.origin,
     logger: isDev,
   });
-  const addr = await server.listen({ port: 0, host: '127.0.0.1' });
-  apiBase = addr;
+  const addr = await server.listen({ port: 0, host: electronServerHost(rendererUrl) });
+  const apiUrl = new URL(addr);
+  if (rendererUrl) apiUrl.hostname = rendererUrl.hostname;
+  apiBase = apiUrl.origin;
   console.log('[electron-main] Fastify listening at', addr);
   console.log('[electron-main] Data directory:', dataDir);
 }
@@ -110,7 +117,9 @@ function createWindow(): void {
   }
 }
 
-ipcMain.handle('todograph:get-api-base', () => apiBase);
+ipcMain.on('todograph:get-api-base-sync', (event) => {
+  event.returnValue = apiBase;
+});
 
 app.whenReady().then(async () => {
   await startServer();

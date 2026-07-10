@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback } from 'react';
 import { Check, ChevronDown, GripVertical, MoreHorizontal, Plus, SquareStack } from 'lucide-react';
-import type { PageInfo } from '@todograph/shared';
+import { MAX_PAGE_TITLE_LENGTH, type PageInfo } from '@todograph/shared';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -30,7 +30,7 @@ export function MobilePageSelectorView({
   const activePage = orderedPages.find((page) => page.id === activePageId) ?? orderedPages[0];
 
   return (
-    <div className="flex items-center justify-between gap-2 border-b border-[#312d35] bg-[#17151a] px-3 py-2 lg:hidden">
+    <div className="flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-2 lg:hidden">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -39,19 +39,19 @@ export function MobilePageSelectorView({
             data-mobile-page-trigger="true"
             className={cn(
               'group inline-flex h-9 max-w-[calc(100%-2.75rem)] items-center gap-2 rounded-lg border px-2.5 text-left',
-              'border-[#43384d] bg-[#211d26] shadow-sm',
+              'border-border bg-background shadow-sm',
               'transition-[background-color,border-color,box-shadow,transform] duration-150 ease-out',
-              'hover:border-[#6d4aa2] hover:bg-[#28232f] active:scale-[0.98]',
+              'hover:border-[hsl(var(--primary)/0.42)] hover:bg-accent/45 active:scale-[0.98]',
               'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
             )}
           >
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[#2d2440] text-[#20d1aa]">
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]">
               <SquareStack className="h-3.5 w-3.5" />
             </span>
-            <span className="min-w-0 truncate text-sm font-medium text-[#f3f4f6]">
+            <span className="min-w-0 truncate text-sm font-medium text-foreground">
               {activePage?.title ?? '选择页面'}
             </span>
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#8b8491] transition-transform group-data-[state=open]:rotate-180" />
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[min(18rem,calc(100vw-1.5rem))] rounded-lg p-1.5">
@@ -86,7 +86,7 @@ export function MobilePageSelectorView({
         type="button"
         variant="outline"
         size="icon"
-        className="h-9 w-9 shrink-0 rounded-lg border-[#43384d] bg-[#211d26] text-[#f3f4f6] hover:bg-[#28232f]"
+        className="h-9 w-9 shrink-0 rounded-lg"
         onClick={onCreatePage}
         aria-label="新建页面"
         title="新建页面"
@@ -147,14 +147,18 @@ export function PageBar() {
 
   const handleCreatePage = async () => {
     const fallbackTitle = `页面 ${pages.length + 1}`;
-    const title = await dialog.prompt('新页面名称', { defaultValue: fallbackTitle, placeholder: '输入页面名称' });
+    const title = await dialog.prompt('新页面名称', {
+      defaultValue: fallbackTitle,
+      placeholder: '输入页面名称',
+      maxLength: MAX_PAGE_TITLE_LENGTH,
+    });
     if (title === null) return;
     const info = await createPage(title.trim() || fallbackTitle);
     if (info) await switchPage(info.id);
   };
 
   return (
-    <div className="shrink-0 border-b border-border bg-card/65 backdrop-blur">
+    <div className="shrink-0 border-b border-border bg-card">
       <MobilePageSelectorView
         pages={pages}
         activePageId={meta.activePageId}
@@ -217,7 +221,11 @@ export function PageBar() {
                 <DropdownMenuContent align="start">
                   <DropdownMenuItem
                     onSelect={async () => {
-                      const next = await dialog.prompt('重命名页面', { defaultValue: page.title, placeholder: '输入新名称' });
+                      const next = await dialog.prompt('重命名页面', {
+                        defaultValue: page.title,
+                        placeholder: '输入新名称',
+                        maxLength: MAX_PAGE_TITLE_LENGTH,
+                      });
                       if (next === null) return;
                       const title = next.trim();
                       if (!title || title === page.title) return;

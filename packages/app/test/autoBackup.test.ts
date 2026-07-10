@@ -1,86 +1,62 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { useHistoryStore } from '@/stores/useHistoryStore';
 
+function markCurrentBackupDone(): void {
+  const { activePageId, backupRevision, markBackupDone } = useTaskStore.getState();
+  markBackupDone(activePageId!, backupRevision);
+}
+
 describe('autoBackup (store)', () => {
   beforeEach(() => {
-    // 重置 store 到初始态，避免测试间状态污染
     useTaskStore.setState({
-      activePageId: null,
-      nodes: [],
-      edges: [],
-      loaded: false,
-      backupDirty: false,
+      activePageId: null, nodes: [], edges: [], loaded: false,
+      backupDirty: false, backupRevision: 0,
     });
     useHistoryStore.getState().clear();
   });
 
-  it('backupDirty starts false', () => {
+  it('starts clean', () => {
     expect(useTaskStore.getState().backupDirty).toBe(false);
   });
 
-  it('markBackupDone sets backupDirty to false', () => {
-    useTaskStore.setState({ backupDirty: true });
-    expect(useTaskStore.getState().backupDirty).toBe(true);
-    useTaskStore.getState().markBackupDone();
-    expect(useTaskStore.getState().backupDirty).toBe(false);
-  });
-
-  it('addTask sets backupDirty to true', () => {
+  it('clears only the revision that was backed up', () => {
     useTaskStore.setState({ activePageId: 'test-page' });
-    useTaskStore.getState().addTask({ title: 'test task' });
+    useTaskStore.getState().addTask({ title: 'before backup' });
+    const revision = useTaskStore.getState().backupRevision;
+    useTaskStore.getState().addTask({ title: 'during backup' });
+    useTaskStore.getState().markBackupDone('test-page', revision);
     expect(useTaskStore.getState().backupDirty).toBe(true);
-  });
-
-  it('addTask + markBackupDone clears dirty', () => {
-    useTaskStore.setState({ activePageId: 'test-page' });
-    useTaskStore.getState().addTask({ title: 'a' });
-    expect(useTaskStore.getState().backupDirty).toBe(true);
-    useTaskStore.getState().markBackupDone();
+    markCurrentBackupDone();
     expect(useTaskStore.getState().backupDirty).toBe(false);
   });
 
-  it('updateTasksBulk sets backupDirty', () => {
+  it.each([
+    ['update', () => {
+      const { id } = useTaskStore.getState().addTask({ title: 'existing' });
+      markCurrentBackupDone();
+      useTaskStore.getState().updateTasksBulk([{ id, patch: { title: 'renamed' } }]);
+    }],
+    ['delete', () => {
+      const { id } = useTaskStore.getState().addTask({ title: 'existing' });
+      markCurrentBackupDone();
+      useTaskStore.getState().deleteTask(id);
+    }],
+    ['undo', () => {
+      useTaskStore.getState().addTask({ title: 'undoable' });
+      markCurrentBackupDone();
+      useTaskStore.getState().undo();
+    }],
+    ['redo', () => {
+      useTaskStore.getState().addTask({ title: 'first' });
+      useTaskStore.getState().addTask({ title: 'second' });
+      useTaskStore.getState().undo();
+      markCurrentBackupDone();
+      useTaskStore.getState().redo();
+    }],
+  ])('%s marks the backup dirty', (_name, mutate) => {
     useTaskStore.setState({ activePageId: 'test-page' });
-
-    // 先加一个节点并清脏，作为基线
-    const { id } = useTaskStore.getState().addTask({ title: 'existing' });
-    useTaskStore.getState().markBackupDone();
-
-    useTaskStore.getState().updateTasksBulk([
-      { id, patch: { title: 'renamed' } },
-    ]);
-    expect(useTaskStore.getState().backupDirty).toBe(true);
-  });
-
-  it('deleteTask sets backupDirty', () => {
-    useTaskStore.setState({ activePageId: 'test-page' });
-    const { id } = useTaskStore.getState().addTask({ title: 'to-delete' });
-    useTaskStore.getState().markBackupDone();
-
-    useTaskStore.getState().deleteTask(id);
-    expect(useTaskStore.getState().backupDirty).toBe(true);
-  });
-
-  it('undo sets backupDirty', () => {
-    useTaskStore.setState({ activePageId: 'test-page', backupDirty: false });
-    useTaskStore.getState().addTask({ title: 'undoable' });
-    useTaskStore.getState().markBackupDone();
-    expect(useTaskStore.getState().backupDirty).toBe(false);
-
-    useTaskStore.getState().undo();
-    expect(useTaskStore.getState().backupDirty).toBe(true);
-  });
-
-  it('redo sets backupDirty', () => {
-    useTaskStore.setState({ activePageId: 'test-page', backupDirty: false });
-    useTaskStore.getState().addTask({ title: 'first' });
-    useTaskStore.getState().addTask({ title: 'second' });
-    useTaskStore.getState().undo();
-    useTaskStore.getState().markBackupDone();
-    expect(useTaskStore.getState().backupDirty).toBe(false);
-
-    useTaskStore.getState().redo();
+    mutate();
     expect(useTaskStore.getState().backupDirty).toBe(true);
   });
 });

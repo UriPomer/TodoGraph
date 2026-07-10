@@ -102,6 +102,7 @@ function DialogInstance({
             value={promptValue}
             onChange={(e) => setPromptValue(e.target.value)}
             placeholder={dialog.placeholder}
+            maxLength={dialog.maxLength}
             className="mt-3 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-[hsl(var(--primary))]"
           />
         )}

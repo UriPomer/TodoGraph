@@ -5,12 +5,14 @@
   "type": "module",
   "packageManager": "pnpm@10.33.2",
   "scripts": {
-    "predev": "pnpm --filter @todograph/shared build",
-    "dev": "concurrently -n shared,server,app -c cyan,blue,green \"pnpm --filter @todograph/shared dev\" \"pnpm --filter @todograph/server dev\" \"pnpm --filter @todograph/app dev\"",
+    "predev": "pnpm --filter @todograph/shared build && pnpm --filter @todograph/core build",
+    "dev": "concurrently -n shared,core,server,app -c cyan,magenta,blue,green \"pnpm --filter @todograph/shared dev\" \"pnpm --filter @todograph/core dev\" \"pnpm --filter @todograph/server dev\" \"pnpm --filter @todograph/app dev\"",
+    "predev:electron": "pnpm --filter @todograph/shared build && pnpm --filter @todograph/core build && pnpm --filter @todograph/server build",
     "dev:electron": "pnpm --filter @todograph/app dev:electron",
     "build": "pnpm -r build",
-    "test": "pnpm --filter @todograph/core test",
-    "lint": "pnpm -r lint",
+    "pretest": "pnpm --filter @todograph/shared build && pnpm --filter @todograph/core build && pnpm --filter @todograph/server build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r exec tsc --noEmit",
     "start:web": "pnpm --filter @todograph/server start",
     "package": "pnpm --filter @todograph/app package"
   },

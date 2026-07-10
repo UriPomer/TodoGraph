@@ -100,6 +100,9 @@ importers:
       '@types/react-dom':
         specifier: ^18.3.5
         version: 18.3.7(@types/react@18.3.28)
+      '@types/react-test-renderer':
+        specifier: ^18.3.1
+        version: 18.3.1
       '@vitejs/plugin-react':
         specifier: ^4.3.4
         version: 4.7.0(vite@6.4.3(@types/node@22.19.17)(jiti@1.21.7)(tsx@4.21.0))
@@ -118,6 +121,9 @@ importers:
       postcss:
         specifier: ^8.4.49
         version: 8.5.12
+      react-test-renderer:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
       tailwindcss:
         specifier: ^3.4.17
         version: 3.4.19(tsx@4.21.0)
@@ -132,6 +138,10 @@ importers:
         version: 3.2.7(@types/debug@4.1.13)(@types/node@22.19.17)(jiti@1.21.7)(tsx@4.21.0)
 
   packages/core:
+    dependencies:
+      '@todograph/shared':
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       typescript:
         specifier: ^5.6.3
@@ -179,6 +189,9 @@ importers:
       '@fastify/cookie':
         specifier: ^11.0.2
         version: 11.0.2
+      '@fastify/cors':
+        specifier: ^11.3.0
+        version: 11.3.0
       '@fastify/helmet':
         specifier: ^13.0.2
         version: 13.0.2
@@ -702,6 +715,9 @@ packages:
 
   '@fastify/cookie@11.0.2':
     resolution: {integrity: sha512-GWdwdGlgJxyvNv+QcKiGNevSspMQXncjMZ1J8IvuDQk0jvkzgWWZFNC2En3s+nHndZBGV8IbLwOI/sxCZw/mzA==}
+
+  '@fastify/cors@11.3.0':
+    resolution: {integrity: sha512-ggQGua+xHv1MvePbPr0v//xLYEsCXbWspquXCJS9Ot5YoRXq8J8ZWzHnxDBVnbtXosvistXo6LtNzOJswf64Fw==}
 
   '@fastify/error@4.2.0':
     resolution: {integrity: sha512-RSo3sVDXfHskiBZKBPRgnQTtIqpi/7zhJOEmAxCiBcM7d0uwdGdxLlsCaLzGs8v8NnxIRlfG0N51p5yFaOentQ==}
@@ -1392,6 +1408,9 @@ packages:
     resolution: {integrity: sha512-MEe3UeoENYVFXzoXEWsvcpg6ZvlrFNlOQ7EOsvhI3CfAXwzPfO8Qwuxd40nepsYKqyyVQnTdEfv68q91yLcKrQ==}
     peerDependencies:
       '@types/react': ^18.0.0
+
+  '@types/react-test-renderer@18.3.1':
+    resolution: {integrity: sha512-vAhnk0tG2eGa37lkU9+s5SoroCsRI08xnsWFiAXOuPH2jqzMbcXvKExXViPi1P5fIklDeCvXqyrdmipFaSkZrA==}
 
   '@types/react@18.3.28':
     resolution: {integrity: sha512-z9VXpC7MWrhfWipitjNdgCauoMLRdIILQsAEV+ZesIzBq/oUlxk0m3ApZuMFCXdnS4U7KrI+l3WRUEGQ8K1QKw==}
@@ -2915,6 +2934,9 @@ packages:
     peerDependencies:
       react: ^18.3.1
 
+  react-is@18.3.1:
+    resolution: {integrity: sha512-/LLMVyas0ljjAtoYiPqYiL8VWXzUUdThrmU5+n20DZv+a+ClRoevUzw5JxU+Ieh5/c87ytoTBV9G1FiKfNJdmg==}
+
   react-refresh@0.17.0:
     resolution: {integrity: sha512-z6F7K9bV85EfseRCp2bzrpyQ0Gkw1uLoCel9XBVWPg/TjRj94SkJzUTGfOa4bs7iJvBWtQG0Wq7wnI0syw3EBQ==}
     engines: {node: '>=0.10.0'}
@@ -2939,6 +2961,11 @@ packages:
       '@types/react':
         optional: true
 
+  react-shallow-renderer@16.15.0:
+    resolution: {integrity: sha512-oScf2FqQ9LFVQgA73vr86xl2NaOIX73rh+YFqcOp68CWj56tSfgtGKrEbyhCj0rSijyG9M1CYprTh39fBi5hzA==}
+    peerDependencies:
+      react: ^16.0.0 || ^17.0.0 || ^18.0.0
+
   react-style-singleton@2.2.3:
     resolution: {integrity: sha512-b6jSvxvVnyptAiLjbkWLE/lOnR4lfTtDAl+eUC7RZy+QQWc6wRzIV2CE6xBuMmDxc2qIihtDCZD5NPOFl7fRBQ==}
     engines: {node: '>=10'}
@@ -2948,6 +2975,11 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
+
+  react-test-renderer@18.3.1:
+    resolution: {integrity: sha512-KkAgygexHUkQqtvvx/otwxtuFu5cVjfzTCtjXLH9boS19/Nbtg84zS7wIQn39G8IlrhThBpQsMKkq5ZHZIYFXA==}
+    peerDependencies:
+      react: ^18.3.1
 
   react@18.3.1:
     resolution: {integrity: sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ==}
@@ -3991,6 +4023,11 @@ snapshots:
       cookie: 1.1.1
       fastify-plugin: 5.1.0
 
+  '@fastify/cors@11.3.0':
+    dependencies:
+      fastify-plugin: 6.0.0
+      toad-cache: 3.7.0
+
   '@fastify/error@4.2.0': {}
 
   '@fastify/fast-json-stringify-compiler@5.0.3':
@@ -4664,6 +4701,10 @@ snapshots:
   '@types/prop-types@15.7.15': {}
 
   '@types/react-dom@18.3.7(@types/react@18.3.28)':
+    dependencies:
+      '@types/react': 18.3.28
+
+  '@types/react-test-renderer@18.3.1':
     dependencies:
       '@types/react': 18.3.28
 
@@ -6319,6 +6360,8 @@ snapshots:
       react: 18.3.1
       scheduler: 0.23.2
 
+  react-is@18.3.1: {}
+
   react-refresh@0.17.0: {}
 
   react-remove-scroll-bar@2.3.8(@types/react@18.3.28)(react@18.3.1):
@@ -6340,6 +6383,12 @@ snapshots:
     optionalDependencies:
       '@types/react': 18.3.28
 
+  react-shallow-renderer@16.15.0(react@18.3.1):
+    dependencies:
+      object-assign: 4.1.1
+      react: 18.3.1
+      react-is: 18.3.1
+
   react-style-singleton@2.2.3(@types/react@18.3.28)(react@18.3.1):
     dependencies:
       get-nonce: 1.0.1
@@ -6347,6 +6396,13 @@ snapshots:
       tslib: 2.8.1
     optionalDependencies:
       '@types/react': 18.3.28
+
+  react-test-renderer@18.3.1(react@18.3.1):
+    dependencies:
+      react: 18.3.1
+      react-is: 18.3.1
+      react-shallow-renderer: 16.15.0(react@18.3.1)
+      scheduler: 0.23.2
 
   react@18.3.1:
     dependencies:

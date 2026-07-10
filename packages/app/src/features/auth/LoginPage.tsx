@@ -67,10 +67,11 @@ export function LoginPage({ onLogin, onRegister }: Props) {
           {mode === 'register' && (
             <div>
               <label className="block text-sm font-medium text-muted-foreground mb-1">邀请码</label>
-              <input
-                type="text"
+              <PasswordInput
                 value={registrationKey}
                 onChange={(e) => setRegistrationKey(e.target.value)}
+                visibilityLabel="邀请码"
+                autoComplete="off"
                 className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm outline-none focus:border-[hsl(var(--primary))]"
                 placeholder="如不需要则留空"
               />

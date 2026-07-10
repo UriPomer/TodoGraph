@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Meta, PageData, PageInfo } from '@todograph/shared';
 
-const { api, toast } = vi.hoisted(() => ({
+const { api, toast, session } = vi.hoisted(() => ({
+  session: { generation: 0 },
   api: {
     loadMeta: vi.fn(),
     updateSettings: vi.fn(),
@@ -24,7 +25,11 @@ const { api, toast } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@/api/client', () => ({ api }));
+vi.mock('@/api/client', () => ({
+  api,
+  getApiSessionGeneration: () => session.generation,
+  resetApiSession: () => { session.generation += 1; },
+}));
 vi.mock('@/components/ui/toaster-store', () => ({ toast }));
 
 import { useTaskStore } from '@/stores/useTaskStore';
@@ -65,6 +70,8 @@ describe('workspace/task store conflict handling', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    api.loadAllTasks.mockResolvedValue({ tasks: [] });
+    session.generation = 0;
     useTaskStore.setState(useTaskStore.getInitialState(), true);
     useWorkspaceStore.setState(useWorkspaceStore.getInitialState(), true);
     useHistoryStore.getState().clear();
@@ -73,6 +80,76 @@ describe('workspace/task store conflict handling', () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
+  });
+
+  it('clears all user-owned state and history when the session resets', () => {
+    useWorkspaceStore.setState({
+      sessionUserId: 'u1',
+      meta: makeMeta(1, 'p-1', [makePage('p-1', '第一页', 0)]),
+      loaded: true,
+      allTasks: [{
+        id: 'all-1',
+        title: '其他页任务',
+        status: 'todo',
+        _pageId: 'p-1',
+        _pageTitle: '第一页',
+        _ready: true,
+      }],
+    });
+    useTaskStore.setState({
+      activePageId: 'p-1',
+      loaded: true,
+      nodes: [{ id: 'private-1', title: '用户私有任务', status: 'todo' }],
+    });
+    useHistoryStore.getState().push({
+      nodes: [{ id: 'private-1', title: '用户私有任务', status: 'todo' }],
+      edges: [],
+    });
+
+    useWorkspaceStore.getState().resetSession();
+
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      sessionUserId: null,
+      meta: null,
+      loaded: false,
+      allTasks: [],
+    });
+    expect(useTaskStore.getState()).toMatchObject({
+      activePageId: null,
+      loaded: false,
+      nodes: [],
+      edges: [],
+    });
+    expect(useHistoryStore.getState()).toMatchObject({ undoStack: [], redoStack: [] });
+  });
+
+  it('does not restore stale workspace state when a session resets during page switching', async () => {
+    let finishFlush!: () => void;
+    const flush = vi.fn(() => new Promise<void>((resolve) => {
+      finishFlush = resolve;
+    }));
+    useWorkspaceStore.setState({
+      sessionUserId: 'u1',
+      meta: makeMeta(1, 'p-1', [makePage('p-1', '第一页', 0), makePage('p-2', '第二页', 1)]),
+      loaded: true,
+    });
+    useTaskStore.setState({
+      activePageId: 'p-1',
+      loaded: true,
+      flush,
+    } as Partial<ReturnType<typeof useTaskStore.getState>>);
+
+    const switching = useWorkspaceStore.getState().switchPage('p-2');
+    useWorkspaceStore.getState().resetSession();
+    finishFlush();
+    await switching;
+
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      sessionUserId: null,
+      meta: null,
+      loaded: false,
+    });
+    expect(api.setActivePage).not.toHaveBeenCalled();
   });
 
   it('moves nodes to a newly created page using refreshed meta', async () => {
@@ -215,6 +292,36 @@ describe('workspace/task store conflict handling', () => {
     );
   });
 
+  it('keeps the local active page when meta polling observes another client switch', async () => {
+    const first = makePage('p-1', '第一页', 0);
+    const second = makePage('p-2', '第二页', 1);
+    api.loadMeta
+      .mockResolvedValueOnce(makeMeta(1, first.id, [first, second]))
+      .mockResolvedValueOnce(makeMeta(2, second.id, [first, second]));
+    api.loadPage.mockResolvedValue(makePageData(1));
+
+    await useWorkspaceStore.getState().bootstrap('u1');
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(useTaskStore.getState().activePageId).toBe(first.id);
+    expect(useWorkspaceStore.getState().meta?.activePageId).toBe(first.id);
+    expect(useWorkspaceStore.getState().meta?.revision).toBe(2);
+  });
+
+  it('reports when conflict recovery cannot refresh workspace state', async () => {
+    const sourcePage = makePage('p-1', '第一页', 0);
+    useWorkspaceStore.setState({ meta: makeMeta(1, sourcePage.id, [sourcePage]), loaded: true });
+    api.createPage.mockRejectedValue(Object.assign(new Error('conflict'), { conflict: true }));
+    api.loadMeta.mockRejectedValue(new Error('offline'));
+
+    await useWorkspaceStore.getState().createPage('新页面');
+
+    expect(toast.error).toHaveBeenCalledWith(
+      '创建页面失败',
+      '工作区已被其他设备修改，但刷新失败，请刷新页面后重试',
+    );
+  });
+
   it('reloads the current page and asks for retry on move conflict', async () => {
     const sourcePage = makePage('p-source', '源页面', 0);
     const targetPage = makePage('p-target', '目标页', 1);
@@ -297,34 +404,66 @@ describe('workspace/task store conflict handling', () => {
     );
   });
 
-  it('can re-arm a discarded pending save after a failed destructive action', async () => {
-    api.savePage.mockResolvedValue({ version: 2 });
-
+  it('serializes edits made while an earlier save is in flight', async () => {
+    let finishFirst!: () => void;
+    api.savePage
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishFirst = () => resolve({ version: 2 });
+      }))
+      .mockResolvedValueOnce({ version: 3 });
     useTaskStore.setState({
-      activePageId: 'p-1',
-      pageVersion: 1,
-      nodes: [],
-      edges: [],
-      loaded: true,
-      backupDirty: false,
+      activePageId: 'p-1', pageVersion: 1, nodes: [], edges: [], loaded: true,
     });
 
-    useTaskStore.getState().addTask({ title: 'local change' });
-    const rearmPendingSave = useTaskStore.getState().discardPendingSave();
-
-    await useTaskStore.getState().flush();
-    expect(api.savePage).not.toHaveBeenCalled();
-
-    rearmPendingSave();
+    useTaskStore.getState().addTask({ title: 'first' });
+    await vi.advanceTimersByTimeAsync(250);
+    useTaskStore.getState().addTask({ title: 'second' });
+    await vi.advanceTimersByTimeAsync(250);
+    finishFirst();
     await useTaskStore.getState().flush();
 
-    expect(api.savePage).toHaveBeenCalledWith(
-      'p-1',
-      expect.objectContaining({
-        nodes: [expect.objectContaining({ title: 'local change' })],
-        edges: [],
-      }),
-      1,
-    );
+    expect(api.savePage).toHaveBeenCalledTimes(2);
+    expect(api.savePage.mock.calls[1]?.[1].nodes.map((node: { title: string }) => node.title))
+      .toEqual(['first', 'second']);
+    expect(api.savePage.mock.calls[1]?.[2]).toBe(2);
+    expect(useTaskStore.getState().pageVersion).toBe(3);
   });
+
+  it('does not let polling overwrite a pending local edit', async () => {
+    let finishSave!: () => void;
+    api.savePage.mockImplementation(() => new Promise((resolve) => {
+      finishSave = () => resolve({ version: 2 });
+    }));
+    api.loadPage
+      .mockResolvedValueOnce(makePageData(1, 'initial'))
+      .mockResolvedValueOnce(makePageData(2, 'remote'));
+    await useTaskStore.getState().loadPage('p-1');
+    useTaskStore.getState().addTask({ title: 'local' });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(api.loadPage).toHaveBeenCalledTimes(1);
+    expect(useTaskStore.getState().nodes.some((node) => node.title === 'local')).toBe(true);
+    expect(useTaskStore.getState().backupDirty).toBe(true);
+    finishSave();
+    await useTaskStore.getState().flush();
+  });
+
+  it('drains the current page before deleting it', async () => {
+    const first = makePage('p-1', '第一页', 0);
+    const second = makePage('p-2', '第二页', 1);
+    const nextMeta = makeMeta(2, second.id, [second]);
+    const flush = vi.fn().mockResolvedValue(undefined);
+    const loadPage = vi.fn().mockResolvedValue(undefined);
+    useWorkspaceStore.setState({ meta: makeMeta(1, first.id, [first, second]), loaded: true });
+    useTaskStore.setState({ activePageId: first.id, flush, loadPage } as Partial<ReturnType<typeof useTaskStore.getState>>);
+    api.deletePage.mockResolvedValue(nextMeta);
+
+    await useWorkspaceStore.getState().deletePage(first.id);
+
+    expect(flush).toHaveBeenCalledOnce();
+    expect(flush.mock.invocationCallOrder[0]).toBeLessThan(api.deletePage.mock.invocationCallOrder[0]!);
+    expect(loadPage).toHaveBeenCalledWith(second.id);
+  });
+
 });

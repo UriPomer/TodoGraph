@@ -1,12 +1,11 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Check, ChevronRight, ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
-import type { Task } from '@todograph/shared';
+import { MAX_HIERARCHY_DEPTH, type Task } from '@todograph/shared';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { MAX_TITLE_LENGTH } from '@/lib/measureText';
 import { useTaskStore } from '@/stores/useTaskStore';
-import { MAX_HIERARCHY_DEPTH } from '@/stores/useTaskStore';
 import { toast } from '@/components/ui/toaster-store';
 import { dialog } from '@/components/ui/dialog-store';
 

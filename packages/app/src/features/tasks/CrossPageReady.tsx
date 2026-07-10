@@ -4,16 +4,22 @@ import type { AllTasksItem } from '@todograph/shared';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 
+export function selectCrossPageReadyTasks(
+  allTasks: AllTasksItem[],
+  activePageId: string | null,
+) {
+  return allTasks.filter(
+    (task) => task._pageId !== activePageId && task._ready && !task.parentId,
+  );
+}
+
 export function CrossPageReady() {
   const activePageId = useTaskStore((s) => s.activePageId);
   const allTasks = useWorkspaceStore((s) => s.allTasks);
   const switchPage = useWorkspaceStore((s) => s.switchPage);
 
   const ready = useMemo(
-    () =>
-      allTasks.filter(
-        (t) => t._pageId !== activePageId && t._ready && !t.parentId,
-      ),
+    () => selectCrossPageReadyTasks(allTasks, activePageId),
     [allTasks, activePageId],
   );
 

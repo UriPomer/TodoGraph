@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { apiFetch, getApiBase, subscribeToUnauthorized } from '@/api/client';
 
 interface AuthState {
   loading: boolean;
@@ -11,7 +12,7 @@ export function useAuth() {
 
   const checkAuth = useCallback(async () => {
     try {
-      const res = await fetch('/api/auth/me');
+      const res = await apiFetch(`${getApiBase()}/api/auth/me`);
       const data = await res.json() as { ok: boolean; id?: string; username?: string };
       if (data.ok && data.id && data.username) {
         setState({ loading: false, user: { id: data.id, username: data.username }, error: null });
@@ -27,9 +28,17 @@ export function useAuth() {
     void checkAuth();
   }, [checkAuth]);
 
+  useEffect(
+    () =>
+      subscribeToUnauthorized(() => {
+        setState({ loading: false, user: null, error: '会话已失效，请重新登录' });
+      }),
+    [],
+  );
+
   const login = async (username: string, password: string): Promise<string | null> => {
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await apiFetch(`${getApiBase()}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
@@ -47,7 +56,7 @@ export function useAuth() {
 
   const register = async (username: string, password: string, registrationKey: string): Promise<string | null> => {
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await apiFetch(`${getApiBase()}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password, registrationKey }),
@@ -65,7 +74,7 @@ export function useAuth() {
 
   const logout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await apiFetch(`${getApiBase()}/api/auth/logout`, { method: 'POST' });
     } catch { /* ignore */ }
     setState({ loading: false, user: null, error: null });
   };

@@ -33,14 +33,14 @@ export class FileUserRepository implements UserRepository {
     return all.find((u) => u.id === id) ?? null;
   }
 
-  async create(user: StoredUser): Promise<void> {
-    await this.withWriteLock(async () => {
+  async register(user: StoredUser, allowAdditionalUsers: boolean): Promise<'created' | 'closed' | 'duplicate'> {
+    return this.withWriteLock(async () => {
       const all = await this.findAll();
-      if (all.some((u) => u.username === user.username)) {
-        throw new Error('username already exists');
-      }
+      if (all.length > 0 && !allowAdditionalUsers) return 'closed';
+      if (all.some((entry) => entry.username === user.username)) return 'duplicate';
       all.push(user);
       await this.writeUsers(all);
+      return 'created';
     });
   }
 
@@ -67,9 +67,7 @@ export class FileUserRepository implements UserRepository {
   private async withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
     const previous = this.writeLock;
     let release!: () => void;
-    this.writeLock = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    this.writeLock = new Promise<void>((resolve) => { release = resolve; });
     await previous;
     try {
       return await fn();

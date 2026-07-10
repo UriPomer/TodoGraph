@@ -12,6 +12,7 @@ export interface PromptOptions {
   title: string;
   defaultValue?: string;
   placeholder?: string;
+  maxLength?: number;
   confirmLabel?: string;
   cancelLabel?: string;
 }

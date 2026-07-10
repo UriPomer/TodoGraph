@@ -25,8 +25,9 @@ import {
 } from '@xyflow/react';
 import { Layout, Maximize2 } from 'lucide-react';
 import { wouldCreateCycle } from '@todograph/core';
-import type { Task } from '@todograph/shared';
 import {
+  MAX_HIERARCHY_DEPTH,
+  MAX_PAGE_TITLE_LENGTH,
   type CollisionRect,
   computeGroupSize,
   GROUP_PADDING_X,
@@ -35,15 +36,12 @@ import {
   CHILD_DEFAULT_H,
   GROUP_MIN_W,
   GROUP_MIN_H,
+  type Task,
 } from '@todograph/shared';
 import { Button } from '@/components/ui/button';
 import { UndoRedoButtons } from '@/components/UndoRedoButtons';
-import { useTaskStore } from '@/stores/useTaskStore';
+import { buildHierarchyMetrics, useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
-import {
-  MAX_HIERARCHY_DEPTH,
-  buildHierarchyMetrics,
-} from '@/stores/useTaskStore';
 import { useDerived } from '@/hooks/useRecommendation';
 import { TaskNode, type TaskNodeData } from './TaskNode';
 import { GroupNode, type GroupNodeData } from './GroupNode';
@@ -1013,6 +1011,7 @@ function GraphViewInner() {
         {
           defaultValue: defaultTitle,
           placeholder: `已有：${otherPages.map((p) => p.title).join(' / ')}` || '输入新页面名称',
+          maxLength: MAX_PAGE_TITLE_LENGTH,
         },
       );
       if (raw === null) return;

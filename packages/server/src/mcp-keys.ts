@@ -85,7 +85,9 @@ export class McpKeyStore {
     const keys = await this.readKeys();
     for (const entry of Object.values(keys.keys)) {
       if (equalHex(entry.hash, digest)) {
-        await this.touchLastUsed(entry.id).catch(() => {});
+        if (!entry.lastUsedAt || Date.now() - Date.parse(entry.lastUsedAt) >= 60_000) {
+          await this.touchLastUsed(entry.id).catch(() => {});
+        }
         return entry.userId;
       }
     }

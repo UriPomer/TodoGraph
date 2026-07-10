@@ -1,15 +1,12 @@
 import { useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { buildAdj } from '@todograph/core';
-import type { Task } from '@todograph/shared';
-import { useTaskStore } from '@/stores/useTaskStore';
-import {
-  MAX_HIERARCHY_DEPTH,
-  buildHierarchyMetrics,
-} from '@/stores/useTaskStore';
+import { MAX_HIERARCHY_DEPTH, type Task } from '@todograph/shared';
+import { buildHierarchyMetrics, useTaskStore } from '@/stores/useTaskStore';
+import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useDerived } from '@/hooks/useRecommendation';
 import { toast } from '@/components/ui/toaster-store';
 import { defaultPositionFor } from '@/lib/defaultPosition';
-import { CrossPageReady } from './CrossPageReady';
+import { CrossPageReady, selectCrossPageReadyTasks } from './CrossPageReady';
 import { TaskInput } from './TaskInput';
 import { TaskItem } from './TaskItem';
 
@@ -36,11 +33,17 @@ const DRAG_THRESHOLD_PX = 8;
  */
 export function ListView() {
   const nodes = useTaskStore((s) => s.nodes);
+  const activePageId = useTaskStore((s) => s.activePageId);
+  const allTasks = useWorkspaceStore((s) => s.allTasks);
   const setParent = useTaskStore((s) => s.setParent);
   const updateTask = useTaskStore((s) => s.updateTask);
   const addTask = useTaskStore((s) => s.addTask);
   const { graph, readySet, recommended } = useDerived();
   const hierarchyMetrics = useMemo(() => buildHierarchyMetrics(nodes), [nodes]);
+  const hasCrossPageReady = useMemo(
+    () => selectCrossPageReadyTasks(allTasks, activePageId).length > 0,
+    [allTasks, activePageId],
+  );
   // 折叠状态：parentId → boolean
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
@@ -513,7 +516,15 @@ export function ListView() {
   return (
     <div ref={containerRef} className="mobile-list-glass relative h-full flex flex-col">
       {/* 上半部分：当前页任务（可滚动） */}
-      <div ref={scrollRef} className="overflow-auto" style={{ height: `${topPct}%`, overscrollBehaviorY: 'contain', touchAction: 'pan-y' }}>
+      <div
+        ref={scrollRef}
+        className={hasCrossPageReady ? 'overflow-auto' : 'min-h-0 flex-1 overflow-auto'}
+        style={{
+          height: hasCrossPageReady ? `${topPct}%` : undefined,
+          overscrollBehaviorY: 'contain',
+          touchAction: 'pan-y',
+        }}
+      >
         {/* 下拉指示器 */}
         <div
           ref={pullRef}
@@ -578,17 +589,22 @@ export function ListView() {
       {/* 拖动分隔条：移动端可见手柄（12px高 + 中间把手），桌面端细线 */}
       <div
         ref={splitRef}
-        onMouseDown={onSplitMouseDown}
-        onTouchStart={onSplitTouchStart}
-        className="shrink-0 h-3 lg:h-[5px] flex items-center justify-center cursor-row-resize bg-border/30 hover:bg-[hsl(var(--primary))] active:bg-[hsl(var(--primary))] transition-colors relative group touch-none select-none"
-        title="拖动调整上下高度"
+        data-list-split={hasCrossPageReady ? 'adjustable' : 'bottom'}
+        onMouseDown={hasCrossPageReady ? onSplitMouseDown : undefined}
+        onTouchStart={hasCrossPageReady ? onSplitTouchStart : undefined}
+        className={`shrink-0 h-3 lg:h-[5px] flex items-center justify-center bg-border/30 transition-colors relative group touch-none select-none ${
+          hasCrossPageReady
+            ? 'cursor-row-resize hover:bg-[hsl(var(--primary))] active:bg-[hsl(var(--primary))]'
+            : 'cursor-default'
+        }`}
+        title={hasCrossPageReady ? '拖动调整上下高度' : undefined}
       >
         {/* 中间拖拽把手，仅移动端显示 */}
         <span className="lg:hidden w-8 h-1 rounded-full bg-muted-foreground/30 group-active:bg-[hsl(var(--primary))] transition-colors" />
       </div>
 
       {/* 下半部分：其他页面可做（可滚动） */}
-      <div className="flex-1 overflow-auto">
+      <div className={hasCrossPageReady ? 'flex-1 overflow-auto' : 'hidden'}>
         <div className="w-full px-5">
           <CrossPageReady />
         </div>

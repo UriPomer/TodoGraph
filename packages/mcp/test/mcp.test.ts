@@ -178,6 +178,10 @@ describe('MCP tools integration', () => {
 
       expect(updated.task.title).toBe('新标题');
       expect(updated.task.status).toBe('doing');
+
+      await client.post(`/api/pages/${encodeURIComponent(pageId)}/restore`);
+      const restored = await handleGetPage(client, { page_id: pageId });
+      expect(restored.tasks.find((task) => task.id === t.task.id)?.title).toBe('旧标题');
     });
 
     it('update_task throws on nonexistent task', async () => {

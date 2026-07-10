@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  DESKTOP_HEADER_CLASS_NAME,
+  DesktopHeaderShell,
   MobileBottomNav,
   MobileMorePanel,
 } from '../src/App';
@@ -9,8 +9,10 @@ import { ThemeProvider } from '../src/features/theme/ThemeProvider';
 
 describe('mobile shell', () => {
   it('hides the TodoGraph header below the desktop breakpoint', () => {
-    expect(DESKTOP_HEADER_CLASS_NAME.split(' ')).toContain('hidden');
-    expect(DESKTOP_HEADER_CLASS_NAME.split(' ')).toContain('lg:flex');
+    const html = renderToStaticMarkup(<DesktopHeaderShell>TodoGraph</DesktopHeaderShell>);
+
+    expect(html).toContain('data-desktop-header="true"');
+    expect(html).toMatch(/<header[^>]*class="[^"]*hidden[^"]*lg:flex[^"]*"/);
   });
 
   it('renders the three bottom tabs from the mobile mockup', () => {
@@ -45,6 +47,9 @@ describe('mobile shell', () => {
     expect(html).toContain('导入 JSON');
     expect(html).toContain('AI 接入');
     expect(html).toContain('MCP Key');
+    expect(html).not.toContain('存在风险');
+    expect(html).not.toContain('已连接');
+    expect(html).not.toContain('已配置');
   });
 
   it('uses the dark product surface for mobile chrome', () => {

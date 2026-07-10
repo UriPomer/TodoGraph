@@ -30,7 +30,7 @@ describe('FileUserRepository', () => {
       sessionVersion: 0,
       createdAt: new Date().toISOString(),
     };
-    await repo.create(user);
+    await expect(repo.register(user, false)).resolves.toBe('created');
     const byUsername = await repo.findByUsername('alice');
     expect(byUsername).toEqual(user);
     const byId = await repo.findById('u1');
@@ -42,7 +42,7 @@ describe('FileUserRepository', () => {
     expect(await repo.findById('nobody')).toBeNull();
   });
 
-  it('rejects duplicate usernames', async () => {
+  it('reports duplicate usernames', async () => {
     const user = {
       id: 'u1',
       username: 'bob',
@@ -50,27 +50,27 @@ describe('FileUserRepository', () => {
       sessionVersion: 0,
       createdAt: new Date().toISOString(),
     };
-    await repo.create(user);
-    await expect(repo.create({ ...user, id: 'u2' })).rejects.toThrow('username already exists');
+    await repo.register(user, false);
+    await expect(repo.register({ ...user, id: 'u2' }, true)).resolves.toBe('duplicate');
   });
 
   it('serializes concurrent user writes without losing data', async () => {
     const createdAt = new Date().toISOString();
     await Promise.all([
-      repo.create({
+      repo.register({
         id: 'u1',
         username: 'alice',
         passwordHash: 'salt:hash1',
         sessionVersion: 0,
         createdAt,
-      }),
-      repo.create({
+      }, true),
+      repo.register({
         id: 'u2',
         username: 'bob',
         passwordHash: 'salt:hash2',
         sessionVersion: 0,
         createdAt,
-      }),
+      }, true),
     ]);
 
     expect((await repo.findAll()).map((user) => user.username).sort()).toEqual(['alice', 'bob']);

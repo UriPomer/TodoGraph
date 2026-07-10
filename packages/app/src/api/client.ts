@@ -42,10 +42,54 @@ export interface WorkspaceExport {
  * - Web dev：Vite 代理 /api，返回空字符串即可
  * - Web prod：前端和后端同源，同样返回空字符串
  */
-function getApiBase(): string {
+export function getApiBase(): string {
   // @ts-expect-error 运行时注入
   const injected: string | undefined = typeof window !== 'undefined' ? window.__API_BASE__ : undefined;
   return injected ?? '';
+}
+
+const unauthorizedListeners = new Set<() => void>();
+let apiSessionGeneration = 0;
+
+export function subscribeToUnauthorized(listener: () => void): () => void {
+  unauthorizedListeners.add(listener);
+  return () => unauthorizedListeners.delete(listener);
+}
+
+export function resetApiSession(): void {
+  apiSessionGeneration += 1;
+}
+
+export function getApiSessionGeneration(): number {
+  return apiSessionGeneration;
+}
+
+function requestPath(input: RequestInfo | URL): string {
+  const value =
+    typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  try {
+    return new URL(value, 'http://localhost').pathname;
+  } catch {
+    return value;
+  }
+}
+
+export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const generation = apiSessionGeneration;
+  const response = !getApiBase()
+    ? init === undefined
+      ? await globalThis.fetch(input)
+      : await globalThis.fetch(input, init)
+    : await globalThis.fetch(input, { ...init, credentials: 'include' });
+  if (generation !== apiSessionGeneration) {
+    throw Object.assign(new Error('API session changed'), { name: 'AbortError' });
+  }
+  if (response.status === 401 && (
+    !requestPath(input).startsWith('/api/auth/') || response.headers.get('x-session-expired') === '1'
+  )) {
+    for (const listener of unauthorizedListeners) listener();
+  }
+  return response;
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -81,13 +125,13 @@ function buildConflictError(
 export const api = {
   // ---- meta ----
   async loadMeta(): Promise<Meta> {
-    const res = await fetch(`${getApiBase()}/api/meta`);
+    const res = await apiFetch(`${getApiBase()}/api/meta`);
     const data = await json<unknown>(res);
     return MetaSchema.parse(data);
   },
 
   async updateSettings(settings: WorkspaceSettings, expectedRevision?: number): Promise<Meta> {
-    const res = await fetch(`${getApiBase()}/api/meta/settings`, {
+    const res = await apiFetch(`${getApiBase()}/api/meta/settings`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...settings, expectedRevision }),
@@ -104,7 +148,7 @@ export const api = {
 
   // ---- pages ----
   async loadPage(pageId: string): Promise<PageData> {
-    const res = await fetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`);
+    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`);
     const data = await json<unknown>(res);
     return PageDataSchema.parse(data);
   },
@@ -114,7 +158,7 @@ export const api = {
     data: PageData,
     expectedVersion?: number,
   ): Promise<{ version: number }> {
-    const res = await fetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
+    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...data, expectedVersion }),
@@ -136,7 +180,7 @@ export const api = {
   },
 
   async createPage(title: string, expectedRevision?: number): Promise<{ page: PageInfo; meta: Meta }> {
-    const res = await fetch(`${getApiBase()}/api/pages`, {
+    const res = await apiFetch(`${getApiBase()}/api/pages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title, expectedRevision }),
@@ -156,7 +200,7 @@ export const api = {
   },
 
   async deletePage(pageId: string, expectedRevision?: number): Promise<Meta> {
-    const res = await fetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
+    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ expectedRevision }),
@@ -172,7 +216,7 @@ export const api = {
   },
 
   async renamePage(pageId: string, title: string, expectedRevision?: number): Promise<Meta | null> {
-    const res = await fetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
+    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title, expectedRevision }),
@@ -188,7 +232,7 @@ export const api = {
   },
 
   async setActivePage(pageId: string, expectedRevision?: number): Promise<Meta | null> {
-    const res = await fetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
+    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ activate: true, expectedRevision }),
@@ -204,7 +248,7 @@ export const api = {
   },
 
   async reorderPages(ids: string[], expectedRevision?: number): Promise<Meta> {
-    const res = await fetch(`${getApiBase()}/api/pages/reorder`, {
+    const res = await apiFetch(`${getApiBase()}/api/pages/reorder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids, expectedRevision }),
@@ -226,7 +270,7 @@ export const api = {
     expectedSourceVersion?: number,
     expectedTargetVersion?: number,
   ): Promise<MoveNodesResponse> {
-    const res = await fetch(
+    const res = await apiFetch(
       `${getApiBase()}/api/pages/${encodeURIComponent(sourcePageId)}/move-nodes`,
       {
         method: 'POST',
@@ -249,7 +293,7 @@ export const api = {
   },
 
   async createBackup(pageId: string): Promise<void> {
-    const res = await fetch(
+    const res = await apiFetch(
       `${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/backup`,
       { method: 'POST' },
     );
@@ -257,13 +301,13 @@ export const api = {
   },
 
   async listBackups(pageId: string): Promise<BackupInfo[]> {
-    const res = await fetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/backups`);
+    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/backups`);
     const data = await json<{ backups: BackupInfo[] }>(res);
     return data.backups;
   },
 
   async restoreBackup(pageId: string, backupName?: string): Promise<PageData> {
-    const res = await fetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/restore`, {
+    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/restore`, {
       method: 'POST',
       headers: backupName ? { 'Content-Type': 'application/json' } : undefined,
       body: backupName ? JSON.stringify({ backupName }) : undefined,
@@ -273,19 +317,19 @@ export const api = {
   },
 
   async loadAllTasks(): Promise<AllTasksResponse> {
-    const res = await fetch(`${getApiBase()}/api/all-tasks`);
+    const res = await apiFetch(`${getApiBase()}/api/all-tasks`);
     const data = await json<unknown>(res);
     return AllTasksResponseSchema.parse(data);
   },
 
   async exportMarkdown(): Promise<string> {
-    const res = await fetch(`${getApiBase()}/api/workspace/markdown`);
+    const res = await apiFetch(`${getApiBase()}/api/workspace/markdown`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.text();
   },
 
   async exportWorkspaceJson(): Promise<WorkspaceExport> {
-    const res = await fetch(`${getApiBase()}/api/workspace/export.json`);
+    const res = await apiFetch(`${getApiBase()}/api/workspace/export.json`);
     const data = await json<WorkspaceExport>(res);
     return {
       exportedAt: data.exportedAt,
@@ -297,7 +341,7 @@ export const api = {
   },
 
   async importWorkspaceJson(data: WorkspaceExport): Promise<Meta> {
-    const res = await fetch(`${getApiBase()}/api/workspace/import`, {
+    const res = await apiFetch(`${getApiBase()}/api/workspace/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -307,13 +351,13 @@ export const api = {
   },
 
   async listMcpKeys(): Promise<McpKeyInfo[]> {
-    const res = await fetch(`${getApiBase()}/api/mcp/keys`);
+    const res = await apiFetch(`${getApiBase()}/api/mcp/keys`);
     const data = await json<{ keys: McpKeyInfo[] }>(res);
     return data.keys;
   },
 
   async generateMcpKey(label: string): Promise<GeneratedMcpKey> {
-    const res = await fetch(`${getApiBase()}/api/mcp/keys`, {
+    const res = await apiFetch(`${getApiBase()}/api/mcp/keys`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ label }),
@@ -322,22 +366,18 @@ export const api = {
   },
 
   async revokeMcpKey(id: string): Promise<void> {
-    const res = await fetch(
+    const res = await apiFetch(
       `${getApiBase()}/api/mcp/keys/${encodeURIComponent(id)}`,
       { method: 'DELETE' },
     );
     await jsonOk(res);
   },
 
-  async changePassword(
-    currentPassword: string,
-    newPassword: string,
-    confirmPassword: string,
-  ): Promise<void> {
-    const res = await fetch(`${getApiBase()}/api/auth/change-password`, {
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    const res = await apiFetch(`${getApiBase()}/api/auth/change-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentPassword, newPassword, confirmPassword }),
+      body: JSON.stringify({ currentPassword, newPassword }),
     });
     await jsonOk(res);
   },

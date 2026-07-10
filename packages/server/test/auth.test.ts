@@ -35,6 +35,69 @@ describe('auth routes', () => {
     expect(res.headers['content-security-policy']).toContain("script-src-attr 'none'");
   });
 
+  it('allows credentialed API requests only from the configured Electron renderer origin', async () => {
+    await app.close();
+    app = await buildApp({
+      dataDir,
+      registrationKey: '',
+      sessionSecret: makeSecret(),
+      corsOrigin: 'http://localhost:5174',
+      logger: false,
+    });
+
+    const allowed = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/auth/me',
+      headers: {
+        origin: 'http://localhost:5174',
+        'access-control-request-method': 'GET',
+      },
+    });
+    expect(allowed.headers['access-control-allow-origin']).toBe('http://localhost:5174');
+    expect(allowed.headers['access-control-allow-credentials']).toBe('true');
+
+    const registration = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      headers: { origin: 'http://localhost:5174' },
+      payload: { username: 'alice', password: 'secret123' },
+    });
+    expect(registration.statusCode).toBe(200);
+    expect(registration.headers['access-control-allow-origin']).toBe('http://localhost:5174');
+    const cookies = Object.fromEntries(
+      (registration.cookies as unknown as { name: string; value: string }[]).map((cookie) => [
+        cookie.name,
+        cookie.value,
+      ]),
+    );
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      headers: { origin: 'http://localhost:5174' },
+      cookies,
+    });
+    expect(me.json()).toMatchObject({ ok: true, username: 'alice' });
+
+    const meta = await app.inject({
+      method: 'GET',
+      url: '/api/meta',
+      headers: { origin: 'http://localhost:5174' },
+      cookies,
+    });
+    expect(meta.statusCode).toBe(200);
+
+    const rejected = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/auth/me',
+      headers: {
+        origin: 'http://evil.test',
+        'access-control-request-method': 'GET',
+      },
+    });
+    expect(rejected.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
   it('registers first user without registration key', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -163,6 +226,22 @@ describe('auth routes', () => {
 
     expect(res.statusCode).toBe(401);
     expect(res.json()).toEqual({ ok: false, error: '用户名或密码错误' });
+  });
+
+  it('rejects malformed authentication fields instead of throwing', async () => {
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: {}, password: 'secret123' },
+    });
+    expect(login.statusCode).toBe(400);
+
+    const register = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'secret123', registrationKey: {} },
+    });
+    expect(register.statusCode).toBe(400);
   });
 
   it('rate limits repeated login attempts', async () => {
@@ -294,7 +373,6 @@ describe('auth routes', () => {
       payload: {
         currentPassword: 'secret123',
         newPassword: 'newsecret123',
-        confirmPassword: 'newsecret123',
       },
     });
     expect(change.statusCode).toBe(200);
@@ -331,13 +409,19 @@ describe('auth routes', () => {
       payload: {
         currentPassword: 'secret123',
         newPassword: 'newsecret123',
-        confirmPassword: 'newsecret123',
       },
     });
     expect(changeRes.statusCode).toBe(200);
     const refreshedCookies = Object.fromEntries(
       (changeRes.cookies as unknown as { name: string; value: string }[]).map((c) => [c.name, c.value]),
     );
+
+    const staleChange = await app.inject({
+      method: 'POST', url: '/api/auth/change-password', cookies: originalCookies,
+      payload: { currentPassword: 'newsecret123', newPassword: 'thirdsecret123' },
+    });
+    expect(staleChange.statusCode).toBe(401);
+    expect(staleChange.headers['x-session-expired']).toBe('1');
 
     await app.close();
     app = await buildApp({
@@ -363,31 +447,6 @@ describe('auth routes', () => {
     expect(refreshedSession.statusCode).toBe(200);
   });
 
-  it('rejects password change when confirmation does not match', async () => {
-    const regRes = await app.inject({
-      method: 'POST',
-      url: '/api/auth/register',
-      payload: { username: 'alice', password: 'secret123' },
-    });
-    const cookies = Object.fromEntries(
-      (regRes.cookies as unknown as { name: string; value: string }[]).map((c) => [c.name, c.value]),
-    );
-
-    const change = await app.inject({
-      method: 'POST',
-      url: '/api/auth/change-password',
-      cookies,
-      payload: {
-        currentPassword: 'secret123',
-        newPassword: 'newsecret123',
-        confirmPassword: 'different123',
-      },
-    });
-
-    expect(change.statusCode).toBe(400);
-    expect(change.json()).toEqual({ ok: false, error: '两次输入的新密码不一致' });
-  });
-
   it('rejects reusing the current password', async () => {
     const regRes = await app.inject({
       method: 'POST',
@@ -405,12 +464,32 @@ describe('auth routes', () => {
       payload: {
         currentPassword: 'secret123',
         newPassword: 'secret123',
-        confirmPassword: 'secret123',
       },
     });
 
     expect(change.statusCode).toBe(400);
     expect(change.json()).toEqual({ ok: false, error: '新密码不能与当前密码相同' });
+  });
+
+  it('rejects an oversized current password before hashing it', async () => {
+    const regRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'secret123' },
+    });
+    const cookies = Object.fromEntries(
+      (regRes.cookies as unknown as { name: string; value: string }[]).map((c) => [c.name, c.value]),
+    );
+
+    const change = await app.inject({
+      method: 'POST',
+      url: '/api/auth/change-password',
+      cookies,
+      payload: { currentPassword: 'x'.repeat(201), newPassword: 'newsecret123' },
+    });
+
+    expect(change.statusCode).toBe(401);
+    expect(change.json()).toEqual({ ok: false, error: '当前密码错误' });
   });
 
   it('rejects stale meta revision when two clients create pages concurrently', async () => {
@@ -464,6 +543,69 @@ describe('auth routes', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ ok: false, error: 'invalid payload' });
+  });
+
+  it('rejects invalid task hierarchies through the page API', async () => {
+    const regRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'secret123' },
+    });
+    const cookies = Object.fromEntries(
+      (regRes.cookies as unknown as { name: string; value: string }[]).map((cookie) => [
+        cookie.name,
+        cookie.value,
+      ]),
+    );
+    const meta = await app.inject({ method: 'GET', url: '/api/meta', cookies });
+    const pageId = meta.json<{ activePageId: string }>().activePageId;
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/pages/${pageId}`,
+      cookies,
+      payload: {
+        nodes: [{ id: 'a', title: 'a', status: 'todo', parentId: 'b' }],
+        edges: [],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: 'invalid task hierarchy',
+      reason: 'missing-parent',
+      taskId: 'a',
+    });
+
+    const oversizedTitle = await app.inject({
+      method: 'PUT',
+      url: `/api/pages/${pageId}`,
+      cookies,
+      payload: {
+        nodes: [{ id: 'long-title', title: 'x'.repeat(201), status: 'todo' }],
+        edges: [],
+      },
+    });
+    expect(oversizedTitle.statusCode).toBe(400);
+    expect(oversizedTitle.json()).toMatchObject({
+      error: 'task title too long',
+      taskId: 'long-title',
+      maxLength: 200,
+    });
+
+    for (const edge of [
+      { from: 'a', to: 'a' },
+      { from: 'a', to: 'missing' },
+    ]) {
+      const invalidEdge = await app.inject({
+        method: 'PUT',
+        url: `/api/pages/${pageId}`,
+        cookies,
+        payload: { nodes: [{ id: 'a', title: 'a', status: 'todo' }], edges: [edge] },
+      });
+      expect(invalidEdge.statusCode).toBe(400);
+      expect(invalidEdge.json()).toMatchObject({ error: 'invalid dependency' });
+    }
   });
 
   it('does not turn MCP bearer auth into a reusable browser session', async () => {
@@ -545,5 +687,27 @@ describe('auth routes', () => {
       ok: false,
       error: 'activePageId must reference a page in meta.pages',
     });
+  });
+
+  it('accepts valid workspace imports larger than Fastify default body limit', async () => {
+    const regRes = await app.inject({
+      method: 'POST', url: '/api/auth/register',
+      payload: { username: 'large-import', password: 'secret123' },
+    });
+    const cookies = Object.fromEntries(
+      (regRes.cookies as unknown as { name: string; value: string }[]).map((c) => [c.name, c.value]),
+    );
+    const meta = (await app.inject({ method: 'GET', url: '/api/meta', cookies })).json() as {
+      activePageId: string; pages: Array<{ id: string }>;
+    };
+    const nodes = Array.from({ length: 300 }, (_, i) => ({
+      id: `large-${i}`, title: `Task ${i}`, status: 'todo', description: 'x'.repeat(4000),
+    }));
+    const res = await app.inject({
+      method: 'POST', url: '/api/workspace/import', cookies,
+      payload: { exportedAt: new Date().toISOString(), meta, pages: { [meta.activePageId]: { nodes, edges: [] } } },
+    });
+
+    expect(res.statusCode).toBe(200);
   });
 });

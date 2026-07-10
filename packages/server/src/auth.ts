@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import '@fastify/secure-session';
 import type { StoredUser, UserRepository } from './repositories/UserRepository.js';
@@ -23,17 +23,26 @@ function validatePassword(password: string): string | null {
   return null;
 }
 
-function hashPassword(password: string): string {
+function derivePassword(password: string, salt: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, KEY_LEN, (error, key) => {
+      if (error) reject(error);
+      else resolve(key);
+    });
+  });
+}
+
+async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(SALT_LEN).toString('hex');
-  const hash = scryptSync(password, salt, KEY_LEN).toString('hex');
+  const hash = (await derivePassword(password, salt)).toString('hex');
   return `${salt}:${hash}`;
 }
 
-function verifyPassword(password: string, stored: string): boolean {
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const [salt, hash] = stored.split(':');
   if (!salt || !hash) return false;
   try {
-    const buf = scryptSync(password, salt, KEY_LEN);
+    const buf = await derivePassword(password, salt);
     return timingSafeEqual(buf, Buffer.from(hash, 'hex'));
   } catch {
     return false;
@@ -88,15 +97,18 @@ async function validateSessionUser(
 
 export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
   const { userRepo, registrationKey } = opts;
-  let registrationLock: Promise<void> = Promise.resolve();
 
   // POST /api/auth/login
   app.post('/api/auth/login', {
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
   }, async (req: FastifyRequest, reply: FastifyReply) => {
-    const body = req.body as { username?: string; password?: string } | null;
-    const username = body?.username?.trim();
-    const password = body?.password;
+    const body = req.body as Record<string, unknown> | null;
+    if (typeof body?.username !== 'string' || typeof body.password !== 'string') {
+      reply.status(400);
+      return { ok: false, error: '用户名和密码不能为空' };
+    }
+    const username = body.username.trim();
+    const password = body.password;
     if (!username || !password) {
       reply.status(400);
       return { ok: false, error: '用户名和密码不能为空' };
@@ -106,10 +118,10 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       return { ok: false, error: '用户名或密码错误' };
     }
     const user = await userRepo.findByUsername(username);
-    // Always run scryptSync to prevent timing-based user enumeration.
+    // Always run scrypt to prevent timing-based user enumeration.
     // When user doesn't exist, verify against a synthetic hash with identical cost.
     const hash = user?.passwordHash ?? DUMMY_PASSWORD_HASH;
-    const ok = verifyPassword(password, hash) && user !== null;
+    const ok = (await verifyPassword(password, hash)) && user !== null;
     if (!ok) {
       reply.status(401);
       return { ok: false, error: '用户名或密码错误' };
@@ -123,9 +135,18 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
   app.post('/api/auth/register', {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
   }, async (req: FastifyRequest, reply: FastifyReply) => {
-    const body = req.body as { username?: string; password?: string; registrationKey?: string } | null;
-    const username = body?.username?.trim();
-    const password = body?.password;
+    const body = req.body as Record<string, unknown> | null;
+    if (
+      typeof body?.username !== 'string' ||
+      typeof body.password !== 'string' ||
+      (body.registrationKey !== undefined && typeof body.registrationKey !== 'string')
+    ) {
+      reply.status(400);
+      return { ok: false, error: '注册信息格式错误' };
+    }
+    const username = body.username.trim();
+    const password = body.password;
+    const submittedRegistrationKey = body.registrationKey ?? '';
     if (!username || !password) {
       reply.status(400);
       return { ok: false, error: '用户名和密码不能为空' };
@@ -139,43 +160,31 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       reply.status(400);
       return { ok: false, error: passwordError };
     }
-    const previousRegistration = registrationLock;
-    let releaseRegistration!: () => void;
-    registrationLock = new Promise<void>((resolve) => {
-      releaseRegistration = resolve;
-    });
-    await previousRegistration;
-    try {
-      // 注册控制：有邀请码则需要匹配；无邀请码 + 不是首次启动 → 拒绝
-      const existingUsers = await userRepo.findAll();
-      if (existingUsers.length > 0) {
-        if (!registrationKey) {
-          reply.status(403);
-          return { ok: false, error: '注册已关闭' };
-        }
-        if (!secureStringEqual(body?.registrationKey ?? '', registrationKey)) {
-          reply.status(403);
-          return { ok: false, error: '邀请码错误' };
-        }
-      }
-      if (await userRepo.findByUsername(username)) {
-        reply.status(409);
-        return { ok: false, error: '用户名已存在' };
-      }
-      const id = 'u' + Date.now().toString(36) + randomBytes(8).toString('base64url');
-      await userRepo.create({
+    const additionalUsersAllowed = Boolean(
+      registrationKey && secureStringEqual(submittedRegistrationKey, registrationKey),
+    );
+    const id = 'u' + Date.now().toString(36) + randomBytes(8).toString('base64url');
+    const result = await userRepo.register(
+      {
         id,
         username,
-        passwordHash: hashPassword(password),
+        passwordHash: await hashPassword(password),
         sessionVersion: 0,
         createdAt: new Date().toISOString(),
-      });
-      req.session.userId = id;
-      req.session.sessionVersion = 0;
-      return { ok: true, username };
-    } finally {
-      releaseRegistration();
+      },
+      additionalUsersAllowed,
+    );
+    if (result === 'closed') {
+      reply.status(403);
+      return { ok: false, error: registrationKey ? '邀请码错误' : '注册已关闭' };
     }
+    if (result === 'duplicate') {
+      reply.status(409);
+      return { ok: false, error: '用户名已存在' };
+    }
+    req.session.userId = id;
+    req.session.sessionVersion = 0;
+    return { ok: true, username };
   });
 
   app.post('/api/auth/change-password', {
@@ -184,25 +193,25 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
     const session = await validateSessionUser(req, userRepo);
     if (!session.ok) {
       reply.status(401);
+      if (session.error !== 'unauthenticated') reply.header('X-Session-Expired', '1');
       return { ok: false, error: session.error === 'unauthenticated' ? '请先登录' : '会话已失效，请重新登录' };
     }
 
-    const body = req.body as {
-      currentPassword?: string;
-      newPassword?: string;
-      confirmPassword?: string;
-    } | null;
-    const currentPassword = body?.currentPassword;
-    const newPassword = body?.newPassword;
-    const confirmPassword = body?.confirmPassword;
-    if (!currentPassword || !newPassword || !confirmPassword) {
+    const body = req.body as Record<string, unknown> | null;
+    if (typeof body?.currentPassword !== 'string' || typeof body.newPassword !== 'string') {
       reply.status(400);
-      return { ok: false, error: '当前密码、新密码和确认密码不能为空' };
+      return { ok: false, error: '当前密码和新密码不能为空' };
+    }
+    const currentPassword = body.currentPassword;
+    const newPassword = body.newPassword;
+    if (!currentPassword || !newPassword) {
+      reply.status(400);
+      return { ok: false, error: '当前密码和新密码不能为空' };
     }
 
-    if (newPassword !== confirmPassword) {
-      reply.status(400);
-      return { ok: false, error: '两次输入的新密码不一致' };
+    if (currentPassword.length > 200) {
+      reply.status(401);
+      return { ok: false, error: '当前密码错误' };
     }
 
     const passwordError = validatePassword(newPassword);
@@ -211,18 +220,22 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       return { ok: false, error: passwordError };
     }
 
-    if (!verifyPassword(currentPassword, session.user.passwordHash)) {
+    if (!(await verifyPassword(currentPassword, session.user.passwordHash))) {
       reply.status(401);
       return { ok: false, error: '当前密码错误' };
     }
 
-    if (verifyPassword(newPassword, session.user.passwordHash)) {
+    if (await verifyPassword(newPassword, session.user.passwordHash)) {
       reply.status(400);
       return { ok: false, error: '新密码不能与当前密码相同' };
     }
 
     const nextSessionVersion = session.user.sessionVersion + 1;
-    await userRepo.updatePasswordHash(session.user.id, hashPassword(newPassword), nextSessionVersion);
+    await userRepo.updatePasswordHash(
+      session.user.id,
+      await hashPassword(newPassword),
+      nextSessionVersion,
+    );
     req.session.userId = session.user.id;
     req.session.sessionVersion = nextSessionVersion;
     return { ok: true };

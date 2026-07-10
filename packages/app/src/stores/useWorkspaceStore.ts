@@ -5,11 +5,13 @@ import type {
   PageInfo,
   WorkspaceSettings,
 } from '@todograph/shared';
-import { api } from '@/api/client';
+import { api, getApiSessionGeneration, resetApiSession } from '@/api/client';
 import { toast } from '@/components/ui/toaster-store';
-import { registerAllTasksInvalidator, useTaskStore } from './useTaskStore';
+import { useTaskStore } from './useTaskStore';
+import { subscribeAllTasksInvalidated } from './workspaceEvents';
 
 interface WorkspaceStore {
+  sessionUserId: string | null;
   meta: Meta | null;
   loaded: boolean;
   /** 全量任务列表（所有页面聚合） —— 左侧全局列表用。 */
@@ -17,7 +19,8 @@ interface WorkspaceStore {
   allTasksLoading: boolean;
 
   // ---- lifecycle ----
-  bootstrap: () => Promise<void>;
+  bootstrap: (userId: string) => Promise<void>;
+  resetSession: () => void;
 
   // ---- pages ----
   switchPage: (pageId: string) => Promise<void>;
@@ -39,28 +42,13 @@ interface WorkspaceStore {
   invalidateAllTasks: () => void;
 }
 
-/**
- * 工作区：多页面的总指挥。
- *
- * 数据流：
- *  bootstrap():  GET /api/meta → 填 meta/activePageId
- *             → 用 activePageId 加载当前页到 useTaskStore
- *             → GET /api/all-tasks 填 allTasks
- *
- *  switchPage(id):
- *             → flush 当前页（useTaskStore.flush）
- *             → useTaskStore.loadPage(id)
- *             → PATCH /api/pages/:id { activate: true }
- *             → meta.activePageId 本地更新
- *
- *  invalidateAllTasks: 任何写（save/create/delete/move）后调用；
- *             内部防抖 300ms 重拉 /api/all-tasks。
- */
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   let allTasksTimer: ReturnType<typeof setTimeout> | null = null;
   let metaPollTimer: ReturnType<typeof setInterval> | null = null;
+  const isCurrentSession = (generation: number) => generation === getApiSessionGeneration();
   const WORKSPACE_SYNCED_MESSAGE = '工作区已被其他设备修改，已同步最新状态';
   const WORKSPACE_RETRY_MESSAGE = '工作区已被其他设备修改，已刷新最新状态，请重新执行刚才的操作';
+  const WORKSPACE_SYNC_FAILED_MESSAGE = '工作区已被其他设备修改，但刷新失败，请刷新页面后重试';
   const PAGE_RETRY_MESSAGE = '页面已被其他设备修改，已重新加载最新数据，请重新执行刚才的操作';
   const scheduleAllTasksRefresh = () => {
     if (allTasksTimer) clearTimeout(allTasksTimer);
@@ -79,17 +67,18 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
 
   const startMetaPolling = () => {
     stopMetaPolling();
+    const generation = getApiSessionGeneration();
     metaPollTimer = setInterval(async () => {
       try {
         const latest = await api.loadMeta();
+        if (!isCurrentSession(generation)) return;
         const current = get().meta;
         if (!current || latest.revision === current.revision) return;
-        // 工作区元信息已变更：更新页面列表
-        set({ meta: latest });
-        scheduleAllTasksRefresh();
-        // 若当前活跃页被删或变更，切到新的活跃页
         const storePageId = useTaskStore.getState().activePageId;
         const pageIds = new Set(latest.pages.map((p) => p.id));
+        set({ meta: storePageId && pageIds.has(storePageId)
+          ? { ...latest, activePageId: storePageId } : latest });
+        scheduleAllTasksRefresh();
         if (!storePageId || !pageIds.has(storePageId)) {
           const next = latest.activePageId ?? latest.pages[0]?.id;
           if (next) await useTaskStore.getState().loadPage(next);
@@ -104,9 +93,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   ): err is Error & { conflict: boolean; serverRevision?: number; serverVersion?: number } =>
     !!err && typeof err === 'object' && 'conflict' in err && (err as { conflict?: unknown }).conflict === true;
 
-  const syncMetaAfterConflict = async (preferredActivePageId?: string): Promise<Meta | null> => {
+  const syncMetaAfterConflict = async (
+    generation: number,
+    preferredActivePageId?: string,
+  ): Promise<Meta | null> => {
     try {
       const latestMeta = await api.loadMeta();
+      if (!isCurrentSession(generation)) return null;
       const storePageId = useTaskStore.getState().activePageId;
       const pageIds = new Set(latestMeta.pages.map((page) => page.id));
       let nextActivePageId = preferredActivePageId;
@@ -118,6 +111,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       }
       if (nextActivePageId && storePageId !== nextActivePageId) {
         await useTaskStore.getState().loadPage(nextActivePageId);
+        if (!isCurrentSession(generation)) return null;
       }
       const nextMeta = nextActivePageId
         ? { ...latestMeta, activePageId: nextActivePageId }
@@ -125,38 +119,58 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       set({ meta: nextMeta });
       scheduleAllTasksRefresh();
       return nextMeta;
-    } catch (reloadErr) {
-      console.warn('reload meta after conflict failed', reloadErr);
-      return null;
-    }
+    } catch { return null; }
   };
 
   const handleWorkspaceError = async (
+    generation: number,
     title: string,
     err: unknown,
     preferredActivePageId?: string,
   ): Promise<void> => {
+    if (!isCurrentSession(generation)) return;
     if (isConflictError(err)) {
-      await syncMetaAfterConflict(preferredActivePageId);
-      toast.error(title, WORKSPACE_RETRY_MESSAGE);
+      const synced = await syncMetaAfterConflict(generation, preferredActivePageId);
+      if (!isCurrentSession(generation)) return;
+      toast.error(title, synced ? WORKSPACE_RETRY_MESSAGE : WORKSPACE_SYNC_FAILED_MESSAGE);
       return;
     }
     toast.error(title, String((err as Error).message ?? err));
   };
+  subscribeAllTasksInvalidated(scheduleAllTasksRefresh);
+
+  const resetSession = () => {
+    resetApiSession();
+    stopMetaPolling();
+    if (allTasksTimer) clearTimeout(allTasksTimer);
+    allTasksTimer = null;
+    useTaskStore.getState().resetSession();
+    set({
+      sessionUserId: null,
+      meta: null,
+      loaded: false,
+      allTasks: [],
+      allTasksLoading: false,
+    });
+  };
 
   return {
+    sessionUserId: null,
     meta: null,
     loaded: false,
     allTasks: [],
     allTasksLoading: false,
 
-    bootstrap: async () => {
-      // 把 invalidate 方法挂进 useTaskStore —— 它写完数据后会触发
-      registerAllTasksInvalidator(() => scheduleAllTasksRefresh());
+    resetSession,
+
+    bootstrap: async (userId) => {
+      resetSession();
+      const generation = getApiSessionGeneration();
+      set({ sessionUserId: userId });
       try {
         const meta = await api.loadMeta();
+        if (!isCurrentSession(generation)) return;
         set({ meta });
-        // 保底：meta.activePageId 指向的页若不在列表里，退化到首个
         const active =
           meta.pages.find((p) => p.id === meta.activePageId)?.id ?? meta.pages[0]?.id;
         if (!active) {
@@ -165,47 +179,53 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
           return;
         }
         await useTaskStore.getState().loadPage(active);
+        if (!isCurrentSession(generation)) return;
         set({ loaded: true });
         void get().refreshAllTasks();
         startMetaPolling();
       } catch (err) {
+        if (!isCurrentSession(generation)) return;
         toast.error('加载失败', String((err as Error).message));
         set({ loaded: true });
       }
     },
 
     switchPage: async (pageId) => {
+      const generation = getApiSessionGeneration();
       const meta = get().meta;
       if (!meta) return;
       if (meta.activePageId === pageId) return;
-      // 1. flush 当前页
       try {
         await useTaskStore.getState().flush();
+        if (!isCurrentSession(generation)) return;
       } catch {
         return;
       }
-      // 2. 加载目标页
       try {
         await useTaskStore.getState().loadPage(pageId);
+        if (!isCurrentSession(generation)) return;
       } catch (err) {
+        if (!isCurrentSession(generation)) return;
         toast.error('切换页面失败', String((err as Error).message));
         return;
       }
-      // 3. 持久化 activePageId（失败不影响本地状态）
       try {
         const nextMeta = await api.setActivePage(pageId, get().meta?.revision ?? meta.revision);
+        if (!isCurrentSession(generation)) return;
         if (nextMeta) {
           set({ meta: nextMeta });
           scheduleAllTasksRefresh();
           return;
         }
       } catch (err) {
+        if (!isCurrentSession(generation)) return;
         if (isConflictError(err)) {
-          await syncMetaAfterConflict(pageId);
-          toast.info('切换页面已同步', WORKSPACE_SYNCED_MESSAGE);
+          const synced = await syncMetaAfterConflict(generation, pageId);
+          if (!isCurrentSession(generation)) return;
+          if (synced) toast.info('切换页面已同步', WORKSPACE_SYNCED_MESSAGE);
+          else toast.error('切换页面同步失败', WORKSPACE_SYNC_FAILED_MESSAGE);
           return;
         }
-        // 不打扰用户：本地已经切过去了；下次启动会落到老的 activePageId
         console.warn('setActivePage failed', err);
       }
       set({ meta: { ...(get().meta ?? meta), activePageId: pageId } });
@@ -213,62 +233,75 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     },
 
     createPage: async (title) => {
+      const generation = getApiSessionGeneration();
       const meta = get().meta;
       try {
         const result = await api.createPage(title, meta?.revision);
+        if (!isCurrentSession(generation)) return null;
         set({ meta: result.meta });
         scheduleAllTasksRefresh();
         return result.page;
       } catch (err) {
-        await handleWorkspaceError('创建页面失败', err);
+        await handleWorkspaceError(generation, '创建页面失败', err);
         return null;
       }
     },
 
     deletePage: async (pageId) => {
+      const generation = getApiSessionGeneration();
       const meta = get().meta;
       if (!meta) return;
       if (meta.pages.length <= 1) {
         toast.error('不能删除最后一个页面');
         return;
       }
+      if (useTaskStore.getState().activePageId === pageId) {
+        try { await useTaskStore.getState().flush(); } catch { return; }
+        if (!isCurrentSession(generation)) return;
+      }
       try {
         const nextMeta = await api.deletePage(pageId, meta.revision);
+        if (!isCurrentSession(generation)) return;
         set({ meta: nextMeta });
-        // 若删的是当前页，切到新 active
         if (meta.activePageId === pageId && nextMeta.activePageId !== pageId) {
           await useTaskStore.getState().loadPage(nextMeta.activePageId);
+          if (!isCurrentSession(generation)) return;
         }
         scheduleAllTasksRefresh();
       } catch (err) {
-        await handleWorkspaceError('删除页面失败', err);
+        await handleWorkspaceError(generation, '删除页面失败', err);
       }
     },
 
     renamePage: async (pageId, title) => {
+      const generation = getApiSessionGeneration();
       const meta = get().meta;
       if (!meta) return;
       try {
         const nextMeta = await api.renamePage(pageId, title, meta.revision);
+        if (!isCurrentSession(generation)) return;
         if (nextMeta) set({ meta: nextMeta });
         scheduleAllTasksRefresh();
       } catch (err) {
-        await handleWorkspaceError('重命名失败', err);
+        await handleWorkspaceError(generation, '重命名失败', err);
       }
     },
 
     reorderPages: async (ids) => {
+      const generation = getApiSessionGeneration();
       const meta = get().meta;
       if (!meta) return;
       try {
         const nextMeta = await api.reorderPages(ids, meta.revision);
+        if (!isCurrentSession(generation)) return;
         set({ meta: nextMeta });
       } catch (err) {
-        await handleWorkspaceError('排序失败', err);
+        await handleWorkspaceError(generation, '排序失败', err);
       }
     },
 
     moveNodesToPage: async (nodeIds, target) => {
+      const generation = getApiSessionGeneration();
       const meta = get().meta;
       const sourcePageId = useTaskStore.getState().activePageId;
       const ids = [...new Set(nodeIds)];
@@ -279,6 +312,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
 
       if (!targetPageId) {
         const info = await get().createPage(target.newPageTitle?.trim() || '新页面');
+        if (!isCurrentSession(generation)) return null;
         if (!info) return null;
         targetPageId = info.id;
         targetTitle = info.title;
@@ -294,6 +328,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
 
       try {
         await useTaskStore.getState().flush();
+        if (!isCurrentSession(generation)) return null;
       } catch {
         return null;
       }
@@ -302,6 +337,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         const targetPage = get().meta?.pages.find((page) => page.id === targetPageId);
         if (!targetPage) throw new Error(`target page not found: ${targetPageId}`);
         const targetGraph = await api.loadPage(targetPageId);
+        if (!isCurrentSession(generation)) return null;
         const resp = await api.moveNodes(
           sourcePageId,
           targetPageId,
@@ -309,15 +345,21 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
           useTaskStore.getState().pageVersion,
           targetGraph.version,
         );
+        if (!isCurrentSession(generation)) return null;
 
         await useTaskStore.getState().loadPage(targetPageId);
+        if (!isCurrentSession(generation)) return null;
         try {
           const nextMeta = await api.setActivePage(targetPageId, get().meta?.revision);
+          if (!isCurrentSession(generation)) return null;
           if (nextMeta) set({ meta: nextMeta });
         } catch (err) {
+          if (!isCurrentSession(generation)) return null;
           if (isConflictError(err)) {
-            await syncMetaAfterConflict(targetPageId);
-            toast.info('移动后页面已同步', WORKSPACE_SYNCED_MESSAGE);
+            const synced = await syncMetaAfterConflict(generation, targetPageId);
+            if (!isCurrentSession(generation)) return null;
+            if (synced) toast.info('移动后页面已同步', WORKSPACE_SYNCED_MESSAGE);
+            else toast.error('移动后页面同步失败', WORKSPACE_SYNC_FAILED_MESSAGE);
             scheduleAllTasksRefresh();
             return targetPageId;
           }
@@ -343,9 +385,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         toast.info(`已移动到 ${targetTitle}`, details.join('，'));
         return targetPageId;
       } catch (err) {
+        if (!isCurrentSession(generation)) return null;
         if (isConflictError(err)) {
           try {
             await useTaskStore.getState().loadPage(sourcePageId);
+            if (!isCurrentSession(generation)) return null;
             scheduleAllTasksRefresh();
             toast.error('移动节点失败', PAGE_RETRY_MESSAGE);
           } catch {
@@ -359,21 +403,26 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     },
 
     updateSettings: async (settings) => {
+      const generation = getApiSessionGeneration();
       const meta = get().meta;
       try {
         const nextMeta = await api.updateSettings(settings, meta?.revision);
+        if (!isCurrentSession(generation)) return;
         set({ meta: nextMeta });
       } catch (err) {
-        await handleWorkspaceError('保存设置失败', err);
+        await handleWorkspaceError(generation, '保存设置失败', err);
       }
     },
 
     refreshAllTasks: async () => {
+      const generation = getApiSessionGeneration();
       set({ allTasksLoading: true });
       try {
         const resp = await api.loadAllTasks();
+        if (!isCurrentSession(generation)) return;
         set({ allTasks: resp.tasks, allTasksLoading: false });
       } catch (err) {
+        if (!isCurrentSession(generation)) return;
         set({ allTasksLoading: false });
         console.warn('loadAllTasks failed', err);
       }

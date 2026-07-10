@@ -1,3 +1,5 @@
+import { MAX_TASK_TITLE_LENGTH } from '@todograph/shared';
+
 const canvas = typeof document !== 'undefined'
   ? document.createElement('canvas')
   : null;
@@ -7,7 +9,7 @@ const FONT = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-s
 
 export const MAX_LEAF_WIDTH = 400;
 export const MIN_LEAF_WIDTH = 180;
-export const MAX_TITLE_LENGTH = 100;
+export const MAX_TITLE_LENGTH = MAX_TASK_TITLE_LENGTH;
 
 /** Measure single-line text width. Returns pixel width clamped to [180, 400]. */
 export function measureTextWidth(text: string): number {

@@ -1,4 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
+import { act, create } from 'react-test-renderer';
+import type { ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ListView } from '../src/features/tasks/ListView';
 import { ThemeProvider } from '../src/features/theme/ThemeProvider';
@@ -44,5 +46,44 @@ describe('mobile task list', () => {
     expect(html).toContain('Blocked');
     expect(html).toContain('Done');
     expect(html).toContain('可执行');
+  });
+
+  it('moves the split bar to the bottom when no other page has ready tasks', () => {
+    useTaskStore.setState({ activePageId: 'p-1', loaded: true });
+
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(<ListView />);
+    });
+    const scrollArea = () =>
+      renderer.root.find(
+        (node) => node.props.style?.overscrollBehaviorY === 'contain',
+      );
+
+    expect(scrollArea().props.className).toBe('min-h-0 flex-1 overflow-auto');
+    expect(scrollArea().props.style.height).toBeUndefined();
+    expect(renderer.root.findByProps({ 'data-list-split': 'bottom' })).toBeTruthy();
+
+    act(() => {
+      useWorkspaceStore.setState({
+        allTasks: [
+          {
+            id: 'other-ready',
+            title: '跨页任务',
+            status: 'todo',
+            _pageId: 'p-2',
+            _pageTitle: '其他页面',
+            _ready: true,
+          },
+        ],
+      });
+    });
+
+    expect(scrollArea().props.className).toBe('overflow-auto');
+    expect(scrollArea().props.style.height).toBe('65%');
+    expect(renderer.root.findByProps({ 'data-list-split': 'adjustable' })).toBeTruthy();
+    expect(JSON.stringify(renderer.toJSON())).toContain('其他页面可做');
+
+    act(() => renderer.unmount());
   });
 });

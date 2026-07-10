@@ -72,10 +72,10 @@ interface CollisionRect {
 
 function rectsOverlap(a: CollisionRect, b: CollisionRect, gap: number): boolean {
   return (
-    a.x - gap < b.x + b.w + gap &&
-    a.x + a.w + gap > b.x - gap &&
-    a.y - gap < b.y + b.h + gap &&
-    a.y + a.h + gap > b.y - gap
+    a.x < b.x + b.w + gap &&
+    a.x + a.w + gap > b.x &&
+    a.y < b.y + b.h + gap &&
+    a.y + a.h + gap > b.y
   );
 }
 
@@ -125,7 +125,7 @@ function clusterFits(
   return true;
 }
 
-const DEFAULT_W = 180, DEFAULT_H = 48;
+const DEFAULT_W = 180, DEFAULT_H = 56;
 
 function buildRects(nodes: Layoutable[]): CollisionRect[] {
   return nodes.map((n) => ({
@@ -356,6 +356,7 @@ export async function handleUpdateTask(
   const newNodes = [...page.nodes];
   newNodes[idx] = updated;
 
+  await backupBeforeMutation(c, params.page_id);
   await c.put(`/api/pages/${encodeURIComponent(params.page_id)}`, {
     nodes: newNodes,
     edges: page.edges,

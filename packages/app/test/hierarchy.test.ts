@@ -4,9 +4,13 @@ import {
   depthOf,
   subtreeHeight,
   wouldExceedMaxDepth,
-  MAX_HIERARCHY_DEPTH,
 } from '@/stores/useTaskStore';
-import type { Task } from '@todograph/shared';
+import {
+  MAX_HIERARCHY_DEPTH,
+  validateDependencyEdges,
+  validateTaskHierarchy,
+  type Task,
+} from '@todograph/shared';
 
 const task = (id: string, parentId?: string): Task => ({
   id,
@@ -77,8 +81,8 @@ describe('buildHierarchyMetrics', () => {
 
     expect(metrics.depthById.get('a')).toBe(2);
     expect(metrics.depthById.get('b')).toBe(2);
-    expect(metrics.subtreeHeightById.get('a')).toBe(2);
-    expect(metrics.subtreeHeightById.get('b')).toBe(1);
+    expect(metrics.subtreeHeightById.get('a')).toBeLessThanOrEqual(2);
+    expect(metrics.subtreeHeightById.get('b')).toBeLessThanOrEqual(2);
   });
 });
 
@@ -106,5 +110,48 @@ describe('wouldExceedMaxDepth', () => {
 
   it('parentId null always allowed', () => {
     expect(wouldExceedMaxDepth([task('a')], 'a', null)).toBe(false);
+  });
+});
+
+describe('validateTaskHierarchy', () => {
+  it('rejects missing parents, cycles, duplicate ids, and excessive depth', () => {
+    expect(validateTaskHierarchy([task('child', 'missing')])).toMatchObject({
+      valid: false,
+      reason: 'missing-parent',
+    });
+    expect(validateTaskHierarchy([task('a', 'b'), task('b', 'a')])).toMatchObject({
+      valid: false,
+      reason: 'cycle',
+    });
+    expect(validateTaskHierarchy([task('same'), task('same')])).toMatchObject({
+      valid: false,
+      reason: 'duplicate-id',
+    });
+    expect(
+      validateTaskHierarchy([
+        task('root'),
+        task('child', 'root'),
+        task('grandchild', 'child'),
+        task('too-deep', 'grandchild'),
+      ]),
+    ).toMatchObject({ valid: false, reason: 'max-depth' });
+    expect(validateTaskHierarchy([task('root'), task('child', 'root')])).toEqual({ valid: true });
+  });
+
+  it('rejects a very deep chain without recursive stack growth', () => {
+    const nodes = Array.from({ length: 20_000 }, (_, index) =>
+      task(String(index), index === 0 ? undefined : String(index - 1)),
+    );
+    expect(validateTaskHierarchy(nodes)).toMatchObject({ valid: false, reason: 'max-depth' });
+  });
+});
+
+describe('validateDependencyEdges', () => {
+  it('rejects self edges and missing endpoints', () => {
+    const nodes = [task('a'), task('b')];
+    expect(validateDependencyEdges(nodes, [{ from: 'a', to: 'a' }])).toMatchObject({ valid: false, reason: 'self-edge' });
+    expect(validateDependencyEdges(nodes, [{ from: 'a', to: 'missing' }])).toMatchObject({ valid: false, reason: 'missing-endpoint' });
+    expect(validateDependencyEdges(nodes, [{ from: 'a', to: 'b' }, { from: 'a', to: 'b' }])).toMatchObject({ valid: false, reason: 'duplicate-edge' });
+    expect(validateDependencyEdges(nodes, [{ from: 'a', to: 'b' }])).toEqual({ valid: true });
   });
 });

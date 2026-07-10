@@ -29,6 +29,65 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     expect(meta.revision).toBe(0);
   });
 
+  it('rejects invalid task hierarchies at the repository boundary', async () => {
+    const meta = await repo.loadMeta();
+    const page = await repo.loadPage(meta.activePageId);
+
+    await expect(
+      repo.savePage(
+        meta.activePageId,
+        {
+          nodes: [{ id: 'child', title: 'child', status: 'todo', parentId: 'missing' }],
+          edges: [],
+        },
+        page.version,
+      ),
+    ).rejects.toThrow('invalid hierarchy (missing-parent');
+  });
+
+  it('reads legacy long titles but rejects them on new writes', async () => {
+    const meta = await repo.loadMeta();
+    const pageId = meta.activePageId;
+    const longPageTitle = 'p'.repeat(101);
+    const longTaskTitle = 't'.repeat(201);
+
+    await fs.writeFile(
+      path.join(userDir, 'meta.json'),
+      JSON.stringify({
+        ...meta,
+        pages: meta.pages.map((page) =>
+          page.id === pageId ? { ...page, title: longPageTitle } : page),
+      }),
+    );
+    await fs.writeFile(
+      path.join(userDir, 'pages', `${pageId}.json`),
+      JSON.stringify({
+        version: 0,
+        nodes: [{ id: 'legacy', title: longTaskTitle, status: 'todo' }],
+        edges: [],
+      }),
+    );
+
+    expect((await repo.loadMeta()).pages[0]?.title).toBe(longPageTitle);
+    expect((await repo.loadPage(pageId)).nodes[0]?.title).toBe(longTaskTitle);
+    await expect(
+      repo.savePage(pageId, {
+        nodes: [
+          { id: 'legacy', title: longTaskTitle, status: 'todo' },
+          { id: 'new', title: 'normal', status: 'todo' },
+        ],
+        edges: [],
+      }),
+    ).resolves.toBe(1);
+    await expect(repo.createPage(longPageTitle)).rejects.toThrow('page title exceeds 100');
+    await expect(
+      repo.savePage(pageId, {
+        nodes: [{ id: 'new', title: longTaskTitle, status: 'todo' }],
+        edges: [],
+      }),
+    ).rejects.toThrow('task title exceeds 200');
+  });
+
   it('rejects stale meta revision on createPage', async () => {
     const meta = await repo.loadMeta();
 
@@ -240,8 +299,26 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     expect(Number.isNaN(new Date(backups[0]!.createdAt).getTime())).toBe(false);
     expect(backups[0]!.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
+    const liveBeforeRestore = await repo.loadPage(pageId);
     const restored = await repo.restoreBackup(pageId, first.name);
     expect(restored.nodes.map((n) => n.id)).toEqual(original.nodes.map((n) => n.id));
+    expect(restored.version).toBeGreaterThan(liveBeforeRestore.version!);
+    await expect(repo.savePage(pageId, liveBeforeRestore, original.version))
+      .rejects.toBeInstanceOf(VersionConflictError);
+  });
+
+  it('rejects an invalid backup without overwriting the live page', async () => {
+    const meta = await repo.loadMeta();
+    const pageId = meta.activePageId;
+    const live = await repo.loadPage(pageId);
+    await repo.createBackup(pageId);
+    const backup = (await repo.listBackups(pageId))[0]!;
+    await fs.writeFile(path.join(userDir, 'backups', pageId, backup.name), JSON.stringify({
+      nodes: [{ id: 'child', title: 'child', status: 'todo', parentId: 'missing' }], edges: [],
+    }));
+
+    await expect(repo.restoreBackup(pageId, backup.name)).rejects.toThrow('invalid hierarchy');
+    await expect(repo.loadPage(pageId)).resolves.toEqual(live);
   });
 
   it('restores the latest backup while preserving newer un-backed changes', async () => {
@@ -265,8 +342,10 @@ describe('FileWorkspaceRepository concurrency guards', () => {
       version: backedUp.version,
     });
 
+    const live = await repo.loadPage(pageId);
     const restored = await repo.restoreLatestBackup(pageId);
     expect(restored.nodes.map((n) => n.id)).toEqual(['backup-version']);
+    expect(restored.version).toBeGreaterThan(live.version!);
 
     const current = await repo.loadPage(pageId);
     expect(current).toEqual(restored);
@@ -287,7 +366,30 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     const restored = await repo.loadPage(pageId);
 
     expect(restoredMeta.pages.map((p) => p.id)).toEqual(before.meta.pages.map((p) => p.id));
+    expect(restoredMeta.revision).toBeGreaterThan(before.meta.revision);
     expect(restored.nodes.map((n) => n.id)).toEqual(before.pages[pageId]!.nodes.map((n) => n.id));
+  });
+
+  it('round-trips legacy long titles through export and import', async () => {
+    const meta = await repo.loadMeta();
+    const pageId = meta.activePageId;
+    const pageTitle = 'p'.repeat(101);
+    const taskTitle = 't'.repeat(201);
+    await fs.writeFile(path.join(userDir, 'meta.json'), JSON.stringify({
+      ...meta,
+      pages: meta.pages.map((page) => ({ ...page, title: pageTitle })),
+    }));
+    await fs.writeFile(path.join(userDir, 'pages', `${pageId}.json`), JSON.stringify({
+      version: 0,
+      nodes: [{ id: 'legacy', title: taskTitle, status: 'todo' }],
+      edges: [],
+    }));
+
+    const exported = await repo.exportWorkspace();
+    await repo.importWorkspace(exported);
+
+    expect((await repo.loadMeta()).pages[0]?.title).toBe(pageTitle);
+    expect((await repo.loadPage(pageId)).nodes[0]?.title).toBe(taskTitle);
   });
 
   it('rejects malformed workspace imports without mutating live workspace state', async () => {
@@ -316,7 +418,7 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     await expect(repo.loadPage(pageId)).resolves.toEqual(livePage);
   });
 
-  it('preserves imported page versions', async () => {
+  it('advances imported page versions instead of reusing stale clocks', async () => {
     const before = await repo.exportWorkspace();
     const pageId = before.meta.pages[0]!.id;
     const importedVersion = 42;
@@ -335,7 +437,7 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     await repo.importWorkspace(imported);
 
     const restored = await repo.loadPage(pageId);
-    expect(restored.version).toBe(importedVersion);
+    expect(restored.version).toBe(importedVersion + 1);
     expect(restored.nodes).toEqual([
       { id: 'imported-node', title: 'Imported node', status: 'todo', x: 15, y: 25 },
     ]);
@@ -359,6 +461,7 @@ describe('FileWorkspaceRepository concurrency guards', () => {
           ...before.pages[pageId]!,
           version: before.pages[pageId]!.version + 1,
           nodes: [{ id: 'imported-node', title: 'Imported node', status: 'todo', x: 50, y: 60 }],
+          edges: [],
         },
       },
     };
@@ -421,6 +524,7 @@ describe('FileWorkspaceRepository concurrency guards', () => {
           ...before.pages[pageId]!,
           version: before.pages[pageId]!.version + 1,
           nodes: [{ id: 'imported-node', title: 'Imported node', status: 'todo', x: 50, y: 60 }],
+          edges: [],
         },
       },
     };
@@ -482,6 +586,7 @@ describe('FileWorkspaceRepository concurrency guards', () => {
           ...before.pages[pageId]!,
           version: before.pages[pageId]!.version + 1,
           nodes: [{ id: 'imported-node', title: 'Imported node', status: 'todo', x: 50, y: 60 }],
+          edges: [],
         },
       },
     };
@@ -678,6 +783,7 @@ describe('FileWorkspaceRepository concurrency guards', () => {
           ...before.pages[pageId]!,
           version: before.pages[pageId]!.version + 1,
           nodes: [{ id: 'imported-node', title: 'Imported node', status: 'todo', x: 50, y: 60 }],
+          edges: [],
         },
       },
     };

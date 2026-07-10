@@ -3,8 +3,12 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
   GraphSchema,
+  MAX_PAGE_TITLE_LENGTH,
+  MAX_TASK_TITLE_LENGTH,
   MetaSchema,
   PageDataSchema,
+  validateDependencyEdges,
+  validateTaskHierarchy,
   type Graph,
   type Meta,
   type PageData,
@@ -15,6 +19,7 @@ import { isDAG } from '@todograph/core';
 import {
   type BackupInfo,
   MetaVersionConflictError,
+  TaskTitleTooLongError,
   type WorkspaceExport,
   type WorkspaceRepository,
   VersionConflictError,
@@ -133,9 +138,11 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       this.assertMetaRevision(meta, expectedRevision);
       const id = makePageId(title);
       const maxOrder = meta.pages.reduce((m, p) => Math.max(m, p.order), -1);
+      const cleanedTitle = title.trim() || '新页面';
+      assertPageTitleLength(cleanedTitle);
       const info: PageInfo = {
         id,
-        title: title.trim() || '新页面',
+        title: cleanedTitle,
         order: maxOrder + 1,
         createdAt: new Date().toISOString(),
       };
@@ -181,6 +188,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       const idx = meta.pages.findIndex((p) => p.id === pageId);
       if (idx < 0) throw new Error(`page not found: ${pageId}`);
       const cleaned = title.trim() || meta.pages[idx]!.title;
+      if (cleaned !== meta.pages[idx]!.title) assertPageTitleLength(cleaned);
       const nextPages = [...meta.pages];
       nextPages[idx] = { ...nextPages[idx]!, title: cleaned };
       const nextMeta = this.bumpMeta({ ...meta, pages: nextPages });
@@ -234,7 +242,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
 
   async importWorkspace(data: WorkspaceExport): Promise<Meta> {
     return this.runLocked(async () => {
-      const { meta, pages } = this.validateWorkspaceImport(data);
+      const validated = this.validateWorkspaceImport(data);
       const importBackupDir = path.join(this.dataDir, 'backups', '_workspace-imports');
       await fs.mkdir(importBackupDir, { recursive: true });
       const snapshot = await this.exportWorkspaceUnlocked().catch(() => null);
@@ -245,6 +253,10 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
           JSON.stringify(snapshot, null, 2),
         );
       }
+      const meta = { ...validated.meta, revision: Math.max(validated.meta.revision, snapshot?.meta.revision ?? 0) + 1 };
+      const pages = Object.fromEntries(Object.entries(validated.pages).map(([pageId, page]) =>
+        [pageId, { ...page, version: Math.max(page.version ?? 0,
+          snapshot?.pages[pageId]?.version ?? 0) + 1 }]));
 
       const stagingDirName = `.workspace-import-staging-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const stagingDir = path.join(this.dataDir, stagingDirName);
@@ -397,10 +409,11 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
 
   private async restoreBackupUnlocked(pageId: string, backupName: string): Promise<PageData> {
     const src = path.join(this.dataDir, 'backups', pageId, backupName);
-    const raw = await fs.readFile(src, 'utf-8');
-    const restored = PageDataSchema.parse(JSON.parse(raw));
-    await this.atomicWriteText(this.pageFilePath(pageId), raw);
-    return restored;
+    const restored = parseValidPageData(JSON.parse(await fs.readFile(src, 'utf-8')), pageId, undefined, false);
+    const current = await this.loadPageUnlocked(pageId);
+    const next = { ...restored, version: Math.max(restored.version ?? 0, current.version ?? 0) + 1 };
+    await this.atomicWriteJson(this.pageFilePath(pageId), next);
+    return next;
   }
 
   private assertSafeBackupName(backupName: string): void {
@@ -482,10 +495,12 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
 
     // 读当前版本
     let currentVersion = 0;
+    let legacyLongTitles = new Map<string, string>();
     try {
       const raw = await fs.readFile(filePath, 'utf-8');
       const parsed = JSON.parse(raw);
       currentVersion = typeof parsed.version === 'number' ? parsed.version : 0;
+      legacyLongTitles = collectLegacyLongTaskTitles(parsed);
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== 'ENOENT') throw err;
@@ -498,7 +513,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     }
 
     const newVersion = currentVersion + 1;
-    const valid = PageDataSchema.parse(data);
+    const valid = parseValidPageData(data, pageId, legacyLongTitles);
     await this.atomicWriteJson(filePath, { ...valid, version: newVersion });
     return newVersion;
   }
@@ -511,11 +526,13 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         const filePath = this.pageFilePath(entry.pageId);
         let currentVersion = 0;
         let previousRaw: string | null = null;
+        let legacyLongTitles = new Map<string, string>();
         try {
           const raw = await fs.readFile(filePath, 'utf-8');
           previousRaw = raw;
           const parsed = JSON.parse(raw);
           currentVersion = typeof parsed.version === 'number' ? parsed.version : 0;
+          legacyLongTitles = collectLegacyLongTaskTitles(parsed);
         } catch (err: unknown) {
           const e = err as NodeJS.ErrnoException;
           if (e.code !== 'ENOENT') throw err;
@@ -528,7 +545,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
           filePath,
           currentVersion,
           previousRaw,
-          valid: PageDataSchema.parse(entry.data),
+          valid: parseValidPageData(entry.data, entry.pageId, legacyLongTitles),
         };
       }),
     );
@@ -768,7 +785,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     const p = this.pageFilePath(pageId);
     const raw = await fs.readFile(p, 'utf-8');
     const parsed = JSON.parse(raw);
-    return PageDataSchema.parse(parsed);
+    return parseValidPageData(parsed, pageId, undefined, false);
   }
 
   private validateWorkspaceImport(
@@ -806,10 +823,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       if (!Object.prototype.hasOwnProperty.call(data.pages, pageId)) {
         throw new Error(`missing page data: ${pageId}`);
       }
-      const pageData = PageDataSchema.parse(data.pages[pageId]);
-      if (!isDAG(pageData)) {
-        throw new Error(`page contains cycle: ${pageId}`);
-      }
+      const pageData = parseValidPageData(data.pages[pageId], pageId, undefined, false);
       pages[pageId] = pageData;
     }
 
@@ -930,6 +944,67 @@ function makePageId(_hint: string): string {
   return (
     'p' + Date.now().toString(36) + Math.floor(Math.random() * 1e8).toString(36).padStart(5, '0')
   );
+}
+
+function parseValidPageData(
+  data: unknown,
+  pageId: string,
+  allowedLegacyTitles?: ReadonlyMap<string, string>,
+  enforceTitleLimit = true,
+): PageData {
+  let page = PageDataSchema.parse(data);
+  if (enforceTitleLimit) {
+    const oversized = page.nodes.find(
+      (node) =>
+        node.title.length > MAX_TASK_TITLE_LENGTH &&
+        allowedLegacyTitles?.get(node.id) !== node.title,
+    );
+    if (oversized) {
+      throw new TaskTitleTooLongError(oversized.id, MAX_TASK_TITLE_LENGTH);
+    }
+  }
+  if (enforceTitleLimit) {
+    const dependencies = validateDependencyEdges(page.nodes, page.edges);
+    if (!dependencies.valid) {
+      throw new Error(`page contains invalid dependency (${dependencies.reason}, edge ${dependencies.edgeIndex}): ${pageId}`);
+    }
+  } else {
+    const ids = new Set(page.nodes.map((node) => node.id));
+    const seen = new Set<string>();
+    page = {
+      ...page,
+      edges: page.edges.filter((edge) => {
+        const key = `${edge.from}\0${edge.to}`;
+        if (edge.from === edge.to || !ids.has(edge.from) || !ids.has(edge.to) || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }),
+    };
+  }
+  if (!isDAG(page)) throw new Error(`page contains dependency cycle: ${pageId}`);
+  const hierarchy = validateTaskHierarchy(page.nodes);
+  if (!hierarchy.valid) {
+    throw new Error(
+      `page contains invalid hierarchy (${hierarchy.reason}, task ${hierarchy.taskId}): ${pageId}`,
+    );
+  }
+  return page;
+}
+
+function collectLegacyLongTaskTitles(data: unknown): Map<string, string> {
+  const page = PageDataSchema.safeParse(data);
+  if (!page.success) return new Map();
+  return new Map(
+    page.data.nodes
+      .filter((node) => node.title.length > MAX_TASK_TITLE_LENGTH)
+      .map((node) => [node.id, node.title]),
+  );
+}
+
+function assertPageTitleLength(title: string): void {
+  if (title.length > MAX_PAGE_TITLE_LENGTH) {
+    throw new Error(`page title exceeds ${MAX_PAGE_TITLE_LENGTH} characters`);
+  }
 }
 
 /** 防止 pageId 逃逸目录：只允许字母、数字、下划线、短横线。 */

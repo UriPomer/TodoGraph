@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fastifyCookie from '@fastify/cookie';
+import fastifyCors from '@fastify/cors';
 import fastifySecureSession from '@fastify/secure-session';
 import fastifyHelmet from '@fastify/helmet';
 import fastifyRateLimit from '@fastify/rate-limit';
@@ -14,11 +15,14 @@ import { FileUserRepository } from './repositories/FileUserRepository.js';
 import type { WorkspaceRepository } from './repositories/Repository.js';
 
 export interface AppOptions {
+  /** File repositories require one server process per dataDir. */
   dataDir: string;
   staticDir?: string;
   registrationKey: string;
   sessionSecret: string;
   cookieSecure?: boolean;
+  /** Exact renderer origin allowed to call the API in Electron development. */
+  corsOrigin?: string;
   logger?: boolean;
 }
 
@@ -26,6 +30,14 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: opts.logger ?? true });
 
   // Security plugins
+  if (opts.corsOrigin) {
+    await app.register(fastifyCors, {
+      origin: (origin, callback) => {
+        callback(null, origin === opts.corsOrigin);
+      },
+      credentials: true,
+    });
+  }
   await app.register(fastifyHelmet, {
     contentSecurityPolicy: {
       directives: {

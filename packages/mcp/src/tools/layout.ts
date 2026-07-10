@@ -26,7 +26,7 @@ export async function handleAutoLayout(
   g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80, marginx: 20, marginy: 20 });
 
   const DEFAULT_W = 180;
-  const DEFAULT_H = 48;
+  const DEFAULT_H = 56;
 
   for (const n of page.nodes) {
     g.setNode(n.id, { width: n.width ?? DEFAULT_W, height: DEFAULT_H });

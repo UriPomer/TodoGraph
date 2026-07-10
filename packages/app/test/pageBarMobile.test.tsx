@@ -22,6 +22,9 @@ describe('MobilePageSelectorView', () => {
 
     expect(html).toContain('aria-label="选择页面"');
     expect(html).toContain('data-mobile-page-trigger="true"');
+    expect(html).toContain('bg-card');
+    expect(html).toContain('border-border');
+    expect(html).not.toContain('bg-[#17151a]');
     expect(html).toContain('Today');
     expect(html).not.toContain('<select');
     expect(html).not.toContain('draggable="true"');

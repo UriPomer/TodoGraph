@@ -27,6 +27,16 @@ export class MetaVersionConflictError extends Error {
   }
 }
 
+export class TaskTitleTooLongError extends Error {
+  constructor(
+    public taskId: string,
+    public maxLength: number,
+  ) {
+    super(`task title exceeds ${maxLength} characters: ${taskId}`);
+    this.name = 'TaskTitleTooLongError';
+  }
+}
+
 export interface BackupInfo {
   name: string;
   createdAt: string;

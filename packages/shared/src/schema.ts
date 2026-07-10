@@ -1,9 +1,12 @@
 import { z } from 'zod';
 
 export const TaskStatusSchema = z.enum(['todo', 'doing', 'done']);
+export const MAX_TASK_TITLE_LENGTH = 200;
+export const MAX_PAGE_TITLE_LENGTH = 100;
 
 export const TaskSchema = z.object({
   id: z.string().min(1),
+  // Persisted data remains readable across upgrades; write boundaries enforce the current limit.
   title: z.string(),
   status: TaskStatusSchema,
   x: z.number().optional(),
@@ -14,7 +17,7 @@ export const TaskSchema = z.object({
    * - 当一个任务有 parentId 时，它在图中被渲染到父节点的容器内，
    *   坐标 (x, y) 视为相对父节点左上角的偏移。
    * - 父节点本身仍是一个正常的 Task，可以参与依赖边连线。
-   * - 为防止自引用或循环层级，store 层会校验。
+   * - 自引用、循环、悬空父节点和最大深度由共享层级校验在客户端与服务端共同保证。
    */
   parentId: z.string().optional(),
   /**
@@ -55,6 +58,7 @@ export const PageDataSchema = z.object({
 /** 页面元信息，存在 meta.json 的 `pages` 数组中。 */
 export const PageInfoSchema = z.object({
   id: z.string().min(1),
+  // Persisted data remains readable across upgrades; write boundaries enforce the current limit.
   title: z.string(),
   order: z.number().int(),
   /** ISO-8601 创建时间，仅展示用。 */

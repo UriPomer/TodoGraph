@@ -52,6 +52,18 @@ describe('McpKeyStore', () => {
     await expect(store.findUserId('tdg-invalid')).resolves.toBeNull();
   });
 
+  it('throttles last-used persistence for repeated requests', async () => {
+    const renameSpy = vi.spyOn(fs, 'rename');
+    try {
+      const result = await store.generate('u1', 'codex');
+      await store.findUserId(result.key);
+      await store.findUserId(result.key);
+      expect(renameSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      renameSpy.mockRestore();
+    }
+  });
+
   it('migrates legacy raw-key records so existing keys still authenticate', async () => {
     const legacyKey = 'tdg-legacy-key-material-123456';
     await fs.mkdir(dataDir, { recursive: true });

@@ -1,7 +1,10 @@
 import {
   MetaSchema,
+  MAX_PAGE_TITLE_LENGTH,
   PageDataSchema,
   placeMovedNodesOnTarget,
+  validateDependencyEdges,
+  validateTaskHierarchy,
   type AllTasksItem,
   type AllTasksResponse,
   type Meta,
@@ -14,6 +17,7 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import {
   MetaVersionConflictError,
+  TaskTitleTooLongError,
   type WorkspaceRepository,
   VersionConflictError,
 } from '../repositories/Repository.js';
@@ -32,12 +36,12 @@ const MoveNodesBodySchema = z.object({
 });
 
 const CreatePageBodySchema = z.object({
-  title: z.string(),
+  title: z.string().max(MAX_PAGE_TITLE_LENGTH),
   expectedRevision: z.number().int().min(0).optional(),
 });
 
 const PatchPageBodySchema = z.object({
-  title: z.string().optional(),
+  title: z.string().max(MAX_PAGE_TITLE_LENGTH).optional(),
   activate: z.boolean().optional(),
   expectedRevision: z.number().int().min(0).optional(),
 });
@@ -151,9 +155,24 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       reply.status(400);
       return { ok: false, error: 'invalid payload', issues: parsed.error.issues };
     }
+    const dependencies = validateDependencyEdges(parsed.data.nodes, parsed.data.edges);
+    if (!dependencies.valid) {
+      reply.status(400);
+      return { ok: false, error: 'invalid dependency', ...dependencies };
+    }
     if (!isDAG(parsed.data)) {
       reply.status(400);
       return { ok: false, error: 'graph contains a cycle' };
+    }
+    const hierarchy = validateTaskHierarchy(parsed.data.nodes);
+    if (!hierarchy.valid) {
+      reply.status(400);
+      return {
+        ok: false,
+        error: 'invalid task hierarchy',
+        reason: hierarchy.reason,
+        taskId: hierarchy.taskId,
+      };
     }
     try {
       const newVersion = await repo.savePage(req.params.id, parsed.data, expectedVersion);
@@ -163,6 +182,15 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       if (err instanceof VersionConflictError) {
         reply.status(409);
         return { ok: false, error: err.message, serverVersion: err.serverVersion };
+      }
+      if (err instanceof TaskTitleTooLongError) {
+        reply.status(400);
+        return {
+          ok: false,
+          error: 'task title too long',
+          taskId: err.taskId,
+          maxLength: err.maxLength,
+        };
       }
       throw err;
     }
@@ -402,7 +430,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     return data;
   });
 
-  app.post('/api/workspace/import', async (req, reply) => {
+  app.post('/api/workspace/import', { bodyLimit: 20 * 1024 * 1024 }, async (req, reply) => {
     const repo = getRepo(getAuthenticatedUserId(req));
     const parsed = WorkspaceImportSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -549,6 +577,3 @@ function collectSubtree(rootId: string, childrenOf: Map<string, string[]>, out: 
     collectSubtree(child, childrenOf, out);
   }
 }
-
-// 静默未使用的 MetaSchema 以便未来需要（当前仓库返回的就是 Meta 类型，不需要再 parse）
-void MetaSchema;
