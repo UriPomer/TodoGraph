@@ -1,9 +1,18 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { MobileBottomNav, MobileMorePanel } from '../src/App';
+import {
+  DESKTOP_HEADER_CLASS_NAME,
+  MobileBottomNav,
+  MobileMorePanel,
+} from '../src/App';
 import { ThemeProvider } from '../src/features/theme/ThemeProvider';
 
 describe('mobile shell', () => {
+  it('hides the TodoGraph header below the desktop breakpoint', () => {
+    expect(DESKTOP_HEADER_CLASS_NAME.split(' ')).toContain('hidden');
+    expect(DESKTOP_HEADER_CLASS_NAME.split(' ')).toContain('lg:flex');
+  });
+
   it('renders the three bottom tabs from the mobile mockup', () => {
     const html = renderToStaticMarkup(
       <MobileBottomNav tab="more" onTab={vi.fn()} />,

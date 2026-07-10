@@ -39,6 +39,9 @@ import { LoginPage } from '@/features/auth/LoginPage';
  * - 宽屏（>=1024px，Tailwind lg 断点）：左 List / 右 Graph 双栏并列，无需切换
  * - 窄屏：Header 上显示 Tabs，点击切换 List / Graph
  */
+export const DESKTOP_HEADER_CLASS_NAME =
+  'hidden h-12 shrink-0 items-center gap-4 border-b border-border bg-card px-4 text-foreground lg:flex';
+
 function Header({
   onTab,
   user,
@@ -51,7 +54,10 @@ function Header({
 }) {
   const { recommended } = useDerived();
   return (
-    <header className="flex h-12 shrink-0 items-center gap-4 border-b border-[#312d35] bg-[#17151a] px-4 text-[#f3f4f6] lg:border-border lg:bg-card lg:text-foreground">
+    <header
+      data-desktop-header="true"
+      className={DESKTOP_HEADER_CLASS_NAME}
+    >
       <div className="flex items-center gap-2 font-semibold">
         <span className="text-[#8b5cf6] text-lg">◈</span>
         <span>TodoGraph</span>
