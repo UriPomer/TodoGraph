@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
-  Bot, ChevronRight, Download, FileDown, FileUp, Key, ListChecks, Lock,
-  MoreHorizontal, Network, Shield, Sparkles, type LucideIcon,
+  Download, ListChecks, LogOut, MoreHorizontal, Network, Sparkles,
 } from 'lucide-react';
 import { api } from '@/api/client';
 import { DialogContainer } from '@/components/ui/dialog-container';
@@ -65,35 +64,28 @@ function Header({ onTab, user, onLogout, onOpenSecurity, onOpenMcp }: HeaderProp
   );
 }
 
-interface MoreRowProps { icon: LucideIcon; label: string; value?: string; onClick: () => void }
-function MoreRow({ icon: Icon, label, value, onClick }: MoreRowProps) {
+export function MobileMoreHeader({ username }: { username: string }) {
   return (
-    <button type="button" onClick={onClick} className="flex h-14 w-full items-center gap-3 border-b border-[#312d35] px-4 text-left last:border-b-0 active:bg-[#25212b]">
-      <Icon className="h-5 w-5 shrink-0 text-[#9ca3af]" /><span className="min-w-0 flex-1 truncate text-sm font-medium text-[#e5e7eb]">{label}</span>
-      {value && <span className="shrink-0 text-xs text-[#9ca3af]">{value}</span>}
-      <ChevronRight className="h-4 w-4 shrink-0 text-[#77717d]" />
-    </button>
+    <header data-mobile-more-header="true" className="flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-2 lg:hidden">
+      <div className="flex h-9 min-w-0 flex-1 items-center px-2.5">
+        <span className="text-sm font-medium text-foreground">更多</span>
+        <span className="ml-2 truncate text-xs text-muted-foreground">{username}</span>
+      </div>
+      <ThemeSwitcher />
+    </header>
   );
 }
 
-export function MobileMorePanel({ username, onOpenSecurity, onOpenMcp, onLogout }: { username: string; onOpenSecurity: () => void; onOpenMcp: () => void; onLogout: () => void }) {
-  const sections = [
-    ['安全', [[Shield, '账号安全', '', onOpenSecurity], [Lock, '修改密码', '', onOpenSecurity], [Key, '会话管理', '当前会话', onOpenSecurity]]],
-    ['数据', [[Download, '数据备份', '', onOpenSecurity], [FileDown, '导出 JSON', '', onOpenSecurity], [FileUp, '导入 JSON', '', onOpenSecurity]]],
-    ['集成与 AI', [[Bot, 'AI 接入', '', onOpenMcp], [Key, 'MCP Key', '', onOpenMcp]]],
-    ['账号', [[Shield, '退出登录', '', onLogout]]],
-  ] as const;
+export function MobileMorePanel({ onLogout }: { onLogout: () => void }) {
   return (
-    <div data-mobile-surface="dark" className="h-full overflow-auto bg-[#151317] px-4 py-4">
-      <header className="mb-5 flex items-center justify-between"><div><h1 className="text-xl font-semibold text-[#f3f4f6]">更多</h1><p className="mt-1 text-xs text-[#8b8491]">{username}</p></div><ThemeSwitcher /></header>
-      <div className="space-y-5">{sections.map(([title, rows]) => (
-        <section key={title}>
-          <h2 className="mb-2 px-1 text-xs font-medium text-[#8b8491]">{title}</h2>
-          <div className="overflow-hidden rounded-lg border border-[#312d35] bg-[#1b181f] shadow-[0_10px_30px_rgba(0,0,0,0.22)]">{rows.map(([icon, label, value, onClick]) =>
-            <MoreRow key={label} icon={icon} label={label} value={value || undefined} onClick={onClick} />
-          )}</div>
-        </section>
-      ))}</div>
+    <div data-mobile-surface="dark" className="h-full overflow-auto bg-[#151317]/60 px-5 text-[#e5e7eb] backdrop-blur-sm">
+      <div className="mx-auto max-w-lg divide-y divide-white/10">
+        <SecurityDialog open embedded />
+        <McpSetupDialog open embedded />
+        <button type="button" onClick={onLogout} className="flex w-full items-center gap-2 py-6 text-sm text-red-300 transition-colors active:text-red-200">
+          <LogOut className="h-4 w-4" />退出登录
+        </button>
+      </div>
     </div>
   );
 }
@@ -201,12 +193,13 @@ export default function App() {
       <div className="flex h-full flex-col">
         <Header onTab={setTab} user={user} onLogout={() => void logoutSafely()} onOpenSecurity={() => setSecurityOpen(true)} onOpenMcp={() => setMcpOpen(true)} />
         <div className={tab === 'more' ? 'hidden lg:block' : undefined}><PageBar /></div>
+        {tab === 'more' && <MobileMoreHeader username={user.username} />}
         {!ready ? <LoadingState /> : <>
           <div className="hidden min-h-0 flex-1 lg:block"><SplitPane storageKey="todograph.splitLeftWidth" defaultLeftWidth={360} minLeft={260} maxLeft={720} left={<ListView />} right={<GraphView />} /></div>
-          <main className="mobile-frosted-bg min-h-0 flex-1 lg:hidden" style={{ paddingBottom: 'calc(3rem + env(safe-area-inset-bottom))' }}>
+          <main data-mobile-tab={tab} className="mobile-frosted-bg min-h-0 flex-1 lg:hidden" style={{ paddingBottom: 'calc(3rem + env(safe-area-inset-bottom))' }}>
             {tab === 'list' && <div className="h-full overflow-auto"><ListView /></div>}
             {tab === 'graph' && <div className="h-full"><GraphView /></div>}
-            {tab === 'more' && <MobileMorePanel username={user.username} onOpenSecurity={() => setSecurityOpen(true)} onOpenMcp={() => setMcpOpen(true)} onLogout={() => void logoutSafely()} />}
+            {tab === 'more' && <MobileMorePanel onLogout={() => void logoutSafely()} />}
           </main>
         </>}
         <Toaster /><DialogContainer />

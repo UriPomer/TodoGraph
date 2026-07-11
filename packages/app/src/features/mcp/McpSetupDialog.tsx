@@ -14,7 +14,7 @@ interface McpKeyInfo {
 }
 
 interface GeneratedKey extends McpKeyInfo { key: string }
-interface Props { open: boolean; onClose: () => void }
+interface Props { open: boolean; onClose?: () => void; embedded?: boolean }
 
 export function mcpConfig(apiKey: string): string {
   const origin = window.location.origin;
@@ -30,7 +30,7 @@ export function mcpConfig(apiKey: string): string {
   }, null, 2);
 }
 
-export function McpSetupDialog({ open, onClose }: Props) {
+export function McpSetupDialog({ open, onClose, embedded = false }: Props) {
   const [keys, setKeys] = useState<McpKeyInfo[]>([]);
   const [label, setLabel] = useState('');
   const [generated, setGenerated] = useState<GeneratedKey | null>(null);
@@ -75,20 +75,18 @@ export function McpSetupDialog({ open, onClose }: Props) {
 
   if (!open) return null;
   const config = generated ? mcpConfig(generated.key) : '';
-  return createPortal(
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="relative max-h-full w-full max-w-lg overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-2xl">
-        <header className="mb-4 flex items-center justify-between">
+  const panel = (
+      <div className={embedded ? 'py-6' : 'relative max-h-full w-full max-w-lg overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-2xl'}>
+        <header className="mb-5 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-sm font-semibold"><Bot className="h-5 w-5 text-[hsl(var(--primary))]" />AI Agent 接入</h2>
-          <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-accent"><X className="h-4 w-4" /></button>
+          {!embedded && <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-accent"><X className="h-4 w-4" /></button>}
         </header>
-        <p className="mb-4 text-xs text-muted-foreground">生成 API Key，并将配置粘贴到 Claude Desktop、VS Code 或 Cursor。</p>
-        <section className="mb-4 rounded-lg border border-border p-3">
-          <h3 className="mb-2 flex items-center gap-1 text-xs font-semibold"><Plus className="h-3.5 w-3.5" />生成新 Key</h3>
-          <div className="flex gap-2">
-            <input value={label} onChange={(event) => setLabel(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void generate(); }} placeholder="设备名称" className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-xs" />
-            <Button size="sm" onClick={() => void generate()} disabled={busy === 'generate'}>{busy === 'generate' ? '生成中...' : '生成'}</Button>
+        <p className="mb-5 text-xs leading-5 text-muted-foreground">生成 API Key，并将配置粘贴到 Claude Desktop、VS Code 或 Cursor。</p>
+        <section className="mb-5 border-b border-border/60 pb-5">
+          <h3 className="mb-3 flex items-center gap-1 text-xs font-semibold"><Plus className="h-3.5 w-3.5" />生成新 Key</h3>
+          <div className="flex gap-3">
+            <input value={label} onChange={(event) => setLabel(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void generate(); }} placeholder="设备名称" className={`min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-xs ${embedded ? 'h-10' : 'h-8'}`} />
+            <Button size="sm" className={embedded ? 'h-10 px-4' : undefined} onClick={() => void generate()} disabled={busy === 'generate'}>{busy === 'generate' ? '生成中...' : '生成'}</Button>
           </div>
           {generated && (
             <div className="mt-3 space-y-3">
@@ -109,9 +107,9 @@ export function McpSetupDialog({ open, onClose }: Props) {
           )}
         </section>
         <section>
-          <h3 className="mb-2 flex items-center gap-1 text-xs font-semibold"><Key className="h-3.5 w-3.5" />已有 Key ({keys.length})</h3>
+          <h3 className="mb-3 flex items-center gap-1 text-xs font-semibold"><Key className="h-3.5 w-3.5" />已有 Key ({keys.length})</h3>
           {busy === 'load' ? <p className="text-xs text-muted-foreground">加载中...</p> : keys.length === 0 ? <p className="text-xs text-muted-foreground">暂无 Key</p> : (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {keys.map((key) => (
                 <div key={key.id} className="flex items-center rounded-md border border-border px-3 py-2">
                   <div className="min-w-0 flex-1">
@@ -125,6 +123,12 @@ export function McpSetupDialog({ open, onClose }: Props) {
           )}
         </section>
       </div>
+  );
+  if (embedded) return panel;
+  return createPortal(
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={onClose} />
+      {panel}
     </div>,
     document.body,
   );
