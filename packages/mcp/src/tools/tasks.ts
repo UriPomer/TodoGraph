@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import dagre from 'dagre';
+import {
+  resolveClusterTranslationAvoidingOccupied,
+  type CollisionRect,
+} from '@todograph/shared';
 import type { client as ClientType } from '../client.js';
 
 // ── Helpers ──
@@ -19,6 +23,7 @@ interface Layoutable {
   title?: string;
   status?: string;
   description?: string;
+  parentId?: string;
 }
 
 /** 对已有节点+新节点跑 dagre LR 布局，把坐标写入新节点 */
@@ -61,69 +66,6 @@ function layoutNodes(
 }
 
 // ── Collision avoidance ──
-
-interface CollisionRect {
-  id: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-function rectsOverlap(a: CollisionRect, b: CollisionRect, gap: number): boolean {
-  return (
-    a.x < b.x + b.w + gap &&
-    a.x + a.w + gap > b.x &&
-    a.y < b.y + b.h + gap &&
-    a.y + a.h + gap > b.y
-  );
-}
-
-/** 把新节点作为一个整体，从 (0,0) 开始螺旋搜索不跟已有节点碰撞的位置 */
-function avoidCollision(
-  newRects: CollisionRect[],
-  existingRects: CollisionRect[],
-  step = 24,
-  gap = 48,
-  maxRing = 60,
-): { dx: number; dy: number } {
-  if (clusterFits(newRects, existingRects, 0, 0, gap)) return { dx: 0, dy: 0 };
-
-  for (let ring = 1; ring <= maxRing; ring++) {
-    const candidates: Array<{ dx: number; dy: number; d2: number }> = [];
-    for (let x = -ring; x <= ring; x++) {
-      for (let y = -ring; y <= ring; y++) {
-        if (Math.max(Math.abs(x), Math.abs(y)) !== ring) continue;
-        candidates.push({ dx: x * step, dy: y * step, d2: x * x + y * y });
-      }
-    }
-    candidates.sort((a, b) => a.d2 - b.d2 || a.dy - b.dy || a.dx - b.dx);
-    for (const c of candidates) {
-      if (clusterFits(newRects, existingRects, c.dx, c.dy, gap)) {
-        return { dx: c.dx, dy: c.dy };
-      }
-    }
-  }
-
-  return { dx: 0, dy: 0 };
-}
-
-function clusterFits(
-  newRects: CollisionRect[],
-  existingRects: CollisionRect[],
-  dx: number,
-  dy: number,
-  gap: number,
-): boolean {
-  const shifted = newRects.map((r) => ({ ...r, x: r.x + dx, y: r.y + dy }));
-  for (const s of shifted) {
-    for (const e of existingRects) {
-      if (rectsOverlap(s, e, gap)) return false;
-    }
-  }
-  // 不检查新节点之间的重叠 —— dagre 布局已保证它们不重叠
-  return true;
-}
 
 const DEFAULT_W = 180, DEFAULT_H = 56;
 
@@ -219,7 +161,11 @@ export async function handleCreateTask(
   const all: Layoutable[] = [...existing, newNode];
   layoutNodes(all, newIdSet, newEdges);
 
-  const { dx, dy } = avoidCollision(buildRects([newNode]), buildRects(existing));
+  const { dx, dy } = resolveClusterTranslationAvoidingOccupied(
+    buildRects([newNode]),
+    buildRects(existing),
+    { gap: 48 },
+  );
   if (dx !== 0 || dy !== 0) {
     newNode.x = (newNode.x ?? 0) + dx;
     newNode.y = (newNode.y ?? 0) + dy;
@@ -283,7 +229,7 @@ export async function handleCreateTasks(
   // 新节点作为一个集群，避免与已有节点重叠
   const existingRects = buildRects(existingNodes);
   const newRects = buildRects(newNodes);
-  const { dx, dy } = avoidCollision(newRects, existingRects);
+  const { dx, dy } = resolveClusterTranslationAvoidingOccupied(newRects, existingRects, { gap: 48 });
   if (dx !== 0 || dy !== 0) {
     for (const n of newNodes) {
       n.x = (n.x ?? 0) + dx;
@@ -355,6 +301,18 @@ export async function handleUpdateTask(
 
   const newNodes = [...page.nodes];
   newNodes[idx] = updated;
+  if (params.x !== undefined || params.y !== undefined) {
+    const moving = buildRects([updated]);
+    const occupied = buildRects(
+      newNodes.filter(
+        (candidate) =>
+          candidate.id !== updated.id && candidate.parentId === updated.parentId,
+      ),
+    );
+    const { dx, dy } = resolveClusterTranslationAvoidingOccupied(moving, occupied, { gap: 48 });
+    updated.x = (updated.x ?? 0) + dx;
+    updated.y = (updated.y ?? 0) + dy;
+  }
 
   await backupBeforeMutation(c, params.page_id);
   await c.put(`/api/pages/${encodeURIComponent(params.page_id)}`, {

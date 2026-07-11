@@ -13,6 +13,53 @@ export interface CollisionRect {
   h: number;
 }
 
+/** Uniform-grid broad phase. Query results are candidates only; callers must
+ * still use rectsOverlap for the exact check. */
+export class CollisionRectIndex {
+  private readonly cells = new Map<string, CollisionRect[]>();
+
+  constructor(
+    rects: readonly CollisionRect[] = [],
+    private readonly cellSize = 256,
+  ) {
+    for (const rect of rects) this.add(rect);
+  }
+
+  add(rect: CollisionRect): void {
+    for (const key of this.keysFor(rect)) {
+      const bucket = this.cells.get(key);
+      if (bucket) bucket.push(rect);
+      else this.cells.set(key, [rect]);
+    }
+  }
+
+  query(rect: Pick<CollisionRect, 'x' | 'y' | 'w' | 'h'>, gap = 0): CollisionRect[] {
+    const expanded = {
+      x: rect.x - gap,
+      y: rect.y - gap,
+      w: rect.w + gap * 2,
+      h: rect.h + gap * 2,
+    };
+    const found = new Map<string, CollisionRect>();
+    for (const key of this.keysFor(expanded)) {
+      for (const candidate of this.cells.get(key) ?? []) found.set(candidate.id, candidate);
+    }
+    return [...found.values()];
+  }
+
+  private keysFor(rect: Pick<CollisionRect, 'x' | 'y' | 'w' | 'h'>): string[] {
+    const minX = Math.floor(rect.x / this.cellSize);
+    const minY = Math.floor(rect.y / this.cellSize);
+    const maxX = Math.floor((rect.x + Math.max(0, rect.w)) / this.cellSize);
+    const maxY = Math.floor((rect.y + Math.max(0, rect.h)) / this.cellSize);
+    const keys: string[] = [];
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = minY; y <= maxY; y++) keys.push(`${x}:${y}`);
+    }
+    return keys;
+  }
+}
+
 export function rectsOverlap(
   a: { x: number; y: number; w: number; h: number },
   b: { x: number; y: number; w: number; h: number },

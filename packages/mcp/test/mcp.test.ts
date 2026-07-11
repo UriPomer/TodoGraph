@@ -184,6 +184,19 @@ describe('MCP tools integration', () => {
       expect(restored.tasks.find((task) => task.id === t.task.id)?.title).toBe('旧标题');
     });
 
+    it('update_task keeps moved tasks clear of siblings', async () => {
+      const a = await handleCreateTask(client, { page_id: pageId, title: 'A' });
+      const b = await handleCreateTask(client, { page_id: pageId, title: 'B' });
+      const updated = await handleUpdateTask(client, {
+        page_id: pageId,
+        task_id: b.task.id,
+        x: a.task.x,
+        y: a.task.y,
+      });
+
+      expect(updated.task.x === a.task.x && updated.task.y === a.task.y).toBe(false);
+    });
+
     it('update_task throws on nonexistent task', async () => {
       await expect(
         handleUpdateTask(client, { page_id: pageId, task_id: 'nope', title: 'x' }),

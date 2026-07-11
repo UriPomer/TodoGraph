@@ -28,11 +28,7 @@ describe('dropCollision', () => {
     });
     expect(next).not.toEqual({ x: 0, y: 0 });
     expect(
-      rectsOverlap(
-        { x: next.x, y: next.y, w: 180, h: 56 },
-        { x: 0, y: 0, w: 180, h: 56 },
-        12,
-      ),
+      rectsOverlap({ x: next.x, y: next.y, w: 180, h: 56 }, { x: 0, y: 0, w: 180, h: 56 }, 12),
     ).toBe(false);
   });
 
@@ -110,7 +106,7 @@ describe('dropCollision', () => {
     ).toEqual([]);
   });
 
-  it('returns original position when maxRing is exhausted', () => {
+  it('falls back to a guaranteed free position when maxRing is exhausted', () => {
     const occupied: Array<{ id: string; x: number; y: number; w: number; h: number }> = [];
     for (let row = -3; row <= 3; row++) {
       for (let col = -3; col <= 3; col++) {
@@ -125,7 +121,9 @@ describe('dropCollision', () => {
       occupied,
       maxRing: 2,
     });
-    expect(next).toEqual({ x: 0, y: 0 });
+    for (const rect of occupied) {
+      expect(rectsOverlap({ ...next, w: 180, h: 56 }, rect, 12)).toBe(false);
+    }
   });
 
   it('moves multiple collided siblings without overlapping each other', () => {
@@ -148,30 +146,42 @@ describe('dropCollision', () => {
       }
     }
   });
+
+  it('finds a non-overlapping slot in a large sparse graph', () => {
+    const occupied = Array.from({ length: 1000 }, (_, index) => ({
+      id: `n${index}`,
+      x: (index % 50) * 240,
+      y: Math.floor(index / 50) * 96,
+      w: 180,
+      h: 56,
+    }));
+    const next = resolveDropCollision({ x: 0, y: 0, w: 180, h: 56, occupied });
+    for (const rect of occupied) {
+      expect(rectsOverlap({ ...next, w: 180, h: 56 }, rect, 12)).toBe(false);
+    }
+  });
 });
 
 describe('rectsOverlap', () => {
   it('reports false for separated rects', () => {
-    expect(
-      rectsOverlap({ x: 0, y: 0, w: 100, h: 50 }, { x: 200, y: 0, w: 100, h: 50 }),
-    ).toBe(false);
+    expect(rectsOverlap({ x: 0, y: 0, w: 100, h: 50 }, { x: 200, y: 0, w: 100, h: 50 })).toBe(
+      false,
+    );
   });
 
   it('reports true for overlapping rects', () => {
-    expect(
-      rectsOverlap({ x: 0, y: 0, w: 100, h: 50 }, { x: 50, y: 25, w: 100, h: 50 }),
-    ).toBe(true);
+    expect(rectsOverlap({ x: 0, y: 0, w: 100, h: 50 }, { x: 50, y: 25, w: 100, h: 50 })).toBe(true);
   });
 
   it('reports false for edge-touching rects with gap=0', () => {
-    expect(
-      rectsOverlap({ x: 0, y: 0, w: 100, h: 50 }, { x: 100, y: 0, w: 100, h: 50 }),
-    ).toBe(false);
+    expect(rectsOverlap({ x: 0, y: 0, w: 100, h: 50 }, { x: 100, y: 0, w: 100, h: 50 })).toBe(
+      false,
+    );
   });
 
   it('reports true for rects separated by less than gap', () => {
-    expect(
-      rectsOverlap({ x: 0, y: 0, w: 100, h: 50 }, { x: 110, y: 0, w: 100, h: 50 }, 12),
-    ).toBe(true);
+    expect(rectsOverlap({ x: 0, y: 0, w: 100, h: 50 }, { x: 110, y: 0, w: 100, h: 50 }, 12)).toBe(
+      true,
+    );
   });
 });

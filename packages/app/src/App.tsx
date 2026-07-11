@@ -167,6 +167,48 @@ function useAppEffects(user: { id: string } | null) {
   }, [user]);
 }
 
+function useDesktopLayout() {
+  const [isDesktop, setIsDesktop] = useState(() =>
+    typeof window === 'undefined' || !window.matchMedia
+      ? true
+      : window.matchMedia('(min-width: 1024px)').matches,
+  );
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const query = window.matchMedia('(min-width: 1024px)');
+    const update = () => setIsDesktop(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  return isDesktop;
+}
+
+export function WorkspaceContent({
+  isDesktop,
+  tab,
+  onLogout,
+}: {
+  isDesktop: boolean;
+  tab: MobileTab;
+  onLogout: () => void;
+}) {
+  if (isDesktop) {
+    return (
+      <div className="min-h-0 flex-1">
+        <SplitPane storageKey="todograph.splitLeftWidth" defaultLeftWidth={360} minLeft={260} maxLeft={720} left={<ListView />} right={<GraphView />} />
+      </div>
+    );
+  }
+  return (
+    <main data-mobile-tab={tab} className="mobile-frosted-bg min-h-0 flex-1" style={{ paddingBottom: 'calc(3rem + env(safe-area-inset-bottom))' }}>
+      {tab === 'list' && <div className="h-full overflow-auto"><ListView /></div>}
+      {tab === 'graph' && <div className="h-full"><GraphView /></div>}
+      {tab === 'more' && <MobileMorePanel onLogout={onLogout} />}
+    </main>
+  );
+}
+
 export default function App() {
   const { user, loading, login, register, logout } = useAuth();
   const bootstrap = useWorkspaceStore((state) => state.bootstrap);
@@ -176,6 +218,7 @@ export default function App() {
   const [tab, setTab] = useState<MobileTab>('list');
   const [securityOpen, setSecurityOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const isDesktop = useDesktopLayout();
   const logoutSafely = async () => {
     try { await useTaskStore.getState().flush(); await logout(); } catch { /* save error is already shown */ }
   };
@@ -194,14 +237,9 @@ export default function App() {
         <Header onTab={setTab} user={user} onLogout={() => void logoutSafely()} onOpenSecurity={() => setSecurityOpen(true)} onOpenMcp={() => setMcpOpen(true)} />
         <div className={tab === 'more' ? 'hidden lg:block' : undefined}><PageBar /></div>
         {tab === 'more' && <MobileMoreHeader username={user.username} />}
-        {!ready ? <LoadingState /> : <>
-          <div className="hidden min-h-0 flex-1 lg:block"><SplitPane storageKey="todograph.splitLeftWidth" defaultLeftWidth={360} minLeft={260} maxLeft={720} left={<ListView />} right={<GraphView />} /></div>
-          <main data-mobile-tab={tab} className="mobile-frosted-bg min-h-0 flex-1 lg:hidden" style={{ paddingBottom: 'calc(3rem + env(safe-area-inset-bottom))' }}>
-            {tab === 'list' && <div className="h-full overflow-auto"><ListView /></div>}
-            {tab === 'graph' && <div className="h-full"><GraphView /></div>}
-            {tab === 'more' && <MobileMorePanel onLogout={() => void logoutSafely()} />}
-          </main>
-        </>}
+        {!ready
+          ? <LoadingState />
+          : <WorkspaceContent isDesktop={isDesktop} tab={tab} onLogout={() => void logoutSafely()} />}
         <Toaster /><DialogContainer />
         <SecurityDialog open={securityOpen} onClose={() => setSecurityOpen(false)} />
         <McpSetupDialog open={mcpOpen} onClose={() => setMcpOpen(false)} />

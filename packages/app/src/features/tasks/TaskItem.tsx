@@ -20,7 +20,7 @@ interface Props {
   /** 当前是否折叠 */
   isCollapsed?: boolean;
   /** 折叠/展开切换回调 */
-  onToggleCollapse?: () => void;
+  onToggleCollapse?: (taskId: string) => void;
   /** 当前是否正在被拖拽 */
   isDragging?: boolean;
   /** 当前是否是 hover 的 drop target */
@@ -190,7 +190,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       onTouchEnd={onSwipeEnd}
       data-lens
       className={cn(
-        'group relative flex flex-col select-none',
+        'group relative flex flex-col select-none [content-visibility:auto] [contain-intrinsic-size:auto_52px]',
         'transition-colors duration-200',
         'hover:bg-foreground/[0.035]',
         isDragging && 'opacity-30 scale-[0.98]',
@@ -217,7 +217,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         <button
           onClick={(e) => {
             e.stopPropagation();
-            onToggleCollapse?.();
+            onToggleCollapse?.(task.id);
           }}
           className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded hover:bg-foreground/5 transition-colors"
           title={isCollapsed ? '展开' : '折叠'}

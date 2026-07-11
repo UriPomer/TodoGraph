@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  deriveReadyAndRecommended,
-  rankRecommendations,
-  recommend,
-} from '../src/recommender.js';
+import { deriveReadyAndRecommended, rankRecommendations, recommend } from '../src/recommender.js';
 import type { Graph } from '../src/types.js';
 
 const g = (nodes: Graph['nodes'], edges: Graph['edges']): Graph => ({ nodes, edges });
@@ -50,6 +46,34 @@ describe('defaultStrategy / recommend', () => {
       ],
     );
     expect(recommend(graph)?.id).toBe('a');
+  });
+
+  it('counts a shared downstream task only once', () => {
+    const graph = g(
+      ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, title: id, status: 'todo' as const })),
+      [
+        { from: 'a', to: 'c' },
+        { from: 'a', to: 'd' },
+        { from: 'c', to: 'e' },
+        { from: 'd', to: 'e' },
+        { from: 'b', to: 'c' },
+      ],
+    );
+    expect(
+      rankRecommendations(graph)
+        .map((node) => node.id)
+        .slice(0, 2),
+    ).toEqual(['a', 'b']);
+  });
+
+  it('handles a large dependency chain', () => {
+    const nodes = Array.from({ length: 1000 }, (_, index) => ({
+      id: `n${index}`,
+      title: `n${index}`,
+      status: 'todo' as const,
+    }));
+    const edges = nodes.slice(1).map((node, index) => ({ from: nodes[index]!.id, to: node.id }));
+    expect(recommend(g(nodes, edges))?.id).toBe('n0');
   });
 
   it('derives ready list, ready set, and recommendation in one pass', () => {

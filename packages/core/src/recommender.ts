@@ -1,4 +1,4 @@
-import { buildAdj, topoSort } from './dag.js';
+import { buildAdj } from './dag.js';
 import type { Adjacency, Graph, Task } from './types.js';
 
 /**
@@ -25,25 +25,61 @@ function computeDownstreamCounts(
   graph: Graph,
   adj: Adjacency,
 ): Map<string, number> {
-  const order = topoSort(graph);
+  const order = topoOrderFromAdj(graph, adj);
   if (!order) return new Map(); // 有环
 
-  // 逆序处理：每个节点的下游集 = Σ children + children 的下游
-  const reachable = new Map<string, Set<string>>();
+  const indexById = new Map(order.map((id, index) => [id, index]));
+  const wordCount = Math.ceil(order.length / 32);
+  const reachable = new Map<string, Uint32Array>();
   for (let i = order.length - 1; i >= 0; i--) {
     const id = order[i]!;
-    const set = new Set<string>();
+    const bits = new Uint32Array(wordCount);
     for (const childId of adj.children.get(id)!) {
-      set.add(childId);
-      const childSet = reachable.get(childId);
-      if (childSet) for (const r of childSet) set.add(r);
+      const childIndex = indexById.get(childId);
+      if (childIndex === undefined) continue;
+      bits[childIndex >>> 5]! |= 1 << (childIndex & 31);
+      const childBits = reachable.get(childId);
+      if (childBits) {
+        for (let word = 0; word < wordCount; word++) bits[word]! |= childBits[word]!;
+      }
     }
-    reachable.set(id, set);
+    reachable.set(id, bits);
   }
 
   const result = new Map<string, number>();
-  for (const [id, set] of reachable) result.set(id, set.size);
+  for (const [id, bits] of reachable) {
+    let count = 0;
+    for (const word of bits) count += popCount32(word);
+    result.set(id, count);
+  }
   return result;
+}
+
+function topoOrderFromAdj(graph: Graph, adj: Adjacency): string[] | null {
+  const indegree = new Map<string, number>();
+  const queue: string[] = [];
+  for (const node of graph.nodes) {
+    const degree = adj.parents.get(node.id)?.size ?? 0;
+    indegree.set(node.id, degree);
+    if (degree === 0) queue.push(node.id);
+  }
+  const order: string[] = [];
+  for (let head = 0; head < queue.length; head++) {
+    const id = queue[head]!;
+    order.push(id);
+    for (const childId of adj.children.get(id) ?? []) {
+      const next = (indegree.get(childId) ?? 0) - 1;
+      indegree.set(childId, next);
+      if (next === 0) queue.push(childId);
+    }
+  }
+  return order.length === graph.nodes.length ? order : null;
+}
+
+function popCount32(value: number): number {
+  value -= (value >>> 1) & 0x55555555;
+  value = (value & 0x33333333) + ((value >>> 2) & 0x33333333);
+  return (((value + (value >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24;
 }
 
 function collectReadyTasks(
@@ -122,7 +158,10 @@ export function deriveReadyAndRecommended(graph: Graph): DerivedReadyState {
 }
 
 /** 便捷函数：用默认策略取头名推荐。 */
-export function recommend(graph: Graph, strategy: RecommendationStrategy = defaultStrategy): Task | null {
+export function recommend(
+  graph: Graph,
+  strategy: RecommendationStrategy = defaultStrategy,
+): Task | null {
   const list = strategy.rank(graph);
   return list[0] ?? null;
 }

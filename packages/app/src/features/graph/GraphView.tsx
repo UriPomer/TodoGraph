@@ -21,7 +21,6 @@ import {
   type NodeChange,
   type NodeTypes,
   type OnSelectionChangeParams,
-  type Viewport,
 } from '@xyflow/react';
 import { Layout, Maximize2 } from 'lucide-react';
 import { wouldCreateCycle } from '@todograph/core';
@@ -36,6 +35,7 @@ import {
   CHILD_DEFAULT_H,
   GROUP_MIN_W,
   GROUP_MIN_H,
+  resolveClusterTranslationAvoidingOccupied,
   type Task,
 } from '@todograph/shared';
 import { Button } from '@/components/ui/button';
@@ -52,6 +52,9 @@ import { InlineCreateInput } from './InlineCreateInput';
 import { dagreLayout } from './useAutoLayout';
 import { resolvePinnedDropPushAway } from './dropCollision';
 import { useTouchManager } from './useTouchManager';
+import { usePageViewportLifecycle } from './usePageViewportLifecycle';
+import { MultiDragSession } from './multiDragSession';
+import { claimPageForAutoLayout } from './pageAutoLayout';
 
 const nodeTypes: NodeTypes = {
   task: TaskNode,
@@ -74,6 +77,7 @@ function GraphViewInner() {
   // 拆分订阅：单个字段订阅 + 稳定的函数引用，避免不必要的重渲染
   const nodes = useTaskStore((s) => s.nodes);
   const edges = useTaskStore((s) => s.edges);
+  const activePageId = useTaskStore((s) => s.activePageId);
   const addTask = useTaskStore((s) => s.addTask);
   const addEdge = useTaskStore((s) => s.addEdge);
   const removeEdge = useTaskStore((s) => s.removeEdge);
@@ -86,6 +90,7 @@ function GraphViewInner() {
   const ascendOneLevel = useTaskStore((s) => s.ascendOneLevel);
   const setViewportCenter = useTaskStore((s) => s.setViewportCenter);
   const workspaceMeta = useWorkspaceStore((s) => s.meta);
+  const pageViewportCache = useWorkspaceStore((s) => s.pageViewportCache);
   const moveNodesToPage = useWorkspaceStore((s) => s.moveNodesToPage);
 
   const { graph, readySet, recommended } = useDerived();
@@ -205,6 +210,7 @@ function GraphViewInner() {
    * 所有被选节点的新位置。否则 bug1：多选拖动末态错乱 + 误形成父子。
    */
   const isMultiDragRef = useRef(false);
+  const multiDragSessionRef = useRef(new MultiDragSession());
   // 拖拽开始时预计算被拖节点的所有后代 ID，拖拽期间 O(1) 检测替代递归 isDescendantOf
   const dragDescendantIdsRef = useRef(new Set<string>());
 
@@ -612,10 +618,12 @@ function GraphViewInner() {
 
   const onNodeDragStart = useCallback(
     (_evt: React.MouseEvent, node: RFNode) => {
+      const startsNewGesture = !draggingRef.current;
       draggingRef.current = true;
-      // 统计当前被选节点数：>1 即为多选拖动（用 ref 避免 O(n) filter）
-      const selectedCount = selectedIdsRef.current.length;
-      isMultiDragRef.current = selectedCount > 1;
+      if (startsNewGesture) {
+        multiDragSessionRef.current.start(selectedIdsRef.current);
+      }
+      isMultiDragRef.current = multiDragSessionRef.current.active;
       // 预计算被拖节点的所有后代，拖拽期间 O(1) 查询
       const descSet = new Set<string>();
       descSet.add(node.id);
@@ -650,15 +658,67 @@ function GraphViewInner() {
       draggingRef.current = false;
 
       // ===== 多选拖动分支 =====
-      // 每个被选节点 onNodeDragStop 都会被调用，这里只在首次触发时批量 flush，
-      // 之后 reset isMultiDragRef 让后续 stop 回调走普通路径（其实已经 idempotent）。
-      if (isMultiDragRef.current) {
+      // 每个被选节点 onNodeDragStop 都会被调用：首次批量提交，后续回调仅消费 session。
+      const multiStopAction = multiDragSessionRef.current.stop(dragId);
+      if (multiStopAction === 'ignore') return;
+      if (multiStopAction === 'commit') {
         isMultiDragRef.current = false;
-        // 读 rfNodes local state 里每个 selected 节点的 position —— applyNodeChanges
-        // 已经写入实时拖动位置。一次性 bulk flush 到 store。
-        const patches = rfNodes
-          .filter((n) => n.selected)
-          .map((n) => ({ id: n.id, patch: { x: n.position.x, y: n.position.y } }));
+        const selected = rfNodes.filter((n) => n.selected && n.id !== GHOST_ID);
+        const selectedIds = new Set(selected.map((n) => n.id));
+        const translationById = new Map<string, { dx: number; dy: number }>();
+        const selectedByParent = new Map<string, RFTaskNode[]>();
+        for (const node of selected) {
+          const key = node.parentId ?? '';
+          const group = selectedByParent.get(key);
+          if (group) group.push(node);
+          else selectedByParent.set(key, [node]);
+        }
+        for (const group of selectedByParent.values()) {
+          const parentId = group[0]?.parentId;
+          const toRect = (node: RFTaskNode): CollisionRect => ({
+            id: node.id,
+            x: node.position.x,
+            y: node.position.y,
+            w: node.width ?? (node.type === 'group' ? GROUP_MIN_W : CHILD_DEFAULT_W),
+            h: node.height ?? (node.type === 'group' ? GROUP_MIN_H : CHILD_DEFAULT_H),
+          });
+          const occupied = rfNodes
+            .filter(
+              (node) =>
+                node.id !== GHOST_ID &&
+                !selectedIds.has(node.id) &&
+                (node.parentId ?? '') === (parentId ?? ''),
+            )
+            .map(toRect);
+          const translation = resolveClusterTranslationAvoidingOccupied(group.map(toRect), occupied);
+          for (const node of group) translationById.set(node.id, translation);
+        }
+        const patches = selected.map((node) => {
+          const translation = translationById.get(node.id) ?? { dx: 0, dy: 0 };
+          return {
+            id: node.id,
+            patch: {
+              x: node.position.x + translation.dx,
+              y: node.position.y + translation.dy,
+            },
+          };
+        });
+        if ([...translationById.values()].some(({ dx, dy }) => dx !== 0 || dy !== 0)) {
+          setRfNodes((prev) =>
+            prev.map((node) => {
+              const translation = translationById.get(node.id);
+              return translation
+                ? {
+                    ...node,
+                    position: {
+                      x: node.position.x + translation.dx,
+                      y: node.position.y + translation.dy,
+                    },
+                  }
+                : node;
+            }),
+          );
+        }
         if (patches.length > 0) updateTasksBulk(patches);
         // 对所有被选节点的祖先链路归一化（去重）
         const storeNodes = useTaskStore.getState().nodes;
@@ -894,15 +954,20 @@ function GraphViewInner() {
       patch: { x: n.position.x, y: n.position.y },
     }));
     updateTasksBulk(patches);
-    setTimeout(() => rf.fitView({ padding: 0.2 }), 50);
-  }, [rfNodes, rfEdges, updateTasksBulk, rf]);
+  }, [rfNodes, rfEdges, updateTasksBulk]);
 
-  // 初次进入图视图若所有节点都在 (0,0) 附近则自动布局一次
+  // 每页等 store 节点同步到 React Flow 后检查一次，避免 mount 时读到空 rfNodes。
+  const autoLayoutCheckedPagesRef = useRef(new Set<string>());
   useEffect(() => {
+    if (!activePageId || !claimPageForAutoLayout(
+      autoLayoutCheckedPagesRef.current,
+      activePageId,
+      nodes.map((node) => node.id),
+      rfNodes.map((node) => node.id),
+    )) return;
     const allAtOrigin = nodes.length > 0 && nodes.every((n) => !n.x && !n.y);
     if (allAtOrigin) applyAutoLayout();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activePageId, applyAutoLayout, nodes, rfNodes]);
 
   // ===== 视口中心：mount 时初始化；后续通过 onMove / onMoveEnd 更新（rAF 节流） =====
   const vpRafRef = useRef<number | null>(null);
@@ -936,10 +1001,19 @@ function GraphViewInner() {
     };
   }, [updateViewportCenter, setViewportCenter]);
 
-  const onMoveEnd = useCallback(
-    (_e: MouseEvent | TouchEvent | null, _v: Viewport) => updateViewportCenter(),
-    [updateViewportCenter],
+  const viewportNodeIds = useMemo(() => nodes.map((node) => node.id), [nodes]);
+  const viewportRenderedNodes = useMemo(
+    () => rfNodes.filter((node) => node.id !== GHOST_ID),
+    [rfNodes],
   );
+  const onMoveEnd = usePageViewportLifecycle({
+    activePageId,
+    nodeIds: viewportNodeIds,
+    renderedNodes: viewportRenderedNodes,
+    cache: pageViewportCache,
+    rf,
+    updateViewportCenter,
+  });
 
   // ===== Shift+左键框选 =====
   const selectedIdsRef = useRef<string[]>([]);
@@ -1168,8 +1242,6 @@ function GraphViewInner() {
         // 目前普通任务节点没有显式尺寸，保守起见不开启；改用 data 稳定化 + memo 缓解渲染开销。
         connectionRadius={48}
         defaultEdgeOptions={{ interactionWidth: 32 }}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={null}
       >

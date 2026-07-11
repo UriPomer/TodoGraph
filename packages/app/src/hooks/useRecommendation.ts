@@ -6,27 +6,16 @@ import { useTaskStore } from '@/stores/useTaskStore';
 /**
  * 订阅 nodes/edges 变化，实时计算 ready 与 recommended。
  *
- * 关键性能优化：readyTasks 与 recommend 只关心 id/status/edges——
- * 不关心 x/y。把它们从 nodes 中"投影"出来做一个稳定签名，避免拖动时
- * 每帧重新跑拓扑排序，这是大图下创建新节点卡死的根因之一。
+ * readyTasks 与 recommend 只关心 id/status/edges。store 用语义修订号标记
+ * 这些字段的变化，坐标拖动不会递增修订号，因此可以复用上次派生结果。
  */
 export function useDerived() {
   const nodes = useTaskStore((s) => s.nodes);
   const edges = useTaskStore((s) => s.edges);
-
-  // 把与派生计算相关的字段做一个浅签名（拖动 x/y 不会改变它）
-  const signature = useMemo(
-    () => nodes.map((n) => `${n.id}|${n.status}`).join(','),
-    [nodes],
-  );
-  const edgeSig = useMemo(
-    () => edges.map((e) => `${e.from}>${e.to}`).join(','),
-    [edges],
-  );
+  const recommendationRevision = useTaskStore((s) => s.recommendationRevision);
 
   const cacheRef = useRef<{
-    sig: string;
-    edgeSig: string;
+    revision: number;
     ready: Task[];
     readySet: Set<string>;
     recommended: Task | null;
@@ -34,7 +23,7 @@ export function useDerived() {
 
   return useMemo(() => {
     const cache = cacheRef.current;
-    if (cache && cache.sig === signature && cache.edgeSig === edgeSig) {
+    if (cache && cache.revision === recommendationRevision) {
       return {
         graph: { nodes, edges },
         ready: cache.ready,
@@ -44,7 +33,7 @@ export function useDerived() {
     }
     const graph = { nodes, edges };
     const { ready, readySet, recommended } = deriveReadyAndRecommended(graph);
-    cacheRef.current = { sig: signature, edgeSig, ready, readySet, recommended };
+    cacheRef.current = { revision: recommendationRevision, ready, readySet, recommended };
     return { graph, ready, readySet, recommended };
-  }, [nodes, edges, signature, edgeSig]);
+  }, [nodes, edges, recommendationRevision]);
 }

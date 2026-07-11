@@ -73,9 +73,9 @@ export function ListView() {
     return map;
   }, [nodes]);
 
-  const toggleCollapse = (parentId: string) => {
+  const toggleCollapse = useCallback((parentId: string) => {
     setCollapsed((prev) => ({ ...prev, [parentId]: !prev[parentId] }));
-  };
+  }, []);
 
   const handleAddChild = useCallback(
     (parentId: string) => {
@@ -719,7 +719,7 @@ function Section({ title, mobileKey, hint, items, recommendedId, depInfo, childM
                 depth={depth}
                 hasChildren={hasChildren}
                 isCollapsed={isCollapsed}
-                onToggleCollapse={() => onToggleCollapse(task.id)}
+                onToggleCollapse={onToggleCollapse}
                 isDragging={task.id === dragTaskId}
                 isDropTarget={task.id === dropTargetId}
                 onDragStart={onDragStart}

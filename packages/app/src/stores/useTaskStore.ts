@@ -9,6 +9,7 @@ import {
   GROUP_PADDING_X,
   GROUP_PADDING_Y,
   MAX_HIERARCHY_DEPTH,
+  separateSiblingNodeOverlaps,
 } from '@todograph/shared';
 import { useHistoryStore } from './useHistoryStore';
 import { emitAllTasksInvalidated } from './workspaceEvents';
@@ -20,6 +21,8 @@ interface TaskStore {
   pageVersion: number;
   nodes: Task[];
   edges: Edge[];
+  /** Only changes when ids, statuses, or dependency edges change. */
+  recommendationRevision: number;
   loaded: boolean;
 
   /**
@@ -280,7 +283,13 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         const { activePageId, pageVersion } = get();
         // 只在页面未切换且版本变更时刷新
         if (g.version !== pageVersion && activePageId === pageId) {
-          set({ nodes: g.nodes, edges: g.edges, pageVersion: g.version ?? 0, backupDirty: false });
+          set((state) => ({
+            nodes: g.nodes,
+            edges: g.edges,
+            pageVersion: g.version ?? 0,
+            backupDirty: false,
+            recommendationRevision: state.recommendationRevision + 1,
+          }));
           useHistoryStore.getState().clear();
         }
       } catch {
@@ -317,6 +326,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
             pageVersion: e.serverVersion ?? g.version ?? 0,
             loaded: true,
             backupDirty: false,
+            recommendationRevision: get().recommendationRevision + 1,
           });
           useHistoryStore.getState().clear();
         } catch (_reloadErr) {
@@ -382,6 +392,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       loaded: false,
       viewportCenter: null,
       backupDirty: false,
+      recommendationRevision: get().recommendationRevision + 1,
     });
   };
 
@@ -390,6 +401,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     pageVersion: 0,
     nodes: [],
     edges: [],
+    recommendationRevision: 0,
     loaded: false,
     viewportCenter: null,
     backupDirty: false,
@@ -411,7 +423,9 @@ export const useTaskStore = create<TaskStore>((set, get) => {
           nodes: g.nodes,
           edges: g.edges,
           loaded: true,
+          viewportCenter: null,
           backupDirty: false,
+          recommendationRevision: get().recommendationRevision + 1,
         });
         // 页面切换 —— 历史栈清空
         useHistoryStore.getState().clear();
@@ -432,7 +446,9 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         nodes: data.nodes,
         edges: data.edges,
         loaded: true,
+        viewportCenter: null,
         backupDirty: false,
+        recommendationRevision: get().recommendationRevision + 1,
       });
       useHistoryStore.getState().clear();
       startPolling(pageId);
@@ -456,9 +472,12 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         width: measureTextWidth(safeTitle),
         ...(parentId ? { parentId } : {}),
       };
-      set((s) => ({ nodes: [...s.nodes, t] }));
+      set((s) => ({
+        nodes: separateSiblingNodeOverlaps([...s.nodes, t]),
+        recommendationRevision: s.recommendationRevision + 1,
+      }));
       scheduleSave();
-      return t;
+      return get().nodes.find((node) => node.id === t.id) ?? t;
     },
 
     updateTask: (id, patch) => {
@@ -475,7 +494,15 @@ export const useTaskStore = create<TaskStore>((set, get) => {
           }
           return updated;
         });
-        return changed ? { nodes: next } : s;
+        return changed
+          ? {
+              nodes: patch.title === undefined ? next : separateSiblingNodeOverlaps(next),
+              recommendationRevision:
+                patch.status === undefined
+                  ? s.recommendationRevision
+                  : s.recommendationRevision + 1,
+            }
+          : s;
       });
       scheduleSave();
     },
@@ -484,11 +511,15 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       if (patches.length === 0) return;
       pushPre();
       const byId = new Map(patches.map((p) => [p.id, p.patch]));
+      const affectsRecommendation = patches.some(({ patch }) => patch.status !== undefined);
       set((s) => ({
         nodes: s.nodes.map((n) => {
           const p = byId.get(n.id);
           return p ? { ...n, ...p } : n;
         }),
+        recommendationRevision: affectsRecommendation
+          ? s.recommendationRevision + 1
+          : s.recommendationRevision,
       }));
       scheduleSave();
     },
@@ -500,15 +531,17 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         const deleted = s.nodes.find((n) => n.id === id);
         const px = deleted?.x ?? 0;
         const py = deleted?.y ?? 0;
+        const nodes = s.nodes
+          .filter((n) => n.id !== id)
+          .map((n) =>
+            n.parentId === id
+              ? { ...n, parentId: undefined, x: (n.x ?? 0) + px, y: (n.y ?? 0) + py }
+              : n,
+          );
         return {
-          nodes: s.nodes
-            .filter((n) => n.id !== id)
-            .map((n) =>
-              n.parentId === id
-                ? { ...n, parentId: undefined, x: (n.x ?? 0) + px, y: (n.y ?? 0) + py }
-                : n,
-            ),
+          nodes: separateSiblingNodeOverlaps(nodes),
           edges: s.edges.filter((e) => e.from !== id && e.to !== id),
+          recommendationRevision: s.recommendationRevision + 1,
         };
       });
       scheduleSave();
@@ -526,6 +559,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       pushPre();
       set((s2) => ({
         nodes: s2.nodes.map((n) => (n.id === id ? { ...n, status: nextStatus[n.status] } : n)),
+        recommendationRevision: s2.recommendationRevision + 1,
       }));
       scheduleSave();
       return true;
@@ -535,6 +569,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       pushPre();
       set((s) => ({
         nodes: s.nodes.map((n) => (n.id === id ? { ...n, status } : n)),
+        recommendationRevision: s.recommendationRevision + 1,
       }));
       scheduleSave();
     },
@@ -551,14 +586,20 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         return false;
       }
       pushPre();
-      set((s) => ({ edges: [...s.edges, { from, to }] }));
+      set((s) => ({
+        edges: [...s.edges, { from, to }],
+        recommendationRevision: s.recommendationRevision + 1,
+      }));
       scheduleSave();
       return true;
     },
 
     removeEdge: (from, to) => {
       pushPre();
-      set((s) => ({ edges: s.edges.filter((e) => !(e.from === from && e.to === to)) }));
+      set((s) => ({
+        edges: s.edges.filter((e) => !(e.from === from && e.to === to)),
+        recommendationRevision: s.recommendationRevision + 1,
+      }));
       scheduleSave();
     },
 
@@ -603,9 +644,13 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         }
       }
 
-      set({ nodes: [...state.nodes, newTask], edges });
+      set({
+        nodes: separateSiblingNodeOverlaps([...state.nodes, newTask]),
+        edges,
+        recommendationRevision: state.recommendationRevision + 1,
+      });
       scheduleSave();
-      return newTask;
+      return get().nodes.find((node) => node.id === newTask.id) ?? newTask;
     },
 
     setParent: (childId, parentId, positionHint) => {
@@ -649,6 +694,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       // 挂入新父后若出现负相对坐标 —— 立刻归一化，确保父框能包围
       if (parentId) {
         get().normalizeGroupBounds(parentId);
+      } else {
+        set((s) => ({ nodes: separateSiblingNodeOverlaps(s.nodes) }));
       }
       scheduleSave();
       return true;
@@ -754,7 +801,12 @@ export const useTaskStore = create<TaskStore>((set, get) => {
             y: worldY - parentY,
           };
         });
-        return { nodes: next };
+        return {
+          nodes: separateSiblingNodeOverlaps(next),
+          recommendationRevision: isNewParent
+            ? s.recommendationRevision + 1
+            : s.recommendationRevision,
+        };
       });
       scheduleSave();
       return parentId;
@@ -762,7 +814,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
 
     normalizeGroupBounds: (parentId) => {
       const before = get().nodes;
-      const after = pureNormalizeGroupBounds(before, parentId);
+      const normalized = pureNormalizeGroupBounds(before, parentId);
+      const after = separateSiblingNodeOverlaps(normalized);
       if (after === before) return false;
       set({ nodes: after });
       scheduleSave();
@@ -780,7 +833,11 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       if (!prev) return false;
       const current = { nodes: get().nodes, edges: get().edges };
       useHistoryStore.getState().pushToRedo(current);
-      set({ nodes: prev.nodes, edges: prev.edges });
+      set((state) => ({
+        nodes: prev.nodes,
+        edges: prev.edges,
+        recommendationRevision: state.recommendationRevision + 1,
+      }));
       scheduleSave();
       return true;
     },
@@ -790,7 +847,11 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       if (!next) return false;
       const current = { nodes: get().nodes, edges: get().edges };
       useHistoryStore.getState().pushToUndo(current);
-      set({ nodes: next.nodes, edges: next.edges });
+      set((state) => ({
+        nodes: next.nodes,
+        edges: next.edges,
+        recommendationRevision: state.recommendationRevision + 1,
+      }));
       scheduleSave();
       return true;
     },

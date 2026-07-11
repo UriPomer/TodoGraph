@@ -1,4 +1,4 @@
-import { type CollisionRect, rectsOverlap } from '@todograph/shared';
+import { CollisionRectIndex, type CollisionRect, rectsOverlap } from '@todograph/shared';
 
 export { type CollisionRect, rectsOverlap };
 
@@ -57,8 +57,25 @@ export function resolveDropCollision({
   step = DROP_COLLISION_STEP,
   maxRing = DROP_COLLISION_MAX_RING,
 }: ResolveDropCollisionInput): { x: number; y: number } {
+  const index = new CollisionRectIndex(occupied);
+  return resolveDropCollisionWithIndex({ x, y, w, h, occupied, gap, step, maxRing }, index);
+}
+
+function resolveDropCollisionWithIndex(
+  {
+    x,
+    y,
+    w,
+    h,
+    occupied,
+    gap = DROP_COLLISION_GAP,
+    step = DROP_COLLISION_STEP,
+    maxRing = DROP_COLLISION_MAX_RING,
+  }: ResolveDropCollisionInput,
+  index: CollisionRectIndex,
+): { x: number; y: number } {
   const origin = { x, y, w, h };
-  if (occupied.every((rect) => !rectsOverlap(origin, rect, gap))) {
+  if (index.query(origin, gap).every((rect) => !rectsOverlap(origin, rect, gap))) {
     return { x, y };
   }
 
@@ -66,12 +83,13 @@ export function resolveDropCollision({
   for (const off of SPIRAL_OFFSETS) {
     if (Math.max(Math.abs(off.dx), Math.abs(off.dy)) > actualMaxRing) continue;
     const box = { x: x + off.dx * step, y: y + off.dy * step, w, h };
-    if (occupied.every((rect) => !rectsOverlap(box, rect, gap))) {
+    if (index.query(box, gap).every((rect) => !rectsOverlap(box, rect, gap))) {
       return { x: box.x, y: box.y };
     }
   }
 
-  return { x, y };
+  const rightEdge = Math.max(...occupied.map((rect) => rect.x + rect.w), x);
+  return { x: rightEdge + gap, y };
 }
 
 export function resolvePinnedDropPushAway({
@@ -92,6 +110,7 @@ export function resolvePinnedDropPushAway({
   }
   if (impacted.length === 0) return [];
   const placed: CollisionRect[] = [pinned, ...staticRects];
+  const placedIndex = new CollisionRectIndex(placed);
 
   impacted.sort((a, b) => {
     const adx = a.x - pinned.x;
@@ -103,17 +122,22 @@ export function resolvePinnedDropPushAway({
 
   const moved: Array<{ id: string; x: number; y: number }> = [];
   for (const rect of impacted) {
-    const next = resolveDropCollision({
-      x: rect.x,
-      y: rect.y,
-      w: rect.w,
-      h: rect.h,
-      occupied: placed,
-      gap,
-      step,
-      maxRing,
-    });
-    placed.push({ ...rect, x: next.x, y: next.y });
+    const next = resolveDropCollisionWithIndex(
+      {
+        x: rect.x,
+        y: rect.y,
+        w: rect.w,
+        h: rect.h,
+        occupied: placed,
+        gap,
+        step,
+        maxRing,
+      },
+      placedIndex,
+    );
+    const placedRect = { ...rect, x: next.x, y: next.y };
+    placed.push(placedRect);
+    placedIndex.add(placedRect);
     moved.push({ id: rect.id, x: next.x, y: next.y });
   }
 

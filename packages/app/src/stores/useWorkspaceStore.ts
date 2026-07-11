@@ -17,6 +17,8 @@ interface WorkspaceStore {
   /** 全量任务列表（所有页面聚合） —— 左侧全局列表用。 */
   allTasks: AllTasksItem[];
   allTasksLoading: boolean;
+  /** Session-scoped graph viewports; mutated by the graph controller as an LRU. */
+  pageViewportCache: Map<string, { x: number; y: number; zoom: number }>;
 
   // ---- lifecycle ----
   bootstrap: (userId: string) => Promise<void>;
@@ -151,6 +153,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       loaded: false,
       allTasks: [],
       allTasksLoading: false,
+      pageViewportCache: new Map(),
     });
   };
 
@@ -160,6 +163,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     loaded: false,
     allTasks: [],
     allTasksLoading: false,
+    pageViewportCache: new Map(),
 
     resetSession,
 
