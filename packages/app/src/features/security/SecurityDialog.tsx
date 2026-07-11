@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArchiveRestore, Download, History, Loader2, Shield, Upload, X } from 'lucide-react';
+import { ArchiveRestore, ChevronDown, Download, History, Loader2, Shield, Upload, X } from 'lucide-react';
 import { api, type BackupInfo, type WorkspaceExport } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { PasswordInput } from '@/components/ui/password-input';
@@ -140,7 +140,10 @@ export function SecurityDialog({ open, onClose, embedded = false }: Props) {
             </header>
             {!activePageId || backups.length === 0 ? <p className="text-xs text-muted-foreground">{busy === 'backups' ? '加载中...' : activePageId ? '暂无自动备份' : '当前没有已加载页面'}</p> : (
               <div className="space-y-3">
-                <select value={selectedBackup} onChange={(event) => setSelectedBackup(event.target.value)} className={`${inputClass} text-xs`}>{backups.map((backup) => <option key={backup.name} value={backup.name}>{backupLabel(backup)}</option>)}</select>
+                <div className="relative">
+                  <select value={selectedBackup} onChange={(event) => setSelectedBackup(event.target.value)} className={`${inputClass} appearance-none !pr-12 text-xs`}>{backups.map((backup) => <option key={backup.name} value={backup.name}>{backupLabel(backup)}</option>)}</select>
+                  <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                </div>
                 <Button size="sm" className={embedded ? 'h-10 w-full' : undefined} variant="secondary" onClick={restore} disabled={!selectedBackup || busy === 'restore'}><ArchiveRestore className="mr-1 h-3.5 w-3.5" />恢复所选备份</Button>
               </div>
             )}

@@ -98,8 +98,8 @@ export function McpSetupDialog({ open, onClose, embedded = false }: Props) {
                 </div>
               </div>
               <div className="relative">
-                <pre className="overflow-x-auto rounded-md bg-muted p-3 pr-16 text-[11px]">{config}</pre>
-                <Button size="sm" variant="secondary" className="absolute right-2 top-2 h-7 text-[10px]" onClick={() => void copy(config, 'config')}>
+                <pre className="overflow-x-auto rounded-md bg-muted p-3 pr-20 text-[11px]">{config}</pre>
+                <Button size="sm" variant="secondary" className="absolute right-3 top-3 h-7 text-[10px]" onClick={() => void copy(config, 'config')}>
                   {copied === 'config' ? <Check className="mr-1 h-3 w-3" /> : <Copy className="mr-1 h-3 w-3" />}复制
                 </Button>
               </div>
