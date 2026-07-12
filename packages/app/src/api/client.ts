@@ -11,7 +11,6 @@ import {
   type PageInfo,
   type WorkspaceSettings,
 } from '@todograph/shared';
-
 export interface McpKeyInfo {
   id: string;
   prefix: string;
@@ -50,7 +49,6 @@ export function getApiBase(): string {
 
 const unauthorizedListeners = new Set<() => void>();
 let apiSessionGeneration = 0;
-
 export function subscribeToUnauthorized(listener: () => void): () => void {
   unauthorizedListeners.add(listener);
   return () => unauthorizedListeners.delete(listener);
@@ -122,6 +120,47 @@ function buildConflictError(
   return err;
 }
 
+type ConflictKind = 'page' | 'meta';
+async function request(
+  path: string,
+  method = 'GET',
+  body?: unknown,
+): Promise<Response> {
+  return apiFetch(`${getApiBase()}${path}`, {
+    method,
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+async function rejectConflict(
+  response: Response,
+  kind: ConflictKind,
+  pageId?: string,
+): Promise<void> {
+  if (response.status !== 409) return;
+  const body = await response.json().catch(() => ({})) as {
+    pageId?: string;
+    serverVersion?: number;
+    serverRevision?: number;
+  };
+  throw buildConflictError(
+    kind === 'page' ? '版本冲突：页面已被其他设备修改' : '版本冲突：工作区已被其他设备修改',
+    { ...body, pageId: body.pageId ?? pageId },
+  );
+}
+
+async function mutateMeta(
+  path: string,
+  method: string,
+  body: unknown,
+): Promise<Meta> {
+  const response = await request(path, method, body);
+  await rejectConflict(response, 'meta');
+  const result = await json<{ meta?: unknown }>(response);
+  return MetaSchema.parse(result.meta);
+}
+
 export const api = {
   // ---- meta ----
   async loadMeta(): Promise<Meta> {
@@ -129,68 +168,35 @@ export const api = {
     const data = await json<unknown>(res);
     return MetaSchema.parse(data);
   },
-
   async updateSettings(settings: WorkspaceSettings, expectedRevision?: number): Promise<Meta> {
-    const res = await apiFetch(`${getApiBase()}/api/meta/settings`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...settings, expectedRevision }),
+    return mutateMeta('/api/meta/settings', 'PATCH', {
+      ...settings,
+      expectedRevision,
     });
-    if (res.status === 409) {
-      const body = (await res.json().catch(() => ({}))) as { serverRevision?: number };
-      throw buildConflictError('版本冲突：工作区已被其他设备修改', {
-        serverRevision: body.serverRevision,
-      });
-    }
-    const body = await json<{ meta?: unknown }>(res);
-    return MetaSchema.parse(body.meta);
   },
-
   // ---- pages ----
   async loadPage(pageId: string): Promise<PageData> {
     const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`);
     const data = await json<unknown>(res);
     return PageDataSchema.parse(data);
   },
-
   async savePage(
     pageId: string,
     data: PageData,
     expectedVersion?: number,
   ): Promise<{ version: number }> {
-    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...data, expectedVersion }),
+    const res = await request(`/api/pages/${encodeURIComponent(pageId)}`, 'PUT', {
+      ...data,
+      expectedVersion,
     });
-    if (res.status === 409) {
-      const body = await res.json().catch(() => ({})) as { serverVersion?: number };
-       throw buildConflictError('版本冲突：页面已被其他设备修改', {
-         serverVersion: body.serverVersion,
-         pageId,
-       });
-     }
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
-    }
-    const body = await res.json() as { ok?: boolean; version?: number };
-    if (body.ok === false) throw new Error('save failed');
+    await rejectConflict(res, 'page', pageId);
+    const body = await json<{ ok?: boolean; version?: number; error?: string }>(res);
+    if (body.ok === false) throw new Error(body.error ?? 'save failed');
     return { version: body.version ?? 0 };
   },
-
   async createPage(title: string, expectedRevision?: number): Promise<{ page: PageInfo; meta: Meta }> {
-    const res = await apiFetch(`${getApiBase()}/api/pages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, expectedRevision }),
-    });
-    if (res.status === 409) {
-      const body = (await res.json().catch(() => ({}))) as { serverRevision?: number };
-      throw buildConflictError('版本冲突：工作区已被其他设备修改', {
-        serverRevision: body.serverRevision,
-      });
-    }
+    const res = await request('/api/pages', 'POST', { title, expectedRevision });
+    await rejectConflict(res, 'meta');
     const data = await json<unknown>(res);
     const parsed = data as { page?: unknown; meta?: unknown };
     return {
@@ -198,71 +204,28 @@ export const api = {
       meta: MetaSchema.parse(parsed.meta),
     };
   },
-
   async deletePage(pageId: string, expectedRevision?: number): Promise<Meta> {
-    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expectedRevision }),
-    });
-    if (res.status === 409) {
-      const body = (await res.json().catch(() => ({}))) as { serverRevision?: number };
-      throw buildConflictError('版本冲突：工作区已被其他设备修改', {
-        serverRevision: body.serverRevision,
-      });
-    }
-    const body = await json<{ meta?: unknown }>(res);
-    return MetaSchema.parse(body.meta);
+    return mutateMeta(
+      `/api/pages/${encodeURIComponent(pageId)}`,
+      'DELETE',
+      { expectedRevision },
+    );
   },
-
   async renamePage(pageId: string, title: string, expectedRevision?: number): Promise<Meta | null> {
-    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, expectedRevision }),
+    return mutateMeta(`/api/pages/${encodeURIComponent(pageId)}`, 'PATCH', {
+      title,
+      expectedRevision,
     });
-    if (res.status === 409) {
-      const body = (await res.json().catch(() => ({}))) as { serverRevision?: number };
-      throw buildConflictError('版本冲突：工作区已被其他设备修改', {
-        serverRevision: body.serverRevision,
-      });
-    }
-    const body = await json<{ meta?: unknown }>(res);
-    return body.meta ? MetaSchema.parse(body.meta) : null;
   },
-
   async setActivePage(pageId: string, expectedRevision?: number): Promise<Meta | null> {
-    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ activate: true, expectedRevision }),
+    return mutateMeta(`/api/pages/${encodeURIComponent(pageId)}`, 'PATCH', {
+      activate: true,
+      expectedRevision,
     });
-    if (res.status === 409) {
-      const body = (await res.json().catch(() => ({}))) as { serverRevision?: number };
-      throw buildConflictError('版本冲突：工作区已被其他设备修改', {
-        serverRevision: body.serverRevision,
-      });
-    }
-    const body = await json<{ meta?: unknown }>(res);
-    return body.meta ? MetaSchema.parse(body.meta) : null;
   },
-
   async reorderPages(ids: string[], expectedRevision?: number): Promise<Meta> {
-    const res = await apiFetch(`${getApiBase()}/api/pages/reorder`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids, expectedRevision }),
-    });
-    if (res.status === 409) {
-      const body = (await res.json().catch(() => ({}))) as { serverRevision?: number };
-      throw buildConflictError('版本冲突：工作区已被其他设备修改', {
-        serverRevision: body.serverRevision,
-      });
-    }
-    const body = await json<{ meta?: unknown }>(res);
-    return MetaSchema.parse(body.meta);
+    return mutateMeta('/api/pages/reorder', 'POST', { ids, expectedRevision });
   },
-
   async moveNodes(
     sourcePageId: string,
     targetPageId: string,
@@ -270,64 +233,44 @@ export const api = {
     expectedSourceVersion?: number,
     expectedTargetVersion?: number,
   ): Promise<MoveNodesResponse> {
-    const res = await apiFetch(
-      `${getApiBase()}/api/pages/${encodeURIComponent(sourcePageId)}/move-nodes`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ targetPageId, nodeIds, expectedSourceVersion, expectedTargetVersion }),
-       },
-     );
-    if (res.status === 409) {
-      const body = (await res.json().catch(() => ({}))) as {
-        pageId?: string;
-        serverVersion?: number;
-      };
-      throw buildConflictError('版本冲突：页面已被其他设备修改', {
-        pageId: body.pageId,
-        serverVersion: body.serverVersion,
-      });
-    }
+    const res = await request(`/api/pages/${encodeURIComponent(sourcePageId)}/move-nodes`, 'POST', {
+      targetPageId,
+      nodeIds,
+      expectedSourceVersion,
+      expectedTargetVersion,
+    });
+    await rejectConflict(res, 'page', sourcePageId);
     const data = await json<unknown>(res);
     return MoveNodesResponseSchema.parse(data);
   },
-
   async createBackup(pageId: string): Promise<void> {
-    const res = await apiFetch(
-      `${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/backup`,
-      { method: 'POST' },
-    );
+    const res = await request(`/api/pages/${encodeURIComponent(pageId)}/backup`, 'POST');
     await jsonOk(res);
   },
-
   async listBackups(pageId: string): Promise<BackupInfo[]> {
     const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/backups`);
     const data = await json<{ backups: BackupInfo[] }>(res);
     return data.backups;
   },
-
   async restoreBackup(pageId: string, backupName?: string): Promise<PageData> {
-    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/restore`, {
-      method: 'POST',
-      headers: backupName ? { 'Content-Type': 'application/json' } : undefined,
-      body: backupName ? JSON.stringify({ backupName }) : undefined,
-    });
+    const res = await request(
+      `/api/pages/${encodeURIComponent(pageId)}/restore`,
+      'POST',
+      backupName ? { backupName } : undefined,
+    );
     const body = await json<{ data?: unknown }>(res);
     return PageDataSchema.parse(body.data);
   },
-
   async loadAllTasks(): Promise<AllTasksResponse> {
     const res = await apiFetch(`${getApiBase()}/api/all-tasks`);
     const data = await json<unknown>(res);
     return AllTasksResponseSchema.parse(data);
   },
-
   async exportMarkdown(): Promise<string> {
     const res = await apiFetch(`${getApiBase()}/api/workspace/markdown`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.text();
   },
-
   async exportWorkspaceJson(): Promise<WorkspaceExport> {
     const res = await apiFetch(`${getApiBase()}/api/workspace/export.json`);
     const data = await json<WorkspaceExport>(res);
@@ -339,45 +282,28 @@ export const api = {
       ),
     };
   },
-
   async importWorkspaceJson(data: WorkspaceExport): Promise<Meta> {
-    const res = await apiFetch(`${getApiBase()}/api/workspace/import`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
+    const res = await request('/api/workspace/import', 'POST', data);
     const body = await json<{ meta?: unknown }>(res);
     return MetaSchema.parse(body.meta);
   },
-
   async listMcpKeys(): Promise<McpKeyInfo[]> {
     const res = await apiFetch(`${getApiBase()}/api/mcp/keys`);
     const data = await json<{ keys: McpKeyInfo[] }>(res);
     return data.keys;
   },
-
   async generateMcpKey(label: string): Promise<GeneratedMcpKey> {
-    const res = await apiFetch(`${getApiBase()}/api/mcp/keys`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label }),
-    });
+    const res = await request('/api/mcp/keys', 'POST', { label });
     return json<GeneratedMcpKey>(res);
   },
-
   async revokeMcpKey(id: string): Promise<void> {
-    const res = await apiFetch(
-      `${getApiBase()}/api/mcp/keys/${encodeURIComponent(id)}`,
-      { method: 'DELETE' },
-    );
+    const res = await request(`/api/mcp/keys/${encodeURIComponent(id)}`, 'DELETE');
     await jsonOk(res);
   },
-
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
-    const res = await apiFetch(`${getApiBase()}/api/auth/change-password`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentPassword, newPassword }),
+    const res = await request('/api/auth/change-password', 'POST', {
+      currentPassword,
+      newPassword,
     });
     await jsonOk(res);
   },

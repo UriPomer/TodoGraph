@@ -1,5 +1,4 @@
 import { useMemo, useRef, useState, useCallback, useEffect } from 'react';
-import { buildAdj } from '@todograph/core';
 import { MAX_HIERARCHY_DEPTH, type Task } from '@todograph/shared';
 import { buildHierarchyMetrics, useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
@@ -9,18 +8,13 @@ import { defaultPositionFor } from '@/lib/defaultPosition';
 import { CrossPageReady, selectCrossPageReadyTasks } from './CrossPageReady';
 import { TaskInput } from './TaskInput';
 import { TaskItem } from './TaskItem';
-
-type DepInfo = { undone: number; total: number; parentTitles: string[] };
-
-// ===== 拖拽状态类型 =====
+import { buildTaskListModel, isDescendant, type DepInfo, type FlatItem } from './listModel';
 type DragState =
   | { taskId: string; offsetX: number; offsetY: number; startX: number; startY: number; active: false }
   | { taskId: string; offsetX: number; offsetY: number; startX: number; startY: number; active: true; x: number; y: number; targetId: string | null; willUnparent: boolean; nearItemId: string | null }
   | null;
-
 const DRAG_DELAY_MS = 150;
 const DRAG_THRESHOLD_PX = 8;
-
 /**
  * 极简列表视图（无外层卡片）：
  * - 三段分组：Ready / Blocked / Done
@@ -44,43 +38,33 @@ export function ListView() {
     () => selectCrossPageReadyTasks(allTasks, activePageId).length > 0,
     [allTasks, activePageId],
   );
-  // 折叠状态：parentId → boolean
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-
-  // ===== 拖拽状态 =====
   const [drag, setDrag] = useState<DragState>(null);
+  const dragRef = useRef<DragState>(null);
+  const updateDrag = useCallback((next: DragState) => {
+    dragRef.current = next;
+    setDrag(next);
+  }, []);
   const dragTimerRef = useRef<number | null>(null);
-
-  // 获取拖拽节点的 Task 对象（用于 ghost 渲染）
   const dragTask = useMemo(
     () => (drag ? nodes.find((n) => n.id === drag.taskId) ?? null : null),
     [drag, nodes],
   );
-
-  // 上一轮的 depInfo（id → obj），用于签名稳定化
   const depInfoCacheRef = useRef(new Map<string, DepInfo>());
-
-  // 构建树形结构：id → 子节点列表
-  const childMap = useMemo(() => {
-    const map = new Map<string, Task[]>();
-    for (const n of nodes) {
-      if (n.parentId) {
-        const arr = map.get(n.parentId);
-        if (arr) arr.push(n);
-        else map.set(n.parentId, [n]);
-      }
-    }
-    return map;
-  }, [nodes]);
-
+  const listModel = useMemo(
+    () => buildTaskListModel(nodes, graph, readySet, recommended?.id, collapsed, depInfoCacheRef.current),
+    [nodes, graph, readySet, recommended?.id, collapsed],
+  );
+  useEffect(() => {
+    depInfoCacheRef.current = listModel.depInfo;
+  }, [listModel.depInfo]);
+  const { ready: readyArr, blocked: blockedArr, done: doneArr, depInfo, childMap } = listModel;
   const toggleCollapse = useCallback((parentId: string) => {
     setCollapsed((prev) => ({ ...prev, [parentId]: !prev[parentId] }));
   }, []);
-
   const handleAddChild = useCallback(
     (parentId: string) => {
       const s = useTaskStore.getState();
-      // 深度护栏：父的深度 + 1（新子自身）不能超过 MAX
       if ((hierarchyMetrics.depthById.get(parentId) ?? 0) + 1 >= MAX_HIERARCHY_DEPTH) {
         toast.error(`嵌套不能超过 ${MAX_HIERARCHY_DEPTH} 层`);
         return;
@@ -91,55 +75,35 @@ export function ListView() {
         viewportCenter: s.viewportCenter,
       });
       addTask({ title: '未命名', parentId, x: pos.x, y: pos.y });
-      // 展开父节点，保证新子节点可见
       setCollapsed((prev) => (prev[parentId] ? { ...prev, [parentId]: false } : prev));
     },
     [addTask, hierarchyMetrics],
   );
-
-  // ===== 拖拽：检查 targetId 是否是 dragId 的后代（防止循环） =====
-  const isDescendantOf = useCallback(
-    (descendantId: string, ancestorId: string): boolean => {
-      if (descendantId === ancestorId) return true;
-      const directChildren = childMap.get(ancestorId);
-      if (!directChildren) return false;
-      for (const child of directChildren) {
-        if (isDescendantOf(descendantId, child.id)) return true;
-      }
-      return false;
-    },
-    [childMap],
-  );
-
-  // ===== 拖拽开始（mousedown on TaskItem） =====
   const handleDragStart = useCallback((e: React.MouseEvent, task: Task) => {
-    // Touch devices: disable drag-to-reparent
     if (window.matchMedia('(pointer: coarse)').matches) return;
     e.preventDefault(); // 防止文本选中
     const nativeEvent = e.nativeEvent;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const offsetX = nativeEvent.clientX - rect.left;
     const offsetY = nativeEvent.clientY - rect.top;
-    setDrag({
+    const initial: DragState = {
       taskId: task.id,
       offsetX,
       offsetY,
       startX: nativeEvent.clientX,
       startY: nativeEvent.clientY,
       active: false,
-    });
-    // 延迟激活：150ms 后才真正进入拖拽模式
+    };
+    updateDrag(initial);
     dragTimerRef.current = window.setTimeout(() => {
-      setDrag((prev) =>
-        prev && !prev.active ? { ...prev, active: true, x: nativeEvent.clientX, y: nativeEvent.clientY, targetId: null, willUnparent: false, nearItemId: null } : prev,
-      );
+      const current = dragRef.current;
+      if (current && !current.active) {
+        updateDrag({ ...current, active: true, x: nativeEvent.clientX, y: nativeEvent.clientY, targetId: null, willUnparent: false, nearItemId: null });
+      }
     }, DRAG_DELAY_MS);
-  }, []);
-
-  // ===== 拖拽中 & 结束（document 级别事件） =====
+  }, [updateDrag]);
   useEffect(() => {
     if (!drag) {
-      // 清理 timer（如果存在）
       if (dragTimerRef.current !== null) {
         window.clearTimeout(dragTimerRef.current);
         dragTimerRef.current = null;
@@ -148,35 +112,29 @@ export function ListView() {
     }
 
     const onMouseMove = (e: MouseEvent) => {
-      setDrag((prev) => {
-        if (!prev) return null;
-        const dx = e.clientX - prev.startX;
-        const dy = e.clientY - prev.startY;
-
-        // 未激活时：位移超过阈值则提前激活
-        if (!prev.active) {
-          if (Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD_PX) {
-            if (dragTimerRef.current !== null) {
-              window.clearTimeout(dragTimerRef.current);
-              dragTimerRef.current = null;
-            }
-            return { ...prev, active: true, x: e.clientX, y: e.clientY, targetId: null, willUnparent: false, nearItemId: null };
+      const current = dragRef.current;
+      if (!current) return;
+      const dx = e.clientX - current.startX;
+      const dy = e.clientY - current.startY;
+      if (!current.active) {
+        if (Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD_PX) {
+          if (dragTimerRef.current !== null) {
+            window.clearTimeout(dragTimerRef.current);
+            dragTimerRef.current = null;
           }
-          return prev;
+          updateDrag({ ...current, active: true, x: e.clientX, y: e.clientY, targetId: null, willUnparent: false, nearItemId: null });
         }
+        return;
+      }
 
-        // 已激活：找 drop target / 近邻指示行
-        // 三层嵌套限制：合并后的总层数不能超过 MAX_HIERARCHY_DEPTH
-        const draggedHeight = hierarchyMetrics.subtreeHeightById.get(prev.taskId) ?? 0;
-
+        const draggedHeight = hierarchyMetrics.subtreeHeightById.get(current.taskId) ?? 0;
         const el = document.elementFromPoint(e.clientX, e.clientY);
         const targetLi = el?.closest('[data-task-id]') as HTMLElement | null;
         let targetId: string | null = null;
         let nearItemId: string | null = null;
         if (targetLi) {
           const tid = targetLi.getAttribute('data-task-id');
-          if (tid && tid !== prev.taskId && !isDescendantOf(tid, prev.taskId)) {
-            // 检查挂到这个候选下会不会超深度
+          if (tid && tid !== current.taskId && !isDescendant(childMap, tid, current.taskId)) {
             const candDepth = hierarchyMetrics.depthById.get(tid) ?? 0;
             if (candDepth + 1 + draggedHeight + 1 <= MAX_HIERARCHY_DEPTH) {
               targetId = tid;
@@ -185,181 +143,36 @@ export function ListView() {
           nearItemId = tid;
         }
 
-        // 预测"松手时会发生什么"：只有子节点在空白区释放才 ungroup
-        const draggingNode = hierarchyMetrics.byId.get(prev.taskId);
+        const draggingNode = hierarchyMetrics.byId.get(current.taskId);
         const willUnparent = !targetId && !!draggingNode?.parentId;
-
-        return { ...prev, x: e.clientX, y: e.clientY, targetId, willUnparent, nearItemId };
-      });
+        updateDrag({ ...current, x: e.clientX, y: e.clientY, targetId, willUnparent, nearItemId });
     };
-
     const onMouseUp = () => {
       if (dragTimerRef.current !== null) {
         window.clearTimeout(dragTimerRef.current);
         dragTimerRef.current = null;
       }
-      setDrag((prev) => {
-        if (!prev || !prev.active) return null; // 未激活 → 取消，无副作用
-
-        if (prev.targetId) {
-          // 拖到目标节点上 → 设为子节点
-          // 确保被拖拽的节点有合理的坐标（避免 setParent 算出负偏移导致子节点断开）
-          const child = nodes.find((n) => n.id === prev.taskId);
-          const parent = nodes.find((n) => n.id === prev.targetId);
-          if (child && (!child.x || !child.y)) {
-            // 节点没有画布坐标（可能来自列表创建），用视口中心作为默认位置
-            const vc = useTaskStore.getState().viewportCenter;
-            updateTask(prev.taskId, { x: vc?.x ?? 200, y: vc?.y ?? 100 });
-          }
-          setParent(prev.taskId, prev.targetId);
-        } else if (nodes.find((n) => n.id === prev.taskId)?.parentId) {
-          // 拖到空白区域且原来是子节点 → 解除分组
-          setParent(prev.taskId, null);
+      const current = dragRef.current;
+      updateDrag(null);
+      if (!current?.active) return;
+      if (current.targetId) {
+        const child = nodes.find((n) => n.id === current.taskId);
+        if (child && (child.x === undefined || child.y === undefined)) {
+          const vc = useTaskStore.getState().viewportCenter;
+          updateTask(current.taskId, { x: vc?.x ?? 200, y: vc?.y ?? 100 });
         }
-        return null;
-      });
+        setParent(current.taskId, current.targetId);
+      } else if (nodes.find((n) => n.id === current.taskId)?.parentId) {
+        setParent(current.taskId, null);
+      }
     };
-
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
     return () => {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
     };
-  }, [drag, isDescendantOf, setParent, updateTask, nodes, childMap, hierarchyMetrics]);
-
-  const { readyArr, blockedArr, doneArr, depInfo } = useMemo(() => {
-    const byId = new Map(nodes.map((n) => [n.id, n]));
-    const { parents } = buildAdj(graph);
-    const prevCache = depInfoCacheRef.current;
-    const nextCache = new Map<string, DepInfo>();
-
-    for (const n of nodes) {
-      const ps = [...(parents.get(n.id) ?? [])];
-      if (ps.length === 0) continue;
-      const parentTitles = ps.map((pid) => byId.get(pid)?.title ?? pid);
-      const undone = ps.filter((pid) => byId.get(pid)?.status !== 'done').length;
-      const candidate: DepInfo = { undone, total: ps.length, parentTitles };
-      // 复用旧对象：签名一致则保留引用
-      const prev = prevCache.get(n.id);
-      const same =
-        prev &&
-        prev.undone === candidate.undone &&
-        prev.total === candidate.total &&
-        prev.parentTitles.length === candidate.parentTitles.length &&
-        prev.parentTitles.every((t, i) => t === candidate.parentTitles[i]);
-      nextCache.set(n.id, same ? prev! : candidate);
-    }
-    depInfoCacheRef.current = nextCache;
-
-    const rank = (arr: FlatItem[]) =>
-      [...arr].sort((a, b) => {
-        const aRec = a.task.id === recommended?.id ? 1 : 0;
-        const bRec = b.task.id === recommended?.id ? 1 : 0;
-        if (aRec !== bRec) return bRec - aRec;
-        const aD = a.task.status === 'doing' ? 1 : 0;
-        const bD = b.task.status === 'doing' ? 1 : 0;
-        if (aD !== bD) return bD - aD;
-        return 0;
-      });
-
-    // 分离顶层节点和子节点
-    const topLevel = nodes.filter((n) => !n.parentId);
-
-    // 将所有节点按树分类到 Ready/Blocked/Done，保持层级关系
-    // 关键：以整棵树的根节点的状态来决定该树所属的 Section，避免父子分散在不同区域
-    type SectionKey = 'ready' | 'blocked' | 'done';
-
-    const getRootSection = (task: Task): SectionKey => {
-      if (task.status === 'done') return 'done';
-      return readySet.has(task.id) ? 'ready' : 'blocked';
-    };
-
-    const readyArr: FlatItem[] = [];
-    const blockedArr: FlatItem[] = [];
-    const doneArr: FlatItem[] = [];
-
-    const pushSubtreeToSection = (root: Task, depth: number, section: SectionKey) => {
-      const arr = section === 'done' ? doneArr : section === 'ready' ? readyArr : blockedArr;
-      arr.push({ task: root, depth });
-      const children = childMap.get(root.id);
-      if (children && !collapsed[root.id]) {
-        for (const child of children) {
-          pushSubtreeToSection(child, depth + 1, section);
-        }
-      }
-    };
-
-    // 按顶层节点遍历：每个子树归入根节点的 Section
-    for (const t of topLevel) {
-      pushSubtreeToSection(t, 0, getRootSection(t));
-    }
-
-    // 孤儿子节点（parent 被删除但 parentId 还残留）
-    const orphaned = nodes.filter(
-      (n) => n.parentId && !byId.has(n.parentId),
-    );
-    for (const o of orphaned) {
-      const sec = getRootSection(o);
-      const arr = sec === 'done' ? doneArr : sec === 'ready' ? readyArr : blockedArr;
-      arr.push({ task: o, depth: 0 });
-    }
-
-    // 各 Section 内部排序：只对顶层节点排序，子节点保持 DFS 顺序跟在父节点后面
-    const sortPreservingTree = (arr: FlatItem[]): FlatItem[] => {
-      // 找出所有顶层条目（depth === 0）
-      const roots: { index: number; item: FlatItem }[] = [];
-      for (let i = 0; i < arr.length; i++) {
-        const item = arr[i];
-        if (item?.depth === 0) {
-          roots.push({ index: i, item });
-        }
-      }
-      // 按推荐/进行中排序顶层条目；同状态时新建的排前面
-      roots.sort((a, b) => {
-        const aRec = a.item.task.id === recommended?.id ? 1 : 0;
-        const bRec = b.item.task.id === recommended?.id ? 1 : 0;
-        if (aRec !== bRec) return bRec - aRec;
-        const aD = a.item.task.status === 'doing' ? 1 : 0;
-        const bD = b.item.task.status === 'doing' ? 1 : 0;
-        if (aD !== bD) return bD - aD;
-        return b.index - a.index;
-      });
-      // 按排序后的顺序重组数组：每个排序后的根节点 + 其子树
-      const result: FlatItem[] = [];
-      const used = new Set<number>();
-      for (const { index } of roots) {
-        const rootItem = arr[index];
-        if (!rootItem) continue;
-        used.add(index);
-        result.push(rootItem);
-        // 输出该根节点的所有子节点（保持原始相对顺序）
-        let j = index + 1;
-        while (j < arr.length) {
-          const child = arr[j];
-          if (!child || child.depth <= 0) break;
-          result.push(child);
-          used.add(j);
-          j++;
-        }
-      }
-      // 处理可能的非顶层孤儿条目（depth > 0 但不在任何子树内）
-      for (let k = 0; k < arr.length; k++) {
-        if (!used.has(k)) {
-          const orphan = arr[k];
-          if (orphan) result.push(orphan);
-        }
-      }
-      return result;
-    };
-
-    const ready = sortPreservingTree(readyArr);
-    const blocked = sortPreservingTree(blockedArr);
-    const done = doneArr;
-    return { readyArr: ready, blockedArr: blocked, doneArr: done, depInfo: nextCache };
-  }, [nodes, graph, readySet, recommended, childMap, collapsed]);
-
-  // ===== 下拉新建：纯 GPU 动画，只用 transform/opacity（不触发 layout） =====
+  }, [drag?.taskId, childMap, setParent, updateTask, updateDrag, nodes, hierarchyMetrics]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pullRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -368,34 +181,28 @@ export function ListView() {
   const pullReadyRef = useRef(false);
   const PULL_THRESHOLD = 60;
   const PULL_MAX = 100;
-
   useEffect(() => {
     const el = scrollRef.current;
     const indicator = pullRef.current;
     const content = contentRef.current;
     if (!el || !indicator || !content) return;
-
     let startY = 0;
     let pulling = false;
     let dist = 0;
-
     const onTouchStart = (e: TouchEvent) => {
       if (el.scrollTop <= 0) {
         startY = e.touches[0]!.clientY;
         pulling = true;
       }
     };
-
     const onTouchMove = (e: TouchEvent) => {
       if (!pulling) return;
       const dy = e.touches[0]!.clientY - startY;
       if (dy > 0 && el.scrollTop <= 0) {
         e.preventDefault();
         dist = Math.min(dy * 0.5, PULL_MAX);
-        // 内容跟随手指下移（GPU composited，无 layout）
         content.style.transition = 'none';
         content.style.transform = `translateY(${dist}px)`;
-        // 指示器淡入 + 微视差
         indicator.style.transition = 'none';
         indicator.style.opacity = String(Math.min(1, dist / PULL_THRESHOLD));
         indicator.style.transform = `translateY(${dist * 0.4}px)`;
@@ -412,14 +219,12 @@ export function ListView() {
         setPullReady(false);
       }
     };
-
-    const onTouchEnd = () => {
+    const finishPull = (commit: boolean) => {
       if (!pulling) return;
       pulling = false;
-      if (dist >= PULL_THRESHOLD) {
+      if (commit && dist >= PULL_THRESHOLD) {
         setFocusTrigger((n) => n + 1);
       }
-      // 归位动画
       content.style.transition = 'transform 0.2s ease-out';
       content.style.transform = 'translateY(0px)';
       indicator.style.transition = 'opacity 0.2s, transform 0.2s';
@@ -428,18 +233,19 @@ export function ListView() {
       pullReadyRef.current = false;
       setPullReady(false);
     };
-
+    const onTouchEnd = () => finishPull(true);
+    const onTouchCancel = () => finishPull(false);
     el.addEventListener('touchstart', onTouchStart, { passive: true });
     el.addEventListener('touchmove', onTouchMove, { passive: false });
     el.addEventListener('touchend', onTouchEnd);
-
+    el.addEventListener('touchcancel', onTouchCancel);
     return () => {
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
       el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchCancel);
     };
   }, []);
-
   const INIT_INDICATOR_Y = -20;
   function resetPullDOM(content: HTMLElement, indicator: HTMLElement) {
     content.style.transition = 'none';
@@ -449,7 +255,6 @@ export function ListView() {
     indicator.style.transform = `translateY(${INIT_INDICATOR_Y}px)`;
   }
 
-  // 上下分栏：上面是当前页任务，下面是跨页可做，中间可拖动调整高度
   const [topPct, setTopPct] = useState(() => {
     if (typeof window !== 'undefined') {
       const v = Number(localStorage.getItem('todograph.listSplitTopPct'));
@@ -457,62 +262,35 @@ export function ListView() {
     }
     return 65;
   });
-  const splitRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  const splitPctRef = useRef(65);
-  const onSplitMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
+  const splitPctRef = useRef(topPct);
+  const splitRectRef = useRef<DOMRect | null>(null);
+  const onSplitPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const container = containerRef.current;
     if (!container) return;
-    const rect = container.getBoundingClientRect();
-    const totalH = rect.height;
-    const onMove = (ev: MouseEvent) => {
-      const pct = Math.max(25, Math.min(85, ((ev.clientY - rect.top) / totalH) * 100));
-      splitPctRef.current = pct;
-      setTopPct(pct);
-    };
-    const onUp = () => {
-      localStorage.setItem('todograph.listSplitTopPct', String(Math.round(splitPctRef.current)));
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-    document.body.style.cursor = 'row-resize';
-    document.body.style.userSelect = 'none';
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  }, []);
-
-  const onSplitTouchStart = useCallback((e: React.TouchEvent) => {
     e.preventDefault();
-    e.stopPropagation();
-    const container = containerRef.current;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    const totalH = rect.height;
-    const bottomEl = container.querySelector(':scope > div:last-child') as HTMLElement | null;
-    // 拖拽期间禁用下方区域交互，防止误触
-    if (bottomEl) bottomEl.style.pointerEvents = 'none';
-    const onMove = (ev: TouchEvent) => {
-      ev.preventDefault();
-      const touch = ev.touches[0];
-      if (!touch) return;
-      const pct = Math.max(25, Math.min(85, ((touch.clientY - rect.top) / totalH) * 100));
-      splitPctRef.current = pct;
-      setTopPct(pct);
-    };
-    const onEnd = () => {
-      if (bottomEl) bottomEl.style.pointerEvents = '';
-      localStorage.setItem('todograph.listSplitTopPct', String(Math.round(splitPctRef.current)));
-      window.removeEventListener('touchmove', onMove);
-      window.removeEventListener('touchend', onEnd);
-    };
-    window.addEventListener('touchmove', onMove, { passive: false });
-    window.addEventListener('touchend', onEnd);
+    e.currentTarget.setPointerCapture(e.pointerId);
+    splitRectRef.current = container.getBoundingClientRect();
   }, []);
-
+  const onSplitPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = splitRectRef.current;
+    if (!rect || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    const pct = Math.max(25, Math.min(85, ((e.clientY - rect.top) / rect.height) * 100));
+    splitPctRef.current = pct;
+    setTopPct(pct);
+  }, []);
+  const onSplitPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    splitRectRef.current = null;
+    localStorage.setItem('todograph.listSplitTopPct', String(Math.round(splitPctRef.current)));
+  }, []);
+  const onSplitPointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    splitRectRef.current = null;
+  }, []);
   return (
     <div ref={containerRef} className="mobile-list-glass relative h-full flex flex-col">
       {/* 上半部分：当前页任务（可滚动） */}
@@ -588,10 +366,11 @@ export function ListView() {
 
       {/* 拖动分隔条：移动端可见手柄（12px高 + 中间把手），桌面端细线 */}
       <div
-        ref={splitRef}
         data-list-split={hasCrossPageReady ? 'adjustable' : 'bottom'}
-        onMouseDown={hasCrossPageReady ? onSplitMouseDown : undefined}
-        onTouchStart={hasCrossPageReady ? onSplitTouchStart : undefined}
+        onPointerDown={hasCrossPageReady ? onSplitPointerDown : undefined}
+        onPointerMove={hasCrossPageReady ? onSplitPointerMove : undefined}
+        onPointerUp={hasCrossPageReady ? onSplitPointerUp : undefined}
+        onPointerCancel={hasCrossPageReady ? onSplitPointerCancel : undefined}
         className={`shrink-0 h-3 lg:h-[5px] flex items-center justify-center bg-border/30 transition-colors relative group touch-none select-none ${
           hasCrossPageReady
             ? 'cursor-row-resize hover:bg-[hsl(var(--primary))] active:bg-[hsl(var(--primary))]'
@@ -656,7 +435,6 @@ function UnparentIndicator({ taskId }: { taskId: string }) {
     tick();
     return () => cancelAnimationFrame(raf);
   }, [taskId]);
-
   return (
     <div
       ref={ref}
@@ -664,11 +442,6 @@ function UnparentIndicator({ taskId }: { taskId: string }) {
       style={{ display: 'none', animation: 'unparentPulse 0.9s ease-in-out infinite' }}
     />
   );
-}
-
-interface FlatItem {
-  task: Task;
-  depth: number;
 }
 
 interface SectionProps {

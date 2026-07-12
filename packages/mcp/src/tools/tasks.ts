@@ -6,10 +6,8 @@ import {
   type CollisionRect,
 } from '@todograph/shared';
 import type { client as ClientType } from '../client.js';
-
-// ── Helpers ──
-
 import { backupBeforeMutation } from './backup.js';
+import { textResult } from './result.js';
 
 function generateId(): string {
   return 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -24,6 +22,23 @@ interface Layoutable {
   status?: string;
   description?: string;
   parentId?: string;
+}
+
+type Page = {
+  nodes: Layoutable[];
+  edges: Array<{ from: string; to: string }>;
+  version?: number;
+};
+
+const pagePath = (pageId: string) => `/api/pages/${encodeURIComponent(pageId)}`;
+const loadPage = (c: typeof ClientType, pageId: string) => c.get<Page>(pagePath(pageId));
+async function savePage(c: typeof ClientType, pageId: string, page: Page) {
+  await backupBeforeMutation(c, pageId);
+  await c.put(pagePath(pageId), {
+    nodes: page.nodes,
+    edges: page.edges,
+    expectedVersion: page.version,
+  });
 }
 
 /** 对已有节点+新节点跑 dagre LR 布局，把坐标写入新节点 */
@@ -65,8 +80,6 @@ function layoutNodes(
   }
 }
 
-// ── Collision avoidance ──
-
 const DEFAULT_W = 180, DEFAULT_H = 56;
 
 function buildRects(nodes: Layoutable[]): CollisionRect[] {
@@ -79,8 +92,6 @@ function buildRects(nodes: Layoutable[]): CollisionRect[] {
   }));
 }
 
-// ── Handlers ──
-
 export async function handleDeleteTasks(
   c: typeof ClientType,
   params: {
@@ -88,11 +99,7 @@ export async function handleDeleteTasks(
     task_ids: string[];
   },
 ) {
-  const page = await c.get<{
-    nodes: Array<{ id: string; title: string }>;
-    edges: Array<{ from: string; to: string }>;
-    version?: number;
-  }>(`/api/pages/${encodeURIComponent(params.page_id)}`);
+  const page = await loadPage(c, params.page_id);
 
   const ids = new Set(params.task_ids);
   const removed: string[] = [];
@@ -109,12 +116,7 @@ export async function handleDeleteTasks(
     return { removed: 0, warning: 'none of the requested task_ids were found' };
   }
 
-  await backupBeforeMutation(c, params.page_id);
-  await c.put(`/api/pages/${encodeURIComponent(params.page_id)}`, {
-    nodes: keptNodes,
-    edges: keptEdges,
-    expectedVersion: page.version,
-  });
+  await savePage(c, params.page_id, { ...page, nodes: keptNodes, edges: keptEdges });
 
   return { removed: removed.length, removedIds: removed };
 }
@@ -129,11 +131,7 @@ export async function handleCreateTask(
     depends_on?: string[];
   },
 ) {
-  const page = await c.get<{
-    nodes: Array<{ id: string; title: string }>;
-    edges: Array<{ from: string; to: string }>;
-    version?: number;
-  }>(`/api/pages/${encodeURIComponent(params.page_id)}`);
+  const page = await loadPage(c, params.page_id);
 
   const newId = generateId();
   const newNode: Layoutable = {
@@ -143,21 +141,17 @@ export async function handleCreateTask(
     ...(params.description ? { description: params.description } : {}),
   };
 
-  const allNodes: Layoutable[] = [...page.nodes as Layoutable[], newNode];
   const newEdges = [...page.edges];
-
-  if (params.depends_on && params.depends_on.length > 0) {
-    const existingIds = new Set(page.nodes.map((n) => n.id));
-    for (const depId of params.depends_on) {
-      if (!existingIds.has(depId)) continue;
-      if (depId === newId) continue;
-      newEdges.push({ from: depId, to: newId });
-    }
+  const existingIds = new Set(page.nodes.map((node) => node.id));
+  const rejectedDependencies: string[] = [];
+  for (const depId of new Set(params.depends_on ?? [])) {
+    if (existingIds.has(depId)) newEdges.push({ from: depId, to: newId });
+    else rejectedDependencies.push(depId);
   }
 
   // Dagre 布局 + 碰撞避免
   const newIdSet = new Set([newId]);
-  const existing: Layoutable[] = page.nodes as Layoutable[];
+  const existing = page.nodes;
   const all: Layoutable[] = [...existing, newNode];
   layoutNodes(all, newIdSet, newEdges);
 
@@ -171,14 +165,12 @@ export async function handleCreateTask(
     newNode.y = (newNode.y ?? 0) + dy;
   }
 
-  await backupBeforeMutation(c, params.page_id);
-  await c.put(`/api/pages/${encodeURIComponent(params.page_id)}`, {
-    nodes: all,
-    edges: newEdges,
-    expectedVersion: page.version,
-  });
+  await savePage(c, params.page_id, { ...page, nodes: all, edges: newEdges });
 
-  return { task: { id: newId, title: params.title, status: params.status ?? 'todo', x: newNode.x, y: newNode.y } };
+  return {
+    task: { id: newId, title: params.title, status: params.status ?? 'todo', x: newNode.x, y: newNode.y },
+    ...(rejectedDependencies.length ? { rejectedDependencies } : {}),
+  };
 }
 
 export async function handleCreateTasks(
@@ -189,11 +181,7 @@ export async function handleCreateTasks(
     edges?: Array<{ from: number; to: number }>;
   },
 ) {
-  const page = await c.get<{
-    nodes: Array<{ id: string }>;
-    edges: Array<{ from: string; to: string }>;
-    version?: number;
-  }>(`/api/pages/${encodeURIComponent(params.page_id)}`);
+  const page = await loadPage(c, params.page_id);
 
   const ids = params.tasks.map(() => generateId());
   const newNodes: Layoutable[] = params.tasks.map((t, i) => ({
@@ -206,6 +194,7 @@ export async function handleCreateTasks(
   const newEdges = [...page.edges];
   const rejectedEdges: Array<{ from: number; to: number; reason: string }> = [];
 
+  const edgeKeys = new Set<string>();
   if (params.edges) {
     for (const e of params.edges) {
       if (e.from === e.to) {
@@ -216,13 +205,19 @@ export async function handleCreateTasks(
         rejectedEdges.push({ from: e.from, to: e.to, reason: 'index out of range' });
         continue;
       }
+      const key = `${e.from}:${e.to}`;
+      if (edgeKeys.has(key)) {
+        rejectedEdges.push({ from: e.from, to: e.to, reason: 'duplicate' });
+        continue;
+      }
+      edgeKeys.add(key);
       newEdges.push({ from: ids[e.from]!, to: ids[e.to]! });
     }
   }
 
   // Dagre 自动布局 + 碰撞避免
   const newNodeIds = new Set(ids);
-  const existingNodes: Layoutable[] = page.nodes as Layoutable[];
+  const existingNodes = page.nodes;
   const allNodes: Layoutable[] = [...existingNodes, ...newNodes];
   layoutNodes(allNodes, newNodeIds, newEdges);
 
@@ -235,17 +230,10 @@ export async function handleCreateTasks(
       n.x = (n.x ?? 0) + dx;
       n.y = (n.y ?? 0) + dy;
     }
-    allNodes.length = 0;
-    allNodes.push(...existingNodes, ...newNodes);
   }
 
   try {
-    await backupBeforeMutation(c, params.page_id);
-    await c.put(`/api/pages/${encodeURIComponent(params.page_id)}`, {
-      nodes: allNodes,
-      edges: newEdges,
-      expectedVersion: page.version,
-    });
+    await savePage(c, params.page_id, { ...page, nodes: allNodes, edges: newEdges });
   } catch (err) {
     const msg = String((err as Error).message ?? err);
     if (msg.includes('cycle')) {
@@ -279,17 +267,12 @@ export async function handleUpdateTask(
     y?: number;
   },
 ) {
-  const page = await c.get<{
-    nodes: Array<{
-      id: string; title: string; status: string; parentId?: string;
-      description?: string; x?: number; y?: number;
-    }>;
-    edges: Array<{ from: string; to: string }>;
-    version?: number;
-  }>(`/api/pages/${encodeURIComponent(params.page_id)}`);
+  const page = await loadPage(c, params.page_id);
 
   const idx = page.nodes.findIndex((n) => n.id === params.task_id);
   if (idx === -1) throw new Error(`task not found: ${params.task_id}`);
+  if (params.title === undefined && params.status === undefined && params.description === undefined &&
+      params.x === undefined && params.y === undefined) throw new Error('no fields to update');
 
   const node = page.nodes[idx]!;
   const updated: typeof node = { ...node };
@@ -314,17 +297,10 @@ export async function handleUpdateTask(
     updated.y = (updated.y ?? 0) + dy;
   }
 
-  await backupBeforeMutation(c, params.page_id);
-  await c.put(`/api/pages/${encodeURIComponent(params.page_id)}`, {
-    nodes: newNodes,
-    edges: page.edges,
-    expectedVersion: page.version,
-  });
+  await savePage(c, params.page_id, { ...page, nodes: newNodes });
 
   return { task: updated };
 }
-
-// ── MCP Registration ──
 
 export function registerTaskTools(server: McpServer, c: typeof ClientType) {
   server.registerTool(
@@ -338,10 +314,7 @@ export function registerTaskTools(server: McpServer, c: typeof ClientType) {
         task_ids: z.array(z.string().min(1)).min(1).max(100).describe('要删除的任务 ID 列表'),
       },
     },
-    async (params) => {
-      const result = await handleDeleteTasks(c, params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
+    async (params) => textResult(await handleDeleteTasks(c, params)),
   );
 
   server.registerTool(
@@ -357,7 +330,7 @@ export function registerTaskTools(server: McpServer, c: typeof ClientType) {
     async (params) => {
       const result = await c.post<{ ok: boolean; data?: unknown; error?: string }>(`/api/pages/${encodeURIComponent(params.page_id)}/restore`);
       if (!result.ok) throw new Error(result.error ?? 'restore failed');
-      return { content: [{ type: 'text', text: JSON.stringify({ restored: true, data: result.data }, null, 2) }] };
+      return textResult({ restored: true, data: result.data });
     },
   );
 
@@ -375,10 +348,7 @@ export function registerTaskTools(server: McpServer, c: typeof ClientType) {
         depends_on: z.array(z.string().min(1)).optional().describe('依赖的已有任务 id 列表'),
       },
     },
-    async (params) => {
-      const result = await handleCreateTask(c, params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
+    async (params) => textResult(await handleCreateTask(c, params)),
   );
 
   server.registerTool(
@@ -406,10 +376,7 @@ export function registerTaskTools(server: McpServer, c: typeof ClientType) {
           .describe('依赖边：from/to 都是 tasks 数组索引'),
       },
     },
-    async (params) => {
-      const result = await handleCreateTasks(c, params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
+    async (params) => textResult(await handleCreateTasks(c, params)),
   );
 
   server.registerTool(
@@ -428,9 +395,6 @@ export function registerTaskTools(server: McpServer, c: typeof ClientType) {
         y: z.number().optional().describe('Y 坐标'),
       },
     },
-    async (params) => {
-      const result = await handleUpdateTask(c, params);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
+    async (params) => textResult(await handleUpdateTask(c, params)),
   );
 }

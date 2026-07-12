@@ -1,10 +1,6 @@
 import type { Graph, Meta, PageData, PageInfo } from '@todograph/shared';
 
-/**
- * 图数据的持久化抽象（v1，legacy）。
- * 保留是为了让迁移脚本能继续以"一整张图"的视角读老 tasks.json。
- * 新代码不应再实现这个 —— 用 WorkspaceRepository。
- */
+/** Legacy v1 port kept for consumers migrating single-file graphs. */
 export interface GraphRepository {
   load(): Promise<Graph>;
   save(graph: Graph): Promise<void>;

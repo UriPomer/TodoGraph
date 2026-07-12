@@ -123,6 +123,23 @@ describe('workspace/task store conflict handling', () => {
     expect(useHistoryStore.getState()).toMatchObject({ undoStack: [], redoStack: [] });
   });
 
+  it('does not let a pending local save overwrite restored page data', async () => {
+    useTaskStore.setState({
+      activePageId: 'p-1',
+      loaded: true,
+      pageVersion: 1,
+      nodes: [],
+      edges: [],
+    });
+    useTaskStore.getState().addTask({ title: 'pending edit' });
+
+    useTaskStore.getState().replaceLoadedPage('p-1', makePageData(2, 'restored'));
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(api.savePage).not.toHaveBeenCalled();
+    expect(useTaskStore.getState().nodes.map(({ id }) => id)).toEqual(['restored']);
+  });
+
   it('does not restore stale workspace state when a session resets during page switching', async () => {
     let finishFlush!: () => void;
     const flush = vi.fn(() => new Promise<void>((resolve) => {

@@ -54,3 +54,6 @@ Desktop.ini
 *.tsbuildinfo
 coverage/
 docs/
+!docs/
+docs/*
+!docs/architecture.md

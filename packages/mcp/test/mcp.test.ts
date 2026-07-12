@@ -112,6 +112,18 @@ describe('MCP tools integration', () => {
       expect(edge).toBeDefined();
     });
 
+    it('reports missing and deduplicates repeated dependencies', async () => {
+      const a = await handleCreateTask(client, { page_id: pageId, title: 'A' });
+      const b = await handleCreateTask(client, {
+        page_id: pageId,
+        title: 'B',
+        depends_on: [a.task.id, a.task.id, 'missing'],
+      });
+      const page = await handleGetPage(client, { page_id: pageId });
+      expect(page.edges.filter((edge) => edge.to === b.task.id)).toHaveLength(1);
+      expect(b.rejectedDependencies).toEqual(['missing']);
+    });
+
     it('create_tasks batch with edges', async () => {
       const result = await handleCreateTasks(client, {
         page_id: pageId,
@@ -184,6 +196,16 @@ describe('MCP tools integration', () => {
       expect(restored.tasks.find((task) => task.id === t.task.id)?.title).toBe('旧标题');
     });
 
+    it('create_tasks rejects duplicate edges without rejecting the batch', async () => {
+      const result = await handleCreateTasks(client, {
+        page_id: pageId,
+        tasks: [{ title: 'A' }, { title: 'B' }],
+        edges: [{ from: 0, to: 1 }, { from: 0, to: 1 }],
+      });
+      expect(result.edgesCreated).toBe(1);
+      expect(result.rejectedEdges).toEqual([{ from: 0, to: 1, reason: 'duplicate' }]);
+    });
+
     it('update_task keeps moved tasks clear of siblings', async () => {
       const a = await handleCreateTask(client, { page_id: pageId, title: 'A' });
       const b = await handleCreateTask(client, { page_id: pageId, title: 'B' });
@@ -201,6 +223,14 @@ describe('MCP tools integration', () => {
       await expect(
         handleUpdateTask(client, { page_id: pageId, task_id: 'nope', title: 'x' }),
       ).rejects.toThrow('task not found');
+    });
+
+    it('update_task rejects an empty update', async () => {
+      const created = await handleCreateTask(client, { page_id: pageId, title: 'A' });
+      await expect(handleUpdateTask(client, {
+        page_id: pageId,
+        task_id: created.task.id,
+      })).rejects.toThrow('no fields to update');
     });
   });
 

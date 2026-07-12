@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { wouldCreateCycle, readyTasks, recommend } from '@todograph/core';
+import { wouldCreateCycle } from '@todograph/core';
 import type { Edge, PageData, Task, TaskStatus } from '@todograph/shared';
 import { api, getApiSessionGeneration } from '@/api/client';
 import { toast } from '@/components/ui/toaster-store';
@@ -13,7 +13,6 @@ import {
 } from '@todograph/shared';
 import { useHistoryStore } from './useHistoryStore';
 import { emitAllTasksInvalidated } from './workspaceEvents';
-
 interface TaskStore {
   /** 当前页的 pageId —— 供 scheduleSave/flush 使用。null 表示未加载任何页。 */
   activePageId: string | null;
@@ -24,7 +23,6 @@ interface TaskStore {
   /** Only changes when ids, statuses, or dependency edges change. */
   recommendationRevision: number;
   loaded: boolean;
-
   /**
    * 图视口中心（世界坐标系）。GraphView 在初始化 / viewport 变动时
    * 通过 setViewportCenter 写入；列表里新建任务时读取用于放置新节点。
@@ -32,8 +30,6 @@ interface TaskStore {
    */
   viewportCenter: { x: number; y: number } | null;
   setViewportCenter: (p: { x: number; y: number } | null) => void;
-
-  // ---- lifecycle ----
   /** 加载（或切换到）指定页面；会把之前页面的 nodes/edges 整体替换。 */
   loadPage: (pageId: string) => Promise<void>;
   /** 用服务端返回的数据替换当前页，不先 flush pending local edits。 */
@@ -43,8 +39,6 @@ interface TaskStore {
   hasPendingSave: () => boolean;
   /** 退出登录或切换账号时停止后台任务并清空全部用户数据。 */
   resetSession: () => void;
-
-  // ---- mutators ----
   addTask: (input: {
     title: string;
     x?: number;
@@ -57,13 +51,9 @@ interface TaskStore {
   updateTasksBulk: (patches: Array<{ id: string; patch: Partial<Omit<Task, 'id'>> }>) => void;
   toggleStatus: (id: string) => boolean;
   setStatus: (id: string, status: TaskStatus) => void;
-
   addEdge: (from: string, to: string) => boolean;
   removeEdge: (from: string, to: string) => void;
-
   insertBetween: (aId: string, bId: string, title: string) => Task | null;
-
-  // ---- hierarchy ----
   /**
    * 把 childId 归入 parentId 下（parentId === null 表示解除归属到顶层）。
    * positionHint 提供时，直接用作 child 在新父下的相对坐标，跳过 world→local 转换。
@@ -80,19 +70,10 @@ interface TaskStore {
     opts?: { title?: string; existingParentId?: string },
   ) => string | null;
   normalizeGroupBounds: (parentId: string) => boolean;
-
-  // ---- derived ----
-  getGraph: () => PageData;
-  getReadySet: () => Set<string>;
-  getRecommended: () => Task | null;
-
-  // ---- undo/redo ----
   /** 回滚到最后一次 push 的快照；返回是否真正发生回滚。 */
   undo: () => boolean;
   /** 重新应用 redo 栈顶的快照；返回是否真正发生前进。 */
   redo: () => boolean;
-
-  // ---- auto-backup ----
   /** 自上次备份以来是否有新的 mutation。 */
   backupDirty: boolean;
   /** mutation 单调版本，避免旧备份完成后清掉新修改的 dirty 标记。 */
@@ -105,7 +86,6 @@ const nextStatus: Record<TaskStatus, TaskStatus> = {
   doing: 'done',
   done: 'todo',
 };
-
 interface HierarchyIndex {
   byId: Map<string, Task>;
   childIdsByParentId: Map<string, string[]>;
@@ -169,8 +149,6 @@ function wouldExceedMaxDepthFromIndex(
   if (!newParentId) return false;
   const parentDepth = depthOfFromIndex(index, newParentId); // 根=0 ...
   const childHeight = subtreeHeightFromIndex(index, childId); // 叶=0 ...
-  // 挂上后 child 的深度 = parentDepth + 1；整棵子树最深 = (parentDepth + 1) + childHeight
-  // 层数（1-based）= 最深深度 + 1 ≤ MAX_HIERARCHY_DEPTH
   return parentDepth + 1 + childHeight + 1 > MAX_HIERARCHY_DEPTH;
 }
 
@@ -187,11 +165,6 @@ export function buildHierarchyMetrics(nodes: Task[]): HierarchyMetrics {
     depthById: collectDepths(index),
     subtreeHeightById: collectSubtreeHeights(index),
   };
-}
-
-/** 判断把 childId 的父设为 newParentId 是否会形成父子环。 */
-function wouldCreateParentCycle(nodes: Task[], childId: string, newParentId: string): boolean {
-  return wouldCreateParentCycleFromIndex(buildHierarchyIndex(nodes), childId, newParentId);
 }
 
 function wouldCreateParentCycleFromIndex(
@@ -265,9 +238,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
   let pendingPageId: string | null = null;
   let saveDrain: Promise<void> | null = null;
   const hasPendingSave = () => saveTimer !== null || pendingPageId !== null || saveDrain !== null;
-
-  // 页面轮询：检测外部修改（MCP/其他设备）后自动刷新
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let pollInFlight = false;
   const stopPolling = () => {
     if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
   };
@@ -275,13 +247,13 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     stopPolling();
     const generation = getApiSessionGeneration();
     pollTimer = setInterval(async () => {
-      if (hasPendingSave()) return;
+      if (hasPendingSave() || pollInFlight) return;
+      pollInFlight = true;
       try {
         const g = await api.loadPage(pageId);
         if (generation !== getApiSessionGeneration()) return;
         if (hasPendingSave()) return;
         const { activePageId, pageVersion } = get();
-        // 只在页面未切换且版本变更时刷新
         if (g.version !== pageVersion && activePageId === pageId) {
           set((state) => ({
             nodes: g.nodes,
@@ -293,17 +265,18 @@ export const useTaskStore = create<TaskStore>((set, get) => {
           useHistoryStore.getState().clear();
         }
       } catch {
-        // 静默：网络波动不打扰用户
+      } finally {
+        pollInFlight = false;
       }
     }, 5000);
   };
-
   const saveOnce = async (): Promise<void> => {
     if (!pendingPageId) return;
     const pid = pendingPageId;
     const generation = getApiSessionGeneration();
     pendingPageId = null;
-    const { nodes, edges, pageVersion } = get();
+    const { activePageId, nodes, edges, pageVersion } = get();
+    if (activePageId !== pid) return;
     try {
       const { version: newVersion } = await api.savePage(pid, { nodes, edges }, pageVersion);
       if (generation !== getApiSessionGeneration()) return;
@@ -319,16 +292,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         try {
           const g = await api.loadPage(pid);
           if (generation !== getApiSessionGeneration()) return;
-          set({
-            activePageId: pid,
-            nodes: g.nodes,
-            edges: g.edges,
-            pageVersion: e.serverVersion ?? g.version ?? 0,
-            loaded: true,
-            backupDirty: false,
-            recommendationRevision: get().recommendationRevision + 1,
-          });
-          useHistoryStore.getState().clear();
+          applyPage(pid, { ...g, version: e.serverVersion ?? g.version });
         } catch (_reloadErr) {
           toast.error('重新加载失败', '请刷新页面');
         }
@@ -339,14 +303,12 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       throw e;
     }
   };
-
   const drainSaves = (): Promise<void> => {
     if (saveDrain) return saveDrain;
     const drain = (async () => { while (pendingPageId) await saveOnce(); })();
     saveDrain = drain.finally(() => { saveDrain = null; });
     return saveDrain;
   };
-
   const scheduleSave = () => {
     const active = get().activePageId;
     if (!active) return;
@@ -358,7 +320,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       void drainSaves().catch(() => {});
     }, 250);
   };
-
   const flush = async (): Promise<void> => {
     if (saveTimer) {
       clearTimeout(saveTimer);
@@ -367,7 +328,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     if (saveDrain) await saveDrain;
     if (pendingPageId) await drainSaves();
   };
-
   /**
    * 在 mutation 之前记录前态快照 —— undo 返回的就是这个前态。
    * nodes/edges 引用本身不可变（store 所有写都走 immutable 模式），
@@ -377,12 +337,27 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     const { nodes, edges } = get();
     useHistoryStore.getState().push({ nodes, edges });
   };
-
-  const resetSession = () => {
-    stopPolling();
+  const applyPage = (pageId: string, data: PageData) => {
+    set((state) => ({
+      activePageId: pageId,
+      pageVersion: data.version ?? 0,
+      nodes: data.nodes,
+      edges: data.edges,
+      loaded: true,
+      viewportCenter: null,
+      backupDirty: false,
+      recommendationRevision: state.recommendationRevision + 1,
+    }));
+    useHistoryStore.getState().clear();
+  };
+  const cancelScheduledSave = () => {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
     pendingPageId = null;
+  };
+  const resetSession = () => {
+    stopPolling();
+    cancelScheduledSave();
     useHistoryStore.getState().clear();
     set({
       activePageId: null,
@@ -395,7 +370,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       recommendationRevision: get().recommendationRevision + 1,
     });
   };
-
   return {
     activePageId: null,
     pageVersion: 0,
@@ -406,60 +380,31 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     viewportCenter: null,
     backupDirty: false,
     backupRevision: 0,
-
     setViewportCenter: (p) => set({ viewportCenter: p }),
-
     loadPage: async (pageId) => {
       const generation = getApiSessionGeneration();
-      // 切页前若有 pending 写出，flush 掉（scheduleSave 用的是切之前的 activePageId）
       await flush();
       if (generation !== getApiSessionGeneration()) return;
       try {
         const g = await api.loadPage(pageId);
         if (generation !== getApiSessionGeneration()) return;
-        set({
-          activePageId: pageId,
-          pageVersion: g.version ?? 0,
-          nodes: g.nodes,
-          edges: g.edges,
-          loaded: true,
-          viewportCenter: null,
-          backupDirty: false,
-          recommendationRevision: get().recommendationRevision + 1,
-        });
-        // 页面切换 —— 历史栈清空
-        useHistoryStore.getState().clear();
+        applyPage(pageId, g);
         startPolling(pageId);
       } catch (err) {
         if (generation !== getApiSessionGeneration()) return;
         toast.error('加载页面失败', String((err as Error).message));
-        // 维持 loaded=true 避免卡在加载态
         set({ loaded: true });
         throw err;
       }
     },
-
     replaceLoadedPage: (pageId, data) => {
-      set({
-        activePageId: pageId,
-        pageVersion: data.version ?? 0,
-        nodes: data.nodes,
-        edges: data.edges,
-        loaded: true,
-        viewportCenter: null,
-        backupDirty: false,
-        recommendationRevision: get().recommendationRevision + 1,
-      });
-      useHistoryStore.getState().clear();
+      cancelScheduledSave();
+      applyPage(pageId, data);
       startPolling(pageId);
     },
-
     flush,
-
     hasPendingSave,
-
     resetSession,
-
     addTask: ({ title, x, y, parentId }) => {
       pushPre();
       const safeTitle = (title || '未命名').slice(0, MAX_TITLE_LENGTH);
@@ -479,7 +424,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       scheduleSave();
       return get().nodes.find((node) => node.id === t.id) ?? t;
     },
-
     updateTask: (id, patch) => {
       pushPre();
       set((s) => {
@@ -506,7 +450,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       });
       scheduleSave();
     },
-
     updateTasksBulk: (patches) => {
       if (patches.length === 0) return;
       pushPre();
@@ -523,11 +466,9 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       }));
       scheduleSave();
     },
-
     deleteTask: (id) => {
       pushPre();
       set((s) => {
-        // 删除节点前：如果它是父节点，要把子节点的相对坐标加回父节点坐标
         const deleted = s.nodes.find((n) => n.id === id);
         const px = deleted?.x ?? 0;
         const py = deleted?.y ?? 0;
@@ -546,12 +487,10 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       });
       scheduleSave();
     },
-
     toggleStatus: (id) => {
       const s = get();
       const node = s.nodes.find((n) => n.id === id);
       if (!node) return false;
-      // 如果要切换到 done，且该节点有未完成的子节点 → 阻止
       if (node.status !== 'done') {
         const hasUndoneChild = s.nodes.some((n) => n.parentId === id && n.status !== 'done');
         if (hasUndoneChild) return false;
@@ -564,7 +503,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       scheduleSave();
       return true;
     },
-
     setStatus: (id, status) => {
       pushPre();
       set((s) => ({
@@ -573,7 +511,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       }));
       scheduleSave();
     },
-
     addEdge: (from, to) => {
       if (from === to) {
         toast.error('不能依赖自己');
@@ -593,7 +530,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       scheduleSave();
       return true;
     },
-
     removeEdge: (from, to) => {
       pushPre();
       set((s) => ({
@@ -602,17 +538,14 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       }));
       scheduleSave();
     },
-
     insertBetween: (aId, bId, title) => {
       pushPre();
       const state = get();
       const nodeA = state.nodes.find((n) => n.id === aId);
       const nodeB = state.nodes.find((n) => n.id === bId);
       if (!nodeA || !nodeB) return null;
-
       const mx = ((nodeA.x ?? 0) + (nodeB.x ?? 0)) / 2;
       const my = ((nodeA.y ?? 0) + (nodeB.y ?? 0)) / 2;
-
       const safeTitle = (title || '未命名').slice(0, MAX_TITLE_LENGTH);
       const newTask: Task = {
         id: uid(),
@@ -622,14 +555,11 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         y: my - 28,
         width: measureTextWidth(safeTitle),
       };
-
       const abEdge = state.edges.find((e) => e.from === aId && e.to === bId);
       const baEdge = state.edges.find((e) => e.from === bId && e.to === aId);
-
       const edges = state.edges.filter(
         (e) => !(e.from === aId && e.to === bId) && !(e.from === bId && e.to === aId),
       );
-
       if (abEdge) {
         edges.push({ from: aId, to: newTask.id }, { from: newTask.id, to: bId });
       } else if (baEdge) {
@@ -652,7 +582,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       scheduleSave();
       return get().nodes.find((node) => node.id === newTask.id) ?? newTask;
     },
-
     setParent: (childId, parentId, positionHint) => {
       const state = get();
       const idx = buildHierarchyIndex(state.nodes);
@@ -671,9 +600,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       const oldParent = child.parentId
         ? idx.byId.get(child.parentId)
         : undefined;
-      // 父子坐标系转换：store 保存的坐标总是相对 parentId（若有）。
-      // 转换规则：先把 child 变成世界坐标，再减去新父的世界坐标得到新的相对坐标。
-      // positionHint 会覆盖自动计算——用于拖拽合并时把子节点放到整齐位置。
       let patch: Partial<Task> = { parentId: parentId ?? undefined };
       const cx = child.x ?? 0;
       const cy = child.y ?? 0;
@@ -691,7 +617,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       set((s) => ({
         nodes: s.nodes.map((n) => (n.id === childId ? { ...n, ...patch } : n)),
       }));
-      // 挂入新父后若出现负相对坐标 —— 立刻归一化，确保父框能包围
       if (parentId) {
         get().normalizeGroupBounds(parentId);
       } else {
@@ -700,27 +625,20 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       scheduleSave();
       return true;
     },
-
     ascendOneLevel: (childId) => {
       const state = get();
       const child = state.nodes.find((n) => n.id === childId);
       if (!child || !child.parentId) return false;
       const parent = state.nodes.find((n) => n.id === child.parentId);
-      // 父已是顶层 → 直接脱到顶层；否则挂到 grandparent
       const targetParentId = parent?.parentId ?? null;
       return get().setParent(childId, targetParentId);
     },
-
     groupTasks: (childIds, opts) => {
       if (childIds.length === 0) return null;
       const state = get();
       const index = buildHierarchyIndex(state.nodes);
       const targets = childIds.filter((id) => index.byId.has(id));
       if (targets.length === 0) return null;
-
-      // 若复用已有父：按 setParent 规则逐个校验（循环 + 深度）
-      // 若创建新父：新父是顶层（parentDepth=0），每个 child 挂上后深度 = 1 + childHeight
-      //             超出 MAX_HIERARCHY_DEPTH 的直接拒绝整次操作
       if (opts?.existingParentId) {
         for (const cid of targets) {
           if (wouldCreateParentCycleFromIndex(index, cid, opts.existingParentId)) {
@@ -734,8 +652,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         }
       } else {
         for (const cid of targets) {
-          // 新父是顶层（depth=0），挂上后该子的深度 = 1；子树最深 = 1 + childHeight
-          // 层数 = 1 + childHeight + 1 ≤ MAX
           if (1 + subtreeHeightFromIndex(index, cid) + 1 > MAX_HIERARCHY_DEPTH) {
             toast.error(`嵌套不能超过 ${MAX_HIERARCHY_DEPTH} 层`, '已阻止');
             return null;
@@ -750,7 +666,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         const p = byId.get(n.parentId);
         return { x: (n.x ?? 0) + (p?.x ?? 0), y: (n.y ?? 0) + (p?.y ?? 0) };
       };
-
       const existingParent = opts?.existingParentId ? byId.get(opts.existingParentId) : undefined;
       let parentTask: Task;
       let isNewParent = false;
@@ -776,14 +691,12 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       const parentX = parentTask.x ?? 0;
       const parentY = parentTask.y ?? 0;
       const targetSet = new Set(targets);
-
       pushPre();
       set((s) => {
         let next = s.nodes;
         if (isNewParent) next = [...next, parentTask];
         next = next.map((n) => {
           if (!targetSet.has(n.id)) return n;
-          // 对已有父：再次校验（防止并发修改）
           if (!isNewParent && wouldCreateParentCycleFromIndex(index, n.id, parentId)) return n;
           let worldX = n.x ?? 0;
           let worldY = n.y ?? 0;
@@ -811,7 +724,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       scheduleSave();
       return parentId;
     },
-
     normalizeGroupBounds: (parentId) => {
       const before = get().nodes;
       const normalized = pureNormalizeGroupBounds(before, parentId);
@@ -821,13 +733,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       scheduleSave();
       return true;
     },
-
-    getGraph: () => ({ nodes: get().nodes, edges: get().edges }),
-
-    getReadySet: () => new Set(readyTasks(get().getGraph()).map((n) => n.id)),
-
-    getRecommended: () => recommend(get().getGraph()),
-
     undo: () => {
       const prev = useHistoryStore.getState().undo();
       if (!prev) return false;
@@ -841,7 +746,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       scheduleSave();
       return true;
     },
-
     redo: () => {
       const next = useHistoryStore.getState().redo();
       if (!next) return false;
@@ -855,7 +759,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       scheduleSave();
       return true;
     },
-
     markBackupDone: (pageId, revision) => set((state) => state.activePageId === pageId
       && state.backupRevision === revision ? { backupDirty: false } : state),
   };

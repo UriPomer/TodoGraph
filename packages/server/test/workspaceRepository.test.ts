@@ -307,6 +307,15 @@ describe('FileWorkspaceRepository concurrency guards', () => {
       .rejects.toBeInstanceOf(VersionConflictError);
   });
 
+  it('rejects duplicate page ids when reordering', async () => {
+    const meta = await repo.loadMeta();
+    const created = await repo.createPage('second', meta.revision);
+    await expect(repo.reorderPages(
+      [created.page.id, created.page.id],
+      created.meta.revision,
+    )).rejects.toThrow('reorder ids do not match existing pages');
+  });
+
   it('rejects an invalid backup without overwriting the live page', async () => {
     const meta = await repo.loadMeta();
     const pageId = meta.activePageId;

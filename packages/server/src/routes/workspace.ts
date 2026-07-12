@@ -12,7 +12,7 @@ import {
   type PageData,
   type Task,
 } from '@todograph/shared';
-import { buildAdj, isDAG } from '@todograph/core';
+import { isDAG, readyTasks } from '@todograph/core';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import {
@@ -100,7 +100,6 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     allCacheByUser.clear();
   };
 
-  // ---- meta ----
   app.get('/api/meta', async (req) => {
     const repo = getRepo(getAuthenticatedUserId(req));
     return repo.loadMeta();
@@ -131,7 +130,6 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
   });
 
-  // ---- pages ----
   app.get<{ Params: { id: string } }>('/api/pages/:id', async (req, reply) => {
     const repo = getRepo(getAuthenticatedUserId(req));
     try {
@@ -289,7 +287,6 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
   });
 
-  // ---- 自动备份：拷贝当前页面文件到 backups/ 目录 ----
   app.post<{ Params: { id: string } }>('/api/pages/:id/backup', async (req, reply) => {
     const repo = getRepo(getAuthenticatedUserId(req));
     try {
@@ -311,7 +308,6 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
   });
 
-  // ---- 从最新备份恢复页面 ----
   app.post<{ Params: { id: string } }>('/api/pages/:id/restore', async (req, reply) => {
     const repo = getRepo(getAuthenticatedUserId(req));
     const parsed = RestoreBackupBodySchema.safeParse(req.body ?? {});
@@ -331,7 +327,6 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
   });
 
-  // ---- 跨页转移：自动带上整棵子树 ----
   app.post<{ Params: { id: string } }>('/api/pages/:id/move-nodes', async (req, reply) => {
     const repo = getRepo(getAuthenticatedUserId(req));
     const parsed = MoveNodesBodySchema.safeParse(req.body);
@@ -366,7 +361,6 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
   });
 
-  // ---- 全局任务聚合：左侧列表用 ----
   app.get('/api/all-tasks', async (req): Promise<AllTasksResponse> => {
     const userId = getAuthenticatedUserId(req);
     const repo = getRepo(userId);
@@ -385,16 +379,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     for (const p of meta.pages) {
       try {
         const pd = await repo.loadPage(p.id);
-        // 计算本页 ready 状态：status !== 'done' 且所有 edge 父节点均为 done
-        const { parents } = buildAdj(pd);
-        const byId = new Map(pd.nodes.map((n) => [n.id, n]));
-        const readySet = new Set<string>();
-        for (const n of pd.nodes) {
-          if (n.status === 'done') continue;
-          const ps = parents.get(n.id);
-          const allParentsDone = !ps || [...ps].every((pid) => byId.get(pid)?.status === 'done');
-          if (allParentsDone) readySet.add(n.id);
-        }
+        const readySet = new Set(readyTasks(pd).map((task) => task.id));
         for (const n of pd.nodes) {
           tasks.push({ ...n, _pageId: p.id, _pageTitle: p.title, _ready: readySet.has(n.id) });
         }
@@ -409,7 +394,6 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     return response;
   });
 
-  // ---- workspace markdown export ----
   app.get('/api/workspace/markdown', async (req, reply) => {
     const repo = getRepo(getAuthenticatedUserId(req));
     const meta = await repo.loadMeta();
@@ -470,7 +454,6 @@ async function moveNodesBetweenPages(
   const [source, target] = await Promise.all([repo.loadPage(sourceId), repo.loadPage(targetId)]);
 
   const byIdSrc = new Map(source.nodes.map((n) => [n.id, n]));
-  // 自动带上整棵子树：遍历每个选中节点的所有后代
   const childrenOf = new Map<string, string[]>();
   for (const n of source.nodes) {
     if (n.parentId) {
@@ -491,15 +474,11 @@ async function moveNodesBetweenPages(
   }
   const autoIncludedChildren = toMove.size - userSet.size;
 
-  // 坐标归一化：根节点若有 parentId 但 parentId 不在 toMove 中，转成世界坐标；
-  //             parentId 在 toMove 中的节点保留相对坐标。
-  //             真正的 root（无 parentId）保持世界坐标不变。
   let droppedParentLinks = 0;
   const movedNodes: Task[] = [];
   for (const id of toMove) {
     const n = byIdSrc.get(id)!;
     if (n.parentId && !toMove.has(n.parentId)) {
-      // 这个节点的父不跟着走 —— 把相对坐标沿祖先链递归累加成世界坐标，再清空 parentId
       let wx = n.x ?? 0;
       let wy = n.y ?? 0;
       let ancestorId: string | undefined = n.parentId;
@@ -526,14 +505,12 @@ async function moveNodesBetweenPages(
     }
   }
 
-  // Edges：只保留"两端都在 toMove 里"的 —— 其它全部丢失
   const movedEdges = source.edges.filter((e) => toMove.has(e.from) && toMove.has(e.to));
   const lostEdges = source.edges.filter(
     (e) =>
       (toMove.has(e.from) && !toMove.has(e.to)) || (!toMove.has(e.from) && toMove.has(e.to)),
   ).length;
 
-  // 目标页不允许重名 id
   const targetIds = new Set(target.nodes.map((n) => n.id));
   for (const n of movedNodes) {
     if (targetIds.has(n.id)) {
@@ -551,7 +528,6 @@ async function moveNodesBetweenPages(
     edges: [...target.edges, ...movedEdges],
   };
 
-  // DAG 校验（两页分别验证）
   if (!isDAG(newSource) || !isDAG(newTarget)) {
     throw new Error('resulting page would contain a cycle');
   }

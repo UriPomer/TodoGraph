@@ -1,5 +1,4 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Check, ChevronRight, ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
 import { MAX_HIERARCHY_DEPTH, type Task } from '@todograph/shared';
 import { cn } from '@/lib/utils';
@@ -177,6 +176,12 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       }, 220);
     }
   }, [toggleStatus, deleteTask, task.id]);
+  const onSwipeCancel = useCallback(() => {
+    swipeStartRef.current = null;
+    swipingRef.current = false;
+    swipeOffsetRef.current = 0;
+    cancelSwipeDOM();
+  }, []);
 
   return (
     <li
@@ -188,6 +193,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       onTouchStart={onSwipeStart}
       onTouchMove={onSwipeMove}
       onTouchEnd={onSwipeEnd}
+      onTouchCancel={onSwipeCancel}
       data-lens
       className={cn(
         'group relative flex flex-col select-none [content-visibility:auto] [contain-intrinsic-size:auto_52px]',

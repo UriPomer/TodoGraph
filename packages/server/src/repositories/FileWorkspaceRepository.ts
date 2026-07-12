@@ -146,7 +146,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         order: maxOrder + 1,
         createdAt: new Date().toISOString(),
       };
-      // 新页面先落盘（空数据），再写 meta —— 保证 meta 指向的文件一定存在
+      // Page first, then meta: committed metadata must never reference a missing page file.
       await this.savePageUnlocked(id, { nodes: [], edges: [] });
       const nextMeta = this.bumpMeta({ ...meta, pages: [...meta.pages, info] });
       await this.atomicWriteJson(this.metaPath, nextMeta);
@@ -168,12 +168,11 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       const nextActive =
         meta.activePageId === pageId ? (nextPages[0]?.id ?? meta.activePageId) : meta.activePageId;
       const nextMeta = this.bumpMeta({ ...meta, pages: nextPages, activePageId: nextActive });
-      // 先更新 meta 再删文件：即使删文件失败，用户也看不到幽灵页面
+      // Meta first, then unlink: a failed unlink leaves an invisible orphan, not a ghost page.
       await this.atomicWriteJson(this.metaPath, nextMeta);
       try {
         await fs.unlink(this.pageFilePath(pageId));
       } catch (err) {
-        // 幂等：文件已经不在也算成功
         const e = err as NodeJS.ErrnoException;
         if (e.code !== 'ENOENT') throw err;
       }
@@ -202,7 +201,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       const meta = await this.loadMetaUnlocked();
       this.assertMetaRevision(meta, expectedRevision);
       const byId = new Map(meta.pages.map((p) => [p.id, p]));
-      if (ids.length !== meta.pages.length || ids.some((id) => !byId.has(id))) {
+      if (ids.length !== meta.pages.length || new Set(ids).size !== ids.length || ids.some((id) => !byId.has(id))) {
         throw new Error('reorder ids do not match existing pages');
       }
       const nextPages: PageInfo[] = ids.map((id, i) => ({ ...byId.get(id)!, order: i }));
@@ -324,7 +323,6 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
           const st = await fs.stat(this.pageFilePath(p.id));
           out.push({ pageId: p.id, mtimeMs: st.mtimeMs });
         } catch {
-          // 文件缺失：mtime=0，让缓存失效重读时发现并抛错
           out.push({ pageId: p.id, mtimeMs: 0 });
         }
       }
@@ -341,8 +339,8 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       await fs.mkdir(backupDir, { recursive: true });
       await fs.copyFile(src, dest);
 
-      // 保留最近 50 份
       const entries = await fs.readdir(backupDir);
+      // Retention is bounded so automatic backups cannot grow without limit.
       const jsonFiles = entries
         .filter((f) => f.endsWith('.json'))
         .sort();
@@ -351,7 +349,6 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         try {
           await fs.unlink(path.join(backupDir, oldest));
         } catch {
-          // 删不掉就跳过
         }
       }
     });
@@ -379,9 +376,6 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // internals
-  // ---------------------------------------------------------------------------
 
   private async listBackupsUnlocked(pageId: string): Promise<BackupInfo[]> {
     const backupDir = path.join(this.dataDir, 'backups', pageId);
@@ -428,7 +422,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   }
 
   private assertSafePageId(pageId: string): void {
-    // 防御性：pageId 不允许含斜杠或 ..
+    // Page IDs become path segments; reject traversal and separators at this boundary.
     if (!isSafePageId(pageId)) {
       throw new Error(`invalid page id: ${pageId}`);
     }
@@ -475,17 +469,14 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== 'ENOENT') throw err;
-      // meta.json 不存在 → 先尝试从旧根级目录迁移 v2 数据
       if (this.legacyV2Dir) {
         const legacyMetaPath = path.join(this.legacyV2Dir, 'meta.json');
         try {
           await fs.access(legacyMetaPath);
           return await this.migrateFromLegacyV2(legacyMetaPath);
         } catch {
-          // legacy v2 data doesn't exist either, fall through
         }
       }
-      // 无旧数据 → 执行 v1 迁移或 SEED
       return await this.migrateFromLegacyOrSeed();
     }
   }
@@ -493,7 +484,6 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   private async savePageUnlocked(pageId: string, data: PageData, expectedVersion?: number): Promise<number> {
     const filePath = this.pageFilePath(pageId);
 
-    // 读当前版本
     let currentVersion = 0;
     let legacyLongTitles = new Map<string, string>();
     try {
@@ -504,10 +494,8 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== 'ENOENT') throw err;
-      // 文件不存在 → version = 0
     }
 
-    // 版本比对
     if (expectedVersion !== undefined && expectedVersion !== currentVersion) {
       throw new VersionConflictError(pageId, currentVersion);
     }
@@ -677,7 +665,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     const legacyDir = path.dirname(legacyMetaPath);
     const legacyPagesDir = path.join(legacyDir, 'pages');
 
-    // 1. 复制页面文件
+    // Copy all referenced data before committing the new meta migration marker.
     await fs.mkdir(this.pagesDir, { recursive: true });
     try {
       const entries = await fs.readdir(legacyPagesDir);
@@ -690,22 +678,18 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         }
       }
     } catch {
-      // pages dir doesn't exist — use empty
     }
 
-    // 2. 读旧 meta
     const raw = await fs.readFile(legacyMetaPath, 'utf-8');
     const parsed = JSON.parse(raw);
     const meta = MetaSchema.parse(parsed);
 
-    // 3. 写新 meta（迁移完成标志）
     await this.atomicWriteJson(this.metaPath, meta);
 
-    // 4. 备份旧 meta（防止第二个用户迁移同一份旧数据）
+    // Retire the shared legacy marker so a second user cannot migrate the same workspace.
     try {
       await fs.rename(legacyMetaPath, legacyMetaPath + '.v2.bak');
     } catch {
-      // rename failed, at least copy
       try { await fs.copyFile(legacyMetaPath, legacyMetaPath + '.v2.bak'); } catch { /* best effort */ }
     }
 
@@ -731,20 +715,16 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== 'ENOENT') throw err;
-      // 没有老文件：用 SEED
     }
 
-    // 步骤 1-2：建 default page
     const pageId = makePageId('默认');
     const pageTitle = hasLegacy ? '默认' : '入门教程';
     await this.savePageUnlocked(pageId, { nodes: seedGraph.nodes, edges: seedGraph.edges });
 
-    // 步骤 3：备份老文件（仅当存在）
     if (hasLegacy) {
       try {
         await fs.rename(this.legacyPath, this.legacyBackupPath);
       } catch (err) {
-        // 若 rename 失败（跨设备等罕见情况），至少复制一份备份
         const e = err as NodeJS.ErrnoException;
         if (e.code === 'EXDEV') {
           await fs.copyFile(this.legacyPath, this.legacyBackupPath);
@@ -755,7 +735,6 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       }
     }
 
-    // 步骤 4：写 meta.json（迁移完成）
     const meta: Meta = {
       version: 2,
       revision: 0,

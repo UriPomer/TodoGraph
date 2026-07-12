@@ -47,6 +47,8 @@ interface WorkspaceStore {
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   let allTasksTimer: ReturnType<typeof setTimeout> | null = null;
   let metaPollTimer: ReturnType<typeof setInterval> | null = null;
+  let metaPollInFlight = false;
+  let allTasksRequest = 0;
   const isCurrentSession = (generation: number) => generation === getApiSessionGeneration();
   const WORKSPACE_SYNCED_MESSAGE = '工作区已被其他设备修改，已同步最新状态';
   const WORKSPACE_RETRY_MESSAGE = '工作区已被其他设备修改，已刷新最新状态，请重新执行刚才的操作';
@@ -71,6 +73,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     stopMetaPolling();
     const generation = getApiSessionGeneration();
     metaPollTimer = setInterval(async () => {
+      if (metaPollInFlight) return;
+      metaPollInFlight = true;
       try {
         const latest = await api.loadMeta();
         if (!isCurrentSession(generation)) return;
@@ -87,6 +91,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         }
       } catch {
         // 静默忽略网络错误
+      } finally {
+        metaPollInFlight = false;
       }
     }, 5000);
   };
@@ -420,13 +426,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
 
     refreshAllTasks: async () => {
       const generation = getApiSessionGeneration();
+      const requestId = ++allTasksRequest;
       set({ allTasksLoading: true });
       try {
         const resp = await api.loadAllTasks();
-        if (!isCurrentSession(generation)) return;
+        if (!isCurrentSession(generation) || requestId !== allTasksRequest) return;
         set({ allTasks: resp.tasks, allTasksLoading: false });
       } catch (err) {
-        if (!isCurrentSession(generation)) return;
+        if (!isCurrentSession(generation) || requestId !== allTasksRequest) return;
         set({ allTasksLoading: false });
         console.warn('loadAllTasks failed', err);
       }
