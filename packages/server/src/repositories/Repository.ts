@@ -1,4 +1,4 @@
-import type { Graph, Meta, PageData, PageInfo } from '@todograph/shared';
+import type { Graph, Meta, NodeOverlapConflict, PageData, PageInfo } from '@todograph/shared';
 
 /** Legacy v1 port kept for consumers migrating single-file graphs. */
 export interface GraphRepository {
@@ -30,6 +30,16 @@ export class TaskTitleTooLongError extends Error {
   ) {
     super(`task title exceeds ${maxLength} characters: ${taskId}`);
     this.name = 'TaskTitleTooLongError';
+  }
+}
+
+export class NodeOverlapError extends Error {
+  constructor(
+    public pageId: string,
+    public conflicts: NodeOverlapConflict[],
+  ) {
+    super(`page contains overlapping sibling nodes: ${pageId}`);
+    this.name = 'NodeOverlapError';
   }
 }
 

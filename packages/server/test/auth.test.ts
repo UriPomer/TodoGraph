@@ -593,6 +593,25 @@ describe('auth routes', () => {
       maxLength: 200,
     });
 
+    const overlapping = await app.inject({
+      method: 'PUT',
+      url: `/api/pages/${pageId}`,
+      cookies,
+      payload: {
+        nodes: [
+          { id: 'overlap-a', title: 'a', status: 'todo', x: 0, y: 0, width: 180 },
+          { id: 'overlap-b', title: 'b', status: 'todo', x: 0, y: 0, width: 180 },
+        ],
+        edges: [],
+      },
+    });
+    expect(overlapping.statusCode).toBe(422);
+    expect(overlapping.json()).toMatchObject({
+      ok: false,
+      code: 'node-overlap',
+      conflicts: [{ firstId: 'overlap-a', secondId: 'overlap-b' }],
+    });
+
     for (const edge of [
       { from: 'a', to: 'a' },
       { from: 'a', to: 'missing' },

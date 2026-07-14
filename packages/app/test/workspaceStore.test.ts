@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Meta, PageData, PageInfo } from '@todograph/shared';
+import { validateNoSiblingOverlaps, type Meta, type PageData, type PageInfo } from '@todograph/shared';
 
 const { api, toast, session } = vi.hoisted(() => ({
   session: { generation: 0 },
@@ -138,6 +138,25 @@ describe('workspace/task store conflict handling', () => {
 
     expect(api.savePage).not.toHaveBeenCalled();
     expect(useTaskStore.getState().nodes.map(({ id }) => id)).toEqual(['restored']);
+  });
+
+  it('repairs and persists overlapping legacy page data on replacement', async () => {
+    api.savePage.mockResolvedValue({ version: 4 });
+    const data: PageData = {
+      version: 3,
+      nodes: [
+        { id: 'a', title: 'a', status: 'todo', x: 0, y: 0, width: 180 },
+        { id: 'b', title: 'b', status: 'todo', x: 0, y: 0, width: 180 },
+      ],
+      edges: [],
+    };
+
+    useTaskStore.getState().replaceLoadedPage('p-1', data);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(validateNoSiblingOverlaps(useTaskStore.getState().nodes)).toEqual({ valid: true });
+    expect(api.savePage).toHaveBeenCalledOnce();
+    expect(useHistoryStore.getState()).toMatchObject({ undoStack: [], redoStack: [] });
   });
 
   it('does not restore stale workspace state when a session resets during page switching', async () => {

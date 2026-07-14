@@ -7,7 +7,9 @@ import {
   MAX_TASK_TITLE_LENGTH,
   MetaSchema,
   PageDataSchema,
+  resolveNodeOverlaps,
   validateDependencyEdges,
+  validateNoSiblingOverlaps,
   validateTaskHierarchy,
   type Graph,
   type Meta,
@@ -19,6 +21,7 @@ import { isDAG } from '@todograph/core';
 import {
   type BackupInfo,
   MetaVersionConflictError,
+  NodeOverlapError,
   TaskTitleTooLongError,
   type WorkspaceExport,
   type WorkspaceRepository,
@@ -254,8 +257,11 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       }
       const meta = { ...validated.meta, revision: Math.max(validated.meta.revision, snapshot?.meta.revision ?? 0) + 1 };
       const pages = Object.fromEntries(Object.entries(validated.pages).map(([pageId, page]) =>
-        [pageId, { ...page, version: Math.max(page.version ?? 0,
-          snapshot?.pages[pageId]?.version ?? 0) + 1 }]));
+        [pageId, {
+          ...page,
+          nodes: resolveNodeOverlaps(page.nodes).nodes,
+          version: Math.max(page.version ?? 0, snapshot?.pages[pageId]?.version ?? 0) + 1,
+        }]));
 
       const stagingDirName = `.workspace-import-staging-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const stagingDir = path.join(this.dataDir, stagingDirName);
@@ -405,7 +411,11 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     const src = path.join(this.dataDir, 'backups', pageId, backupName);
     const restored = parseValidPageData(JSON.parse(await fs.readFile(src, 'utf-8')), pageId, undefined, false);
     const current = await this.loadPageUnlocked(pageId);
-    const next = { ...restored, version: Math.max(restored.version ?? 0, current.version ?? 0) + 1 };
+    const next = {
+      ...restored,
+      nodes: resolveNodeOverlaps(restored.nodes).nodes,
+      version: Math.max(restored.version ?? 0, current.version ?? 0) + 1,
+    };
     await this.atomicWriteJson(this.pageFilePath(pageId), next);
     return next;
   }
@@ -502,6 +512,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
 
     const newVersion = currentVersion + 1;
     const valid = parseValidPageData(data, pageId, legacyLongTitles);
+    assertNoNodeOverlaps(valid, pageId);
     await this.atomicWriteJson(filePath, { ...valid, version: newVersion });
     return newVersion;
   }
@@ -509,7 +520,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   private async savePagesUnlocked(
     entries: Array<{ pageId: string; data: PageData; expectedVersion?: number }>,
   ): Promise<number[]> {
-    const checked = await Promise.all(
+    const checkedBase = await Promise.all(
       entries.map(async (entry) => {
         const filePath = this.pageFilePath(entry.pageId);
         let currentVersion = 0;
@@ -525,18 +536,27 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
           const e = err as NodeJS.ErrnoException;
           if (e.code !== 'ENOENT') throw err;
         }
-        if (entry.expectedVersion !== undefined && entry.expectedVersion !== currentVersion) {
-          throw new VersionConflictError(entry.pageId, currentVersion);
-        }
         return {
           pageId: entry.pageId,
           filePath,
           currentVersion,
           previousRaw,
-          valid: parseValidPageData(entry.data, entry.pageId, legacyLongTitles),
+          legacyLongTitles,
         };
       }),
     );
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i]!;
+      const checked = checkedBase[i]!;
+      if (entry.expectedVersion !== undefined && entry.expectedVersion !== checked.currentVersion) {
+        throw new VersionConflictError(entry.pageId, checked.currentVersion);
+      }
+    }
+    const checked = checkedBase.map((entry, index) => {
+      const valid = parseValidPageData(entries[index]!.data, entry.pageId, entry.legacyLongTitles);
+      assertNoNodeOverlaps(valid, entry.pageId);
+      return { ...entry, valid };
+    });
 
     const journal: SavePagesJournal = {
       entries: checked.map((entry) => ({
@@ -719,7 +739,10 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
 
     const pageId = makePageId('默认');
     const pageTitle = hasLegacy ? '默认' : '入门教程';
-    await this.savePageUnlocked(pageId, { nodes: seedGraph.nodes, edges: seedGraph.edges });
+    await this.savePageUnlocked(pageId, {
+      nodes: resolveNodeOverlaps(seedGraph.nodes).nodes,
+      edges: seedGraph.edges,
+    });
 
     if (hasLegacy) {
       try {
@@ -968,6 +991,11 @@ function parseValidPageData(
     );
   }
   return page;
+}
+
+function assertNoNodeOverlaps(page: PageData, pageId: string): void {
+  const overlap = validateNoSiblingOverlaps(page.nodes);
+  if (!overlap.valid) throw new NodeOverlapError(pageId, overlap.conflicts);
 }
 
 function collectLegacyLongTaskTitles(data: unknown): Map<string, string> {

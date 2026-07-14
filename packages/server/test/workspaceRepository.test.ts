@@ -4,7 +4,12 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
 import { FileWorkspaceRepository } from '../src/repositories/FileWorkspaceRepository.js';
-import { MetaVersionConflictError, VersionConflictError } from '../src/repositories/Repository.js';
+import { validateNoSiblingOverlaps } from '@todograph/shared';
+import {
+  MetaVersionConflictError,
+  NodeOverlapError,
+  VersionConflictError,
+} from '../src/repositories/Repository.js';
 
 describe('FileWorkspaceRepository concurrency guards', () => {
   let rootDir: string;
@@ -45,6 +50,21 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     ).rejects.toThrow('invalid hierarchy (missing-parent');
   });
 
+  it('rejects overlapping siblings at the repository boundary', async () => {
+    const meta = await repo.loadMeta();
+    const page = await repo.loadPage(meta.activePageId);
+
+    await expect(repo.savePage(meta.activePageId, {
+      nodes: [
+        { id: 'a', title: 'a', status: 'todo', x: 0, y: 0, width: 180 },
+        { id: 'b', title: 'b', status: 'todo', x: 0, y: 0, width: 180 },
+      ],
+      edges: [],
+    }, page.version)).rejects.toBeInstanceOf(NodeOverlapError);
+
+    expect((await repo.loadPage(meta.activePageId)).version).toBe(page.version);
+  });
+
   it('reads legacy long titles but rejects them on new writes', async () => {
     const meta = await repo.loadMeta();
     const pageId = meta.activePageId;
@@ -73,8 +93,8 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     await expect(
       repo.savePage(pageId, {
         nodes: [
-          { id: 'legacy', title: longTaskTitle, status: 'todo' },
-          { id: 'new', title: 'normal', status: 'todo' },
+          { id: 'legacy', title: longTaskTitle, status: 'todo', x: 0, y: 0 },
+          { id: 'new', title: 'normal', status: 'todo', x: 1000, y: 0 },
         ],
         edges: [],
       }),
@@ -137,6 +157,37 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     expect(targetAfter.nodes.map((node) => node.id)).toEqual(['t1']);
   });
 
+  it('savePages aborts all writes when any page contains overlap', async () => {
+    const meta = await repo.loadMeta();
+    const sourceId = meta.activePageId;
+    const source = await repo.loadPage(sourceId);
+    const created = await repo.createPage('目标页', meta.revision);
+    const targetId = created.page.id;
+    const target = await repo.loadPage(targetId);
+
+    await expect(repo.savePages([
+      {
+        pageId: sourceId,
+        data: { nodes: [{ id: 'valid', title: 'valid', status: 'todo' }], edges: [] },
+        expectedVersion: source.version,
+      },
+      {
+        pageId: targetId,
+        data: {
+          nodes: [
+            { id: 'a', title: 'a', status: 'todo', x: 0, y: 0, width: 180 },
+            { id: 'b', title: 'b', status: 'todo', x: 0, y: 0, width: 180 },
+          ],
+          edges: [],
+        },
+        expectedVersion: target.version,
+      },
+    ])).rejects.toBeInstanceOf(NodeOverlapError);
+
+    expect(await repo.loadPage(sourceId)).toEqual(source);
+    expect(await repo.loadPage(targetId)).toEqual(target);
+  });
+
   it('rolls back earlier page writes if a later page write fails', async () => {
     const meta = await repo.loadMeta();
     const sourceId = meta.activePageId;
@@ -166,7 +217,9 @@ describe('FileWorkspaceRepository concurrency guards', () => {
           {
             pageId: sourceId,
             data: {
-              nodes: [...sourceBefore.nodes, { id: 'source-new', title: 'source-new', status: 'todo' }],
+            nodes: [...sourceBefore.nodes, {
+              id: 'source-new', title: 'source-new', status: 'todo', x: 10000, y: 10000,
+            }],
               edges: sourceBefore.edges,
             },
             expectedVersion: sourceBefore.version,
@@ -330,6 +383,25 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     await expect(repo.loadPage(pageId)).resolves.toEqual(live);
   });
 
+  it('repairs overlapping legacy backup data before restoring it', async () => {
+    const meta = await repo.loadMeta();
+    const pageId = meta.activePageId;
+    await repo.createBackup(pageId);
+    const backup = (await repo.listBackups(pageId))[0]!;
+    await fs.writeFile(path.join(userDir, 'backups', pageId, backup.name), JSON.stringify({
+      nodes: [
+        { id: 'a', title: 'a', status: 'todo', x: 0, y: 0, width: 180 },
+        { id: 'b', title: 'b', status: 'todo', x: 0, y: 0, width: 180 },
+      ],
+      edges: [],
+    }));
+
+    const restored = await repo.restoreBackup(pageId, backup.name);
+
+    expect(validateNoSiblingOverlaps(restored.nodes)).toEqual({ valid: true });
+    expect(await repo.loadPage(pageId)).toEqual(restored);
+  });
+
   it('restores the latest backup while preserving newer un-backed changes', async () => {
     const meta = await repo.loadMeta();
     const pageId = meta.pages[0]!.id;
@@ -377,6 +449,22 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     expect(restoredMeta.pages.map((p) => p.id)).toEqual(before.meta.pages.map((p) => p.id));
     expect(restoredMeta.revision).toBeGreaterThan(before.meta.revision);
     expect(restored.nodes.map((n) => n.id)).toEqual(before.pages[pageId]!.nodes.map((n) => n.id));
+  });
+
+  it('repairs overlapping pages while importing a legacy snapshot', async () => {
+    const snapshot = await repo.exportWorkspace();
+    const pageId = snapshot.meta.activePageId;
+    snapshot.pages[pageId] = {
+      nodes: [
+        { id: 'a', title: 'a', status: 'todo', x: 0, y: 0, width: 180 },
+        { id: 'b', title: 'b', status: 'todo', x: 0, y: 0, width: 180 },
+      ],
+      edges: [],
+    };
+
+    await repo.importWorkspace(snapshot);
+
+    expect(validateNoSiblingOverlaps((await repo.loadPage(pageId)).nodes)).toEqual({ valid: true });
   });
 
   it('round-trips legacy long titles through export and import', async () => {

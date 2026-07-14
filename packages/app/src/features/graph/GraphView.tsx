@@ -29,6 +29,7 @@ import {
   MAX_PAGE_TITLE_LENGTH,
   type CollisionRect,
   computeGroupSize,
+  computeNodeSizeMap,
   GROUP_PADDING_X,
   GROUP_PADDING_Y,
   CHILD_DEFAULT_W,
@@ -981,7 +982,7 @@ function GraphViewInner() {
           if (firstId === undefined) return;
           const first = nodesById.get(firstId);
           if (!first) return;
-          updateTasksBulk(ids.map((id) => ({ id, patch: { y: first.y ?? 0 } })));
+          updateTasksBulk(buildAlignedPatches(nodes, ids, 'horizontal'));
         },
         disabled: ids.length < 2 || !allHaveSameParent,
       },
@@ -992,7 +993,7 @@ function GraphViewInner() {
           if (firstId === undefined) return;
           const first = nodesById.get(firstId);
           if (!first) return;
-          updateTasksBulk(ids.map((id) => ({ id, patch: { x: first.x ?? 0 } })));
+          updateTasksBulk(buildAlignedPatches(nodes, ids, 'vertical'));
         },
         disabled: ids.length < 2 || !allHaveSameParent,
       },
@@ -1153,6 +1154,39 @@ function worldPositionOf(node: Task, byId: Map<string, Task>): { x: number; y: n
     parentId = parent.parentId;
   }
   return { x, y };
+}
+
+export function buildAlignedPatches(
+  nodes: Task[],
+  ids: readonly string[],
+  axis: 'horizontal' | 'vertical',
+): Array<{ id: string; patch: Partial<Task> }> {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const selected = ids.map((id) => byId.get(id)).filter((node): node is Task => Boolean(node));
+  if (selected.length === 0) return [];
+  const anchor = selected[0]!;
+  const sizeMap = computeNodeSizeMap(nodes);
+  const ordered = [...selected].sort((a, b) => axis === 'horizontal'
+    ? (a.x ?? 0) - (b.x ?? 0) || (a.y ?? 0) - (b.y ?? 0) || a.id.localeCompare(b.id)
+    : (a.y ?? 0) - (b.y ?? 0) || (a.x ?? 0) - (b.x ?? 0) || a.id.localeCompare(b.id));
+  let cursor = -Infinity;
+  const patches = new Map<string, Partial<Task>>();
+  for (const node of ordered) {
+    const size = sizeMap.get(node.id) ?? { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+    if (axis === 'horizontal') {
+      const x = Math.max(node.x ?? 0, cursor);
+      patches.set(node.id, { x, y: anchor.y ?? 0 });
+      cursor = x + size.w + 12;
+    } else {
+      const y = Math.max(node.y ?? 0, cursor);
+      patches.set(node.id, { x: anchor.x ?? 0, y });
+      cursor = y + size.h + 12;
+    }
+  }
+  return ids.flatMap((id) => {
+    const patch = patches.get(id);
+    return patch ? [{ id, patch }] : [];
+  });
 }
 
 export function GraphView() {

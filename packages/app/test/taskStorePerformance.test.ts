@@ -38,6 +38,31 @@ describe('task placement', () => {
     const rects = buildTopLevelCollisionRects(useTaskStore.getState().nodes);
     expect(rectsOverlap(rects[0]!, rects[1]!, 12)).toBe(false);
   });
+
+  it('keeps a directly positioned task pinned and pushes its sibling away', () => {
+    useTaskStore.setState({ nodes: [task('a', 0, 0), task('b', 240, 0)] });
+
+    useTaskStore.getState().updateTask('b', { x: 0, y: 0 });
+
+    const nodes = useTaskStore.getState().nodes;
+    expect(nodes.find((node) => node.id === 'b')).toMatchObject({ x: 0, y: 0 });
+    const rects = buildTopLevelCollisionRects(nodes);
+    expect(rectsOverlap(rects[0]!, rects[1]!, 12)).toBe(false);
+  });
+
+  it('repairs conflicting bulk positions deterministically', () => {
+    useTaskStore.setState({ nodes: [task('a', 0, 0), task('b', 240, 0)] });
+
+    useTaskStore.getState().updateTasksBulk([
+      { id: 'a', patch: { x: 100, y: 100 } },
+      { id: 'b', patch: { x: 100, y: 100 } },
+    ]);
+
+    const nodes = useTaskStore.getState().nodes;
+    expect(nodes.find((node) => node.id === 'a')).toMatchObject({ x: 100, y: 100 });
+    const rects = buildTopLevelCollisionRects(nodes);
+    expect(rectsOverlap(rects[0]!, rects[1]!, 12)).toBe(false);
+  });
 });
 
 describe('recommendation revision', () => {

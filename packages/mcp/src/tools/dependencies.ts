@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { resolveNodeOverlaps, type PageData } from '@todograph/shared';
 import type { client as ClientType } from '../client.js';
 import { backupBeforeMutation } from './backup.js';
 import { textResult } from './result.js';
@@ -14,11 +15,7 @@ export async function handleManageDependencies(
     remove?: Array<{ from: string; to: string }>;
   },
 ) {
-  const page = await c.get<{
-    nodes: Array<{ id: string }>;
-    edges: Array<{ from: string; to: string }>;
-    version?: number;
-  }>(`/api/pages/${encodeURIComponent(params.page_id)}`);
+  const page = await c.get<PageData>(`/api/pages/${encodeURIComponent(params.page_id)}`);
 
   const nodeIds = new Set(page.nodes.map((n) => n.id));
   const edgeSet = new Set(page.edges.map((e) => `${e.from}→${e.to}`));
@@ -68,7 +65,7 @@ export async function handleManageDependencies(
   try {
     await backupBeforeMutation(c, params.page_id);
     await c.put(`/api/pages/${encodeURIComponent(params.page_id)}`, {
-      nodes: page.nodes,
+      nodes: resolveNodeOverlaps(page.nodes).nodes,
       edges: newEdges,
       expectedVersion: page.version,
     });

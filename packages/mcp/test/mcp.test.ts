@@ -216,7 +216,10 @@ describe('MCP tools integration', () => {
         y: a.task.y,
       });
 
-      expect(updated.task.x === a.task.x && updated.task.y === a.task.y).toBe(false);
+      expect(updated.task).toMatchObject({ x: a.task.x, y: a.task.y });
+      const page = await handleGetPage(client, { page_id: pageId });
+      const movedA = page.tasks.find((task) => task.id === a.task.id)!;
+      expect(movedA.x === updated.task.x && movedA.y === updated.task.y).toBe(false);
     });
 
     it('update_task throws on nonexistent task', async () => {

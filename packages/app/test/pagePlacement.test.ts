@@ -5,8 +5,10 @@ import {
   computeNodeSizeMap,
   placeMovedNodesOnTarget,
   rectsOverlap,
+  resolveNodeOverlaps,
   resolveClusterTranslationAvoidingOccupied,
   separateSiblingNodeOverlaps,
+  validateNoSiblingOverlaps,
 } from '@todograph/shared';
 
 const task = (id: string, x: number, y: number, parentId?: string, title = id): Task => ({
@@ -195,6 +197,65 @@ describe('separateSiblingNodeOverlaps', () => {
     expect(rectsOverlap({ ...a, w: 180, h: 56 }, { ...b, w: 180, h: 56 }, 12)).toBe(false);
     const top = buildTopLevelCollisionRects(separated);
     expect(rectsOverlap(top[0]!, top[1]!, 12)).toBe(false);
+  });
+
+  it('keeps the changed child and expanded parent pinned while moving siblings', () => {
+    const input = [
+      task('group', 0, 0),
+      task('outside', 240, 0),
+      task('existing-child', 24, 60, 'group'),
+      task('new-child', 240, 60, 'group'),
+    ];
+    const result = resolveNodeOverlaps(input, {
+      changedIds: ['new-child'],
+      pinnedIds: ['new-child'],
+    });
+
+    expect(result.nodes.find((node) => node.id === 'new-child')).toMatchObject({ x: 240, y: 60 });
+    expect(result.nodes.find((node) => node.id === 'group')).toMatchObject({ x: 0, y: 0 });
+    expect(result.movedIds).toContain('outside');
+    expect(validateNoSiblingOverlaps(result.nodes)).toEqual({ valid: true });
+  });
+
+  it('normalizes a child extending left of its parent before resolving outer overlap', () => {
+    const input = [
+      task('outside', 100, 0),
+      task('group', 300, 0),
+      task('child', -100, 60, 'group'),
+    ];
+
+    const result = resolveNodeOverlaps(input, {
+      changedIds: ['child'],
+      pinnedIds: ['child'],
+    });
+    const group = result.nodes.find((node) => node.id === 'group')!;
+    const child = result.nodes.find((node) => node.id === 'child')!;
+
+    expect((group.x ?? 0) + (child.x ?? 0)).toBe(200);
+    expect(child.x).toBe(24);
+    expect(validateNoSiblingOverlaps(result.nodes)).toEqual({ valid: true });
+  });
+
+  it('uses a bounded fallback for a dense invalid scope', () => {
+    const input = Array.from({ length: 1000 }, (_, index) => task(`dense-${index}`, 0, 0));
+    const result = resolveNodeOverlaps(input, { candidateBudget: 0 });
+
+    expect(result.fallbackUsed).toBe(true);
+    expect(result.nodes).toHaveLength(1000);
+    expect(validateNoSiblingOverlaps(result.nodes)).toEqual({ valid: true });
+  });
+
+  it('validates only siblings and reports their parent scope', () => {
+    const result = validateNoSiblingOverlaps([
+      task('parent', 0, 0),
+      task('a', 24, 60, 'parent'),
+      task('b', 24, 60, 'parent'),
+    ]);
+
+    expect(result).toEqual({
+      valid: false,
+      conflicts: [{ firstId: 'a', secondId: 'b', parentId: 'parent' }],
+    });
   });
 });
 

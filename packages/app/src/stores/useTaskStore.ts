@@ -9,7 +9,7 @@ import {
   GROUP_PADDING_X,
   GROUP_PADDING_Y,
   MAX_HIERARCHY_DEPTH,
-  separateSiblingNodeOverlaps,
+  resolveNodeOverlaps,
 } from '@todograph/shared';
 import { useHistoryStore } from './useHistoryStore';
 import { emitAllTasksInvalidated } from './workspaceEvents';
@@ -69,7 +69,7 @@ interface TaskStore {
     childIds: string[],
     opts?: { title?: string; existingParentId?: string },
   ) => string | null;
-  normalizeGroupBounds: (parentId: string) => boolean;
+  normalizeGroupBounds: (parentId: string, changedIds?: readonly string[]) => boolean;
   /** 回滚到最后一次 push 的快照；返回是否真正发生回滚。 */
   undo: () => boolean;
   /** 重新应用 redo 栈顶的快照；返回是否真正发生前进。 */
@@ -233,6 +233,22 @@ export function pureNormalizeGroupBounds(nodes: Task[], parentId: string): Task[
   });
 }
 
+function repairGeometry(
+  nodes: Task[],
+  changedIds?: readonly string[],
+  pinnedIds: readonly string[] = changedIds ?? [],
+): Task[] {
+  return resolveNodeOverlaps(nodes, { changedIds, pinnedIds }).nodes;
+}
+
+function patchAffectsGeometry(patch: Partial<Task>): boolean {
+  return patch.x !== undefined ||
+    patch.y !== undefined ||
+    patch.width !== undefined ||
+    patch.title !== undefined ||
+    Object.prototype.hasOwnProperty.call(patch, 'parentId');
+}
+
 export const useTaskStore = create<TaskStore>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingPageId: string | null = null;
@@ -255,14 +271,16 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         if (hasPendingSave()) return;
         const { activePageId, pageVersion } = get();
         if (g.version !== pageVersion && activePageId === pageId) {
+          const repaired = repairGeometry(g.nodes);
           set((state) => ({
-            nodes: g.nodes,
+            nodes: repaired,
             edges: g.edges,
             pageVersion: g.version ?? 0,
             backupDirty: false,
             recommendationRevision: state.recommendationRevision + 1,
           }));
           useHistoryStore.getState().clear();
+          if (repaired !== g.nodes) scheduleSave();
         }
       } catch {
       } finally {
@@ -338,10 +356,11 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     useHistoryStore.getState().push({ nodes, edges });
   };
   const applyPage = (pageId: string, data: PageData) => {
+    const repaired = repairGeometry(data.nodes);
     set((state) => ({
       activePageId: pageId,
       pageVersion: data.version ?? 0,
-      nodes: data.nodes,
+      nodes: repaired,
       edges: data.edges,
       loaded: true,
       viewportCenter: null,
@@ -349,6 +368,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       recommendationRevision: state.recommendationRevision + 1,
     }));
     useHistoryStore.getState().clear();
+    if (repaired !== data.nodes) scheduleSave();
   };
   const cancelScheduledSave = () => {
     if (saveTimer) clearTimeout(saveTimer);
@@ -418,7 +438,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         ...(parentId ? { parentId } : {}),
       };
       set((s) => ({
-        nodes: separateSiblingNodeOverlaps([...s.nodes, t]),
+        nodes: repairGeometry([...s.nodes, t], [t.id]),
         recommendationRevision: s.recommendationRevision + 1,
       }));
       scheduleSave();
@@ -440,7 +460,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         });
         return changed
           ? {
-              nodes: patch.title === undefined ? next : separateSiblingNodeOverlaps(next),
+              nodes: patchAffectsGeometry(patch) ? repairGeometry(next, [id]) : next,
               recommendationRevision:
                 patch.status === undefined
                   ? s.recommendationRevision
@@ -455,15 +475,21 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       pushPre();
       const byId = new Map(patches.map((p) => [p.id, p.patch]));
       const affectsRecommendation = patches.some(({ patch }) => patch.status !== undefined);
-      set((s) => ({
-        nodes: s.nodes.map((n) => {
+      const geometryIds = patches
+        .filter(({ patch }) => patchAffectsGeometry(patch))
+        .map(({ id }) => id);
+      set((s) => {
+        const next = s.nodes.map((n) => {
           const p = byId.get(n.id);
           return p ? { ...n, ...p } : n;
-        }),
-        recommendationRevision: affectsRecommendation
-          ? s.recommendationRevision + 1
-          : s.recommendationRevision,
-      }));
+        });
+        return {
+          nodes: geometryIds.length > 0 ? repairGeometry(next, geometryIds) : next,
+          recommendationRevision: affectsRecommendation
+            ? s.recommendationRevision + 1
+            : s.recommendationRevision,
+        };
+      });
       scheduleSave();
     },
     deleteTask: (id) => {
@@ -479,8 +505,11 @@ export const useTaskStore = create<TaskStore>((set, get) => {
               ? { ...n, parentId: undefined, x: (n.x ?? 0) + px, y: (n.y ?? 0) + py }
               : n,
           );
+        const changedIds = s.nodes
+          .filter((node) => node.parentId === id)
+          .map((node) => node.id);
         return {
-          nodes: separateSiblingNodeOverlaps(nodes),
+          nodes: repairGeometry(nodes, changedIds),
           edges: s.edges.filter((e) => e.from !== id && e.to !== id),
           recommendationRevision: s.recommendationRevision + 1,
         };
@@ -575,7 +604,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       }
 
       set({
-        nodes: separateSiblingNodeOverlaps([...state.nodes, newTask]),
+        nodes: repairGeometry([...state.nodes, newTask], [newTask.id]),
         edges,
         recommendationRevision: state.recommendationRevision + 1,
       });
@@ -618,9 +647,9 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         nodes: s.nodes.map((n) => (n.id === childId ? { ...n, ...patch } : n)),
       }));
       if (parentId) {
-        get().normalizeGroupBounds(parentId);
+        get().normalizeGroupBounds(parentId, [childId]);
       } else {
-        set((s) => ({ nodes: separateSiblingNodeOverlaps(s.nodes) }));
+        set((s) => ({ nodes: repairGeometry(s.nodes, [childId]) }));
       }
       scheduleSave();
       return true;
@@ -715,7 +744,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
           };
         });
         return {
-          nodes: separateSiblingNodeOverlaps(next),
+          nodes: repairGeometry(next, [parentId, ...targets], [parentId, ...targets]),
           recommendationRevision: isNewParent
             ? s.recommendationRevision + 1
             : s.recommendationRevision,
@@ -724,10 +753,10 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       scheduleSave();
       return parentId;
     },
-    normalizeGroupBounds: (parentId) => {
+    normalizeGroupBounds: (parentId, changedIds = [parentId]) => {
       const before = get().nodes;
       const normalized = pureNormalizeGroupBounds(before, parentId);
-      const after = separateSiblingNodeOverlaps(normalized);
+      const after = repairGeometry(normalized, changedIds);
       if (after === before) return false;
       set({ nodes: after });
       scheduleSave();
@@ -739,7 +768,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       const current = { nodes: get().nodes, edges: get().edges };
       useHistoryStore.getState().pushToRedo(current);
       set((state) => ({
-        nodes: prev.nodes,
+        nodes: repairGeometry(prev.nodes),
         edges: prev.edges,
         recommendationRevision: state.recommendationRevision + 1,
       }));
@@ -752,7 +781,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       const current = { nodes: get().nodes, edges: get().edges };
       useHistoryStore.getState().pushToUndo(current);
       set((state) => ({
-        nodes: next.nodes,
+        nodes: repairGeometry(next.nodes),
         edges: next.edges,
         recommendationRevision: state.recommendationRevision + 1,
       }));

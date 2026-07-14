@@ -3,6 +3,7 @@ import {
   MAX_PAGE_TITLE_LENGTH,
   PageDataSchema,
   placeMovedNodesOnTarget,
+  resolveNodeOverlaps,
   validateDependencyEdges,
   validateTaskHierarchy,
   type AllTasksItem,
@@ -17,6 +18,7 @@ import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import {
   MetaVersionConflictError,
+  NodeOverlapError,
   TaskTitleTooLongError,
   type WorkspaceRepository,
   VersionConflictError,
@@ -190,6 +192,15 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
           maxLength: err.maxLength,
         };
       }
+      if (err instanceof NodeOverlapError) {
+        reply.status(422);
+        return {
+          ok: false,
+          code: 'node-overlap',
+          error: err.message,
+          conflicts: err.conflicts,
+        };
+      }
       throw err;
     }
   });
@@ -356,6 +367,10 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         reply.status(409);
         return { ok: false, error: err.message, pageId: err.pageId, serverVersion: err.serverVersion };
       }
+      if (err instanceof NodeOverlapError) {
+        reply.status(422);
+        return { ok: false, code: 'node-overlap', error: err.message, conflicts: err.conflicts };
+      }
       reply.status(400);
       return { ok: false, error: (err as Error).message };
     }
@@ -519,12 +534,13 @@ async function moveNodesBetweenPages(
   }
 
   const newSource: PageData = {
-    nodes: source.nodes.filter((n) => !toMove.has(n.id)),
+    nodes: resolveNodeOverlaps(source.nodes.filter((n) => !toMove.has(n.id))).nodes,
     edges: source.edges.filter((e) => !toMove.has(e.from) && !toMove.has(e.to)),
   };
-  const placedMovedNodes = placeMovedNodesOnTarget(target.nodes, movedNodes);
+  const safeTargetNodes = resolveNodeOverlaps(target.nodes).nodes;
+  const placedMovedNodes = placeMovedNodesOnTarget(safeTargetNodes, movedNodes);
   const newTarget: PageData = {
-    nodes: [...target.nodes, ...placedMovedNodes],
+    nodes: [...safeTargetNodes, ...placedMovedNodes],
     edges: [...target.edges, ...movedEdges],
   };
 

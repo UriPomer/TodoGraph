@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import dagre from 'dagre';
+import { CHILD_DEFAULT_H, CHILD_DEFAULT_W, computeNodeSizeMap, type Task } from '@todograph/shared';
 import type { client as ClientType } from '../client.js';
 
 // ── Handler ──
@@ -25,14 +26,17 @@ export async function handleAutoLayout(
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80, marginx: 20, marginy: 20 });
 
-  const DEFAULT_W = 180;
-  const DEFAULT_H = 56;
+  const nodes = page.nodes as Task[];
+  const roots = nodes.filter((node) => !node.parentId);
+  const rootIds = new Set(roots.map((node) => node.id));
+  const sizeMap = computeNodeSizeMap(nodes);
 
-  for (const n of page.nodes) {
-    g.setNode(n.id, { width: n.width ?? DEFAULT_W, height: DEFAULT_H });
+  for (const n of roots) {
+    const size = sizeMap.get(n.id) ?? { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+    g.setNode(n.id, { width: size.w, height: size.h });
   }
   for (const e of page.edges) {
-    g.setEdge(e.from, e.to);
+    if (rootIds.has(e.from) && rootIds.has(e.to)) g.setEdge(e.from, e.to);
   }
 
   dagre.layout(g);
@@ -40,12 +44,11 @@ export async function handleAutoLayout(
   const positions = page.nodes.map((n) => {
     const p = g.node(n.id);
     if (!p) return { task_id: n.id, x: n.x ?? 0, y: n.y ?? 0 };
-    const w = n.width ?? DEFAULT_W;
-    const h = DEFAULT_H;
+    const size = sizeMap.get(n.id) ?? { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
     return {
       task_id: n.id,
-      x: Math.round(p.x - w / 2),
-      y: Math.round(p.y - h / 2),
+      x: Math.round(p.x - size.w / 2),
+      y: Math.round(p.y - size.h / 2),
     };
   });
 
