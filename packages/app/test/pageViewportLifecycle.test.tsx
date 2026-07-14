@@ -1,9 +1,12 @@
 import { act, create } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { OnMove, ReactFlowInstance, Viewport } from '@xyflow/react';
-import { usePageViewportLifecycle } from '@/features/graph/usePageViewportLifecycle';
+import type { ReactFlowInstance, Viewport } from '@xyflow/react';
+import {
+  type PageViewportLifecycle,
+  usePageViewportLifecycle,
+} from '@/features/graph/usePageViewportLifecycle';
 
-let onMove: OnMove | null = null;
+let viewportLifecycle: PageViewportLifecycle | null = null;
 
 function Harness({
   activePageId,
@@ -14,8 +17,9 @@ function Harness({
   cache: Map<string, Viewport>;
   rf: ReactFlowInstance;
 }) {
-  onMove = usePageViewportLifecycle({
+  viewportLifecycle = usePageViewportLifecycle({
     activePageId,
+    renderedPageId: activePageId,
     nodeIds: [],
     renderedNodes: [],
     cache,
@@ -27,7 +31,7 @@ function Harness({
 
 describe('page viewport lifecycle', () => {
   afterEach(() => {
-    onMove = null;
+    viewportLifecycle = null;
     vi.unstubAllGlobals();
   });
 
@@ -63,13 +67,154 @@ describe('page viewport lifecycle', () => {
       renderer.update(<Harness activePageId="b" cache={secondCache} rf={rf} />);
     });
     act(() => {
-      onMove?.(null, { x: 20, y: 30, zoom: 1.2 });
+      viewportLifecycle?.onMoveEnd(null, { x: 20, y: 30, zoom: 1.2 });
     });
 
     expect(secondCache.get('b')).toEqual({ x: 20, y: 30, zoom: 1.2 });
     expect(firstCache.has('b')).toBe(false);
 
     await act(async () => finishOldRestore(true));
+    act(() => renderer.unmount());
+  });
+
+  it('clamps a cached viewport to the graph zoom limit', async () => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+
+    const cache = new Map<string, Viewport>([
+      ['a', { x: 20, y: 30, zoom: 1.8 }],
+    ]);
+    const setViewport = vi.fn(async () => true);
+    const rf = {
+      getViewport: () => ({ x: 0, y: 0, zoom: 1 }),
+      setViewport,
+    } as unknown as ReactFlowInstance;
+
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(<Harness activePageId="a" cache={cache} rf={rf} />);
+    });
+
+    expect(setViewport).toHaveBeenCalledWith({ x: 20, y: 30, zoom: 1 });
+    expect(viewportLifecycle?.isRestoring).toBe(false);
+    act(() => renderer.unmount());
+  });
+
+  it('keeps a new page hidden until its relaxed fit view settles', async () => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+
+    let currentViewport = { x: 0, y: 0, zoom: 1 };
+    let finishSecondFit!: (success: boolean) => void;
+    const secondFit = new Promise<boolean>((resolve) => { finishSecondFit = resolve; });
+    const fitView = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(true)
+      .mockImplementationOnce(() => secondFit);
+    const rf = {
+      getViewport: () => currentViewport,
+      fitView,
+    } as unknown as ReactFlowInstance;
+    const cache = new Map<string, Viewport>();
+
+    function FitHarness({
+      activePageId,
+      renderedPageId,
+    }: {
+      activePageId: string;
+      renderedPageId: string;
+    }) {
+      viewportLifecycle = usePageViewportLifecycle({
+        activePageId,
+        renderedPageId,
+        nodeIds: ['node'],
+        renderedNodes: [{ id: 'node', width: 180, height: 56 }],
+        cache,
+        rf,
+        updateViewportCenter: vi.fn(),
+      });
+      return null;
+    }
+
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(<FitHarness activePageId="a" renderedPageId="a" />);
+    });
+    expect(viewportLifecycle?.isRestoring).toBe(false);
+
+    await act(async () => {
+      renderer.update(<FitHarness activePageId="b" renderedPageId="a" />);
+    });
+    expect(viewportLifecycle?.isRestoring).toBe(true);
+    expect(fitView).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      renderer.update(<FitHarness activePageId="b" renderedPageId="b" />);
+    });
+    expect(viewportLifecycle?.isRestoring).toBe(true);
+    expect(fitView).toHaveBeenLastCalledWith({ padding: 0.3, maxZoom: 1 });
+
+    currentViewport = { x: 30, y: 40, zoom: 0.9 };
+    await act(async () => finishSecondFit(true));
+    expect(viewportLifecycle?.isRestoring).toBe(false);
+
+    act(() => renderer.unmount());
+  });
+
+  it('enters performance mode only for the active viewport gesture', async () => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+
+    const cache = new Map<string, Viewport>();
+    const updateViewportCenter = vi.fn();
+    let currentViewport = { x: 0, y: 0, zoom: 1 };
+    const rf = {
+      getViewport: () => currentViewport,
+      setViewport: vi.fn(async (viewport: Viewport) => {
+        currentViewport = viewport;
+        return true;
+      }),
+    } as unknown as ReactFlowInstance;
+
+    function PerformanceHarness() {
+      viewportLifecycle = usePageViewportLifecycle({
+        activePageId: 'a',
+        renderedPageId: 'a',
+        nodeIds: [],
+        renderedNodes: [],
+        cache,
+        rf,
+        updateViewportCenter,
+      });
+      return null;
+    }
+
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(<PerformanceHarness />);
+    });
+    act(() => {
+      viewportLifecycle?.onMoveStart(null, currentViewport);
+    });
+    expect(viewportLifecycle?.isMoving).toBe(true);
+
+    const settledViewport = { x: 40, y: 60, zoom: 1.1 };
+    act(() => {
+      viewportLifecycle?.onMoveEnd(null, settledViewport);
+    });
+    expect(viewportLifecycle?.isMoving).toBe(false);
+    expect(cache.get('a')).toEqual(settledViewport);
+    expect(updateViewportCenter).toHaveBeenCalled();
+
     act(() => renderer.unmount());
   });
 });

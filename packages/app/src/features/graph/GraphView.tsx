@@ -53,7 +53,10 @@ import { InlineCreateInput } from './InlineCreateInput';
 import { dagreLayout } from './useAutoLayout';
 import { resolvePinnedDropPushAway } from './dropCollision';
 import { useTouchManager } from './useTouchManager';
-import { usePageViewportLifecycle } from './usePageViewportLifecycle';
+import {
+  PAGE_VIEWPORT_MAX_ZOOM,
+  usePageViewportLifecycle,
+} from './usePageViewportLifecycle';
 import { MultiDragSession } from './multiDragSession';
 import { claimPageForAutoLayout } from './pageAutoLayout';
 const nodeTypes: NodeTypes = {
@@ -101,6 +104,7 @@ function GraphViewInner() {
     lastMousePosRef.current = { x: e.clientX, y: e.clientY };
   }, []);
   const [rfNodes, setRfNodes] = useState<RFTaskNode[]>([]);
+  const [rfNodesPageId, setRfNodesPageId] = useState<string | null>(null);
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if ((e.key === ' ' || e.key === 'Enter') && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
@@ -294,7 +298,8 @@ function GraphViewInner() {
       dataCacheRef.current = nextCache;
       return built;
     });
-  }, [nodes, readySet, recommended, parentMap]);
+    setRfNodesPageId(activePageId);
+  }, [activePageId, nodes, readySet, recommended, parentMap]);
   const updateNodeInternals = useUpdateNodeInternals();
   useEffect(() => {
     const ids = new Set<string>([...parentMap.keys(), ...resizedGroupIds]);
@@ -854,8 +859,14 @@ function GraphViewInner() {
     () => rfNodes.filter((node) => node.id !== GHOST_ID),
     [rfNodes],
   );
-  const onMoveEnd = usePageViewportLifecycle({
+  const {
+    isMoving: isViewportMoving,
+    isRestoring: isViewportRestoring,
+    onMoveStart,
+    onMoveEnd,
+  } = usePageViewportLifecycle({
     activePageId,
+    renderedPageId: rfNodesPageId,
     nodeIds: viewportNodeIds,
     renderedNodes: viewportRenderedNodes,
     cache: pageViewportCache,
@@ -1017,8 +1028,8 @@ function GraphViewInner() {
     ];
   }, [selectionMenu, nodes, groupTasks, setParent, updateTasksBulk, deleteTask, promptMoveSelectionToPage, insertBetween]);
   return (
-    <div ref={containerRef} className="relative h-full w-full" style={{ touchAction: 'none', WebkitTouchCallout: 'none' }} onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
-      <div className="absolute left-3 right-3 top-3 z-10 flex items-center justify-center gap-2 rounded-xl border border-border bg-card/90 p-2 backdrop-blur lg:right-auto lg:justify-start lg:rounded-lg">
+    <div ref={containerRef} className={`graph-surface relative h-full w-full${isViewportMoving ? ' graph-viewport-moving' : ''}${isViewportRestoring ? ' graph-viewport-restoring' : ''}`} style={{ touchAction: 'none', WebkitTouchCallout: 'none' }} onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
+      <div className="graph-toolbar absolute left-3 right-3 top-3 z-10 flex items-center justify-center gap-2 rounded-xl border border-border bg-card/90 p-2 backdrop-blur lg:right-auto lg:justify-start lg:rounded-lg">
         <span className="text-xs text-muted-foreground hidden lg:inline">
           拖 <b>●</b> 连边；拖到空白处创建新节点；<kbd className="text-[10px]">Shift</kbd>+左键框选
         </span>
@@ -1066,35 +1077,39 @@ function GraphViewInner() {
         onNodeClick={onNodeClick}
         onSelectionChange={onSelectionChange}
         onSelectionEnd={onSelectionEnd}
+        onMoveStart={onMoveStart}
         onMoveEnd={onMoveEnd}
         selectionKeyCode="Shift"
         multiSelectionKeyCode={['Meta', 'Control', 'Shift']}
         connectionRadius={48}
+        maxZoom={PAGE_VIEWPORT_MAX_ZOOM}
         defaultEdgeOptions={{ interactionWidth: 32 }}
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={null}
       >
         <Background gap={24} size={1} color="hsl(var(--border))" />
         <Controls />
-        <MiniMap
-          pannable
-          zoomable
-          ariaLabel="概览"
-          position="bottom-right"
-          nodeColor={(node) => {
-            const s = (node.data as TaskNodeData | undefined)?.status;
-            if (s === 'done') return 'hsl(var(--muted-foreground) / 0.6)';
-            if (s === 'doing') return 'hsl(var(--primary))';
-            return 'hsl(var(--muted-foreground) / 0.35)';
-          }}
-          nodeStrokeWidth={0}
-          nodeBorderRadius={3}
-          maskColor="hsl(var(--background) / 0.6)"
-          maskStrokeColor="hsl(var(--border))"
-          maskStrokeWidth={1}
-          className="!bg-card/80 !border-border !rounded-lg !shadow-md backdrop-blur"
-          style={{ width: 160, height: 110 }}
-        />
+        {!isViewportMoving && !isViewportRestoring && (
+          <MiniMap
+            pannable
+            zoomable
+            ariaLabel="概览"
+            position="bottom-right"
+            nodeColor={(node) => {
+              const s = (node.data as TaskNodeData | undefined)?.status;
+              if (s === 'done') return 'hsl(var(--muted-foreground) / 0.6)';
+              if (s === 'doing') return 'hsl(var(--primary))';
+              return 'hsl(var(--muted-foreground) / 0.35)';
+            }}
+            nodeStrokeWidth={0}
+            nodeBorderRadius={3}
+            maskColor="hsl(var(--background) / 0.6)"
+            maskStrokeColor="hsl(var(--border))"
+            maskStrokeWidth={1}
+            className="!bg-card/80 !border-border !rounded-lg !shadow-md backdrop-blur"
+            style={{ width: 160, height: 110 }}
+          />
+        )}
       </ReactFlow>
 
       {pendingCreate && (
