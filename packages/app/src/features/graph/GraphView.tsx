@@ -72,9 +72,11 @@ const UNGROUP_CONFIRM_DEFAULT_MS = 600;
 const UNGROUP_ESCAPE_PX = 12;
 /** ghost overlay 的固定 id —— 用于在命中检测里排除自己 */
 const GHOST_ID = '__merge_ghost__';
+const DESKTOP_MIN_ZOOM = 0.5;
+const MOBILE_MIN_ZOOM = 0.1;
 interface RFTaskNode extends RFNode<TaskNodeData | GroupNodeData | MergeGhostData> {}
 
-function GraphViewInner() {
+function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile' }) {
   const nodes = useTaskStore((s) => s.nodes);
   const edges = useTaskStore((s) => s.edges);
   const activePageId = useTaskStore((s) => s.activePageId);
@@ -84,6 +86,8 @@ function GraphViewInner() {
   const insertBetween = useTaskStore((s) => s.insertBetween);
   const updateTasksBulk = useTaskStore((s) => s.updateTasksBulk);
   const deleteTask = useTaskStore((s) => s.deleteTask);
+  const deleteTasks = useTaskStore((s) => s.deleteTasks);
+  const detachTasks = useTaskStore((s) => s.detachTasks);
   const setParent = useTaskStore((s) => s.setParent);
   const groupTasks = useTaskStore((s) => s.groupTasks);
   const normalizeGroupBounds = useTaskStore((s) => s.normalizeGroupBounds);
@@ -95,6 +99,10 @@ function GraphViewInner() {
   const { graph, readySet, recommended } = useDerived();
   const rf = useReactFlow();
   const containerRef = useRef<HTMLDivElement>(null);
+  const getViewportDimensions = useCallback(() => ({
+    width: containerRef.current?.clientWidth ?? 0,
+    height: containerRef.current?.clientHeight ?? 0,
+  }), []);
   const mergeHoverMs = workspaceMeta?.settings?.mergeHoverMs ?? MERGE_HOVER_DEFAULT_MS;
   const ungroupConfirmMs =
     workspaceMeta?.settings?.ungroupConfirmMs ?? UNGROUP_CONFIRM_DEFAULT_MS;
@@ -859,6 +867,7 @@ function GraphViewInner() {
     () => rfNodes.filter((node) => node.id !== GHOST_ID),
     [rfNodes],
   );
+  const minZoom = viewportScope === 'mobile' ? MOBILE_MIN_ZOOM : DESKTOP_MIN_ZOOM;
   const {
     isMoving: isViewportMoving,
     isRestoring: isViewportRestoring,
@@ -867,10 +876,13 @@ function GraphViewInner() {
   } = usePageViewportLifecycle({
     activePageId,
     renderedPageId: rfNodesPageId,
+    viewportScope,
+    minZoom,
     nodeIds: viewportNodeIds,
     renderedNodes: viewportRenderedNodes,
     cache: pageViewportCache,
     rf,
+    getViewportDimensions,
     updateViewportCenter,
   });
   const selectedIdsRef = useRef<string[]>([]);
@@ -982,7 +994,7 @@ function GraphViewInner() {
         label: '解除分组',
         hint: '清除 parentId',
         onClick: () => {
-          for (const id of ids) setParent(id, null);
+          detachTasks(ids);
         },
         disabled: !ids.some((id) => nodesById.get(id)?.parentId),
       },
@@ -1022,11 +1034,11 @@ function GraphViewInner() {
         onClick: async () => {
           const ok = await dialog.confirm(`删除选中的 ${ids.length} 个任务`, { danger: true });
           if (!ok) return;
-          for (const id of ids) deleteTask(id);
+          deleteTasks(ids);
         },
       },
     ];
-  }, [selectionMenu, nodes, groupTasks, setParent, updateTasksBulk, deleteTask, promptMoveSelectionToPage, insertBetween]);
+  }, [selectionMenu, nodes, groupTasks, setParent, detachTasks, updateTasksBulk, deleteTasks, promptMoveSelectionToPage, insertBetween]);
   return (
     <div ref={containerRef} className={`graph-surface relative h-full w-full${isViewportMoving ? ' graph-viewport-moving' : ''}${isViewportRestoring ? ' graph-viewport-restoring' : ''}`} style={{ touchAction: 'none', WebkitTouchCallout: 'none' }} onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
       <div className="graph-toolbar absolute left-3 right-3 top-3 z-10 flex items-center justify-center gap-2 rounded-xl border border-border bg-card/90 p-2 backdrop-blur lg:right-auto lg:justify-start lg:rounded-lg">
@@ -1082,6 +1094,7 @@ function GraphViewInner() {
         selectionKeyCode="Shift"
         multiSelectionKeyCode={['Meta', 'Control', 'Shift']}
         connectionRadius={48}
+        minZoom={minZoom}
         maxZoom={PAGE_VIEWPORT_MAX_ZOOM}
         defaultEdgeOptions={{ interactionWidth: 32 }}
         proOptions={{ hideAttribution: true }}
@@ -1204,10 +1217,10 @@ export function buildAlignedPatches(
   });
 }
 
-export function GraphView() {
+export function GraphView({ viewportScope }: { viewportScope: 'desktop' | 'mobile' }) {
   return (
     <ReactFlowProvider>
-      <GraphViewInner />
+      <GraphViewInner viewportScope={viewportScope} />
     </ReactFlowProvider>
   );
 }

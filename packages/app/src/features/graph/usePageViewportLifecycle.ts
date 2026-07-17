@@ -1,17 +1,23 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { Node, OnMove, ReactFlowInstance, Viewport } from '@xyflow/react';
+import type { Node, OnMove, ReactFlowInstance } from '@xyflow/react';
 import {
   arePageViewportNodesReady,
+  type PageViewportCache,
   PageViewportController,
+  type ViewportDimensions,
+  type ViewportScope,
 } from './pageViewportCache';
 
 interface PageViewportLifecycleOptions {
   activePageId: string | null;
   renderedPageId: string | null;
+  viewportScope: ViewportScope;
+  minZoom: number;
   nodeIds: string[];
   renderedNodes: Array<Pick<Node, 'id' | 'width' | 'height' | 'measured'>>;
-  cache: Map<string, Viewport>;
+  cache: PageViewportCache;
   rf: ReactFlowInstance;
+  getViewportDimensions: () => ViewportDimensions;
   updateViewportCenter: () => void;
 }
 
@@ -27,20 +33,29 @@ export interface PageViewportLifecycle {
 export function usePageViewportLifecycle({
   activePageId,
   renderedPageId,
+  viewportScope,
+  minZoom,
   nodeIds,
   renderedNodes,
   cache,
   rf,
+  getViewportDimensions,
   updateViewportCenter,
 }: PageViewportLifecycleOptions): PageViewportLifecycle {
   const controllerRef = useRef<{
-    cache: Map<string, Viewport>;
+    cache: PageViewportCache;
+    viewportScope: ViewportScope;
     controller: PageViewportController;
   } | null>(null);
-  if (!controllerRef.current || controllerRef.current.cache !== cache) {
+  if (
+    !controllerRef.current ||
+    controllerRef.current.cache !== cache ||
+    controllerRef.current.viewportScope !== viewportScope
+  ) {
     controllerRef.current = {
       cache,
-      controller: new PageViewportController(activePageId, cache),
+      viewportScope,
+      controller: new PageViewportController(activePageId, cache, viewportScope, getViewportDimensions),
     };
   }
   const controller = controllerRef.current.controller;
@@ -106,7 +121,7 @@ export function usePageViewportLifecycle({
               zoom: Math.min(token.cachedViewport.zoom, PAGE_VIEWPORT_MAX_ZOOM),
             })
           : nodeIds.length > 0
-            ? rf.fitView({ padding: 0.3, maxZoom: PAGE_VIEWPORT_MAX_ZOOM })
+            ? rf.fitView({ padding: 0.3, minZoom, maxZoom: PAGE_VIEWPORT_MAX_ZOOM })
             : rf.setViewport({ x: 0, y: 0, zoom: 1 });
         void restored.then(complete, () => complete(false));
       } catch {
@@ -114,7 +129,7 @@ export function usePageViewportLifecycle({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [activePageId, controller, nodeIds, renderedNodes, renderedPageId, rf, transitionRevision, updateViewportCenter]);
+  }, [activePageId, controller, minZoom, nodeIds, renderedNodes, renderedPageId, rf, transitionRevision, updateViewportCenter]);
 
   const onMoveStart = useCallback<OnMove>((event) => {
     const target = event?.target;

@@ -188,6 +188,44 @@ describe('workspace/task store conflict handling', () => {
     expect(api.setActivePage).not.toHaveBeenCalled();
   });
 
+  it('does not let an older page switch overwrite a newer one', async () => {
+    const first = makePage('p-1', '第一页', 0);
+    const second = makePage('p-2', '第二页', 1);
+    const third = makePage('p-3', '第三页', 2);
+    const meta = makeMeta(1, first.id, [first, second, third]);
+    let finishSecond!: () => void;
+    let finishThird!: () => void;
+
+    useWorkspaceStore.setState({ meta, loaded: true });
+    useTaskStore.setState({
+      activePageId: first.id,
+      pageVersion: 1,
+      nodes: makePageData(1, 'first').nodes,
+      edges: [],
+      loaded: true,
+    });
+    api.loadPage.mockImplementation((pageId: string) => new Promise<PageData>((resolve) => {
+      const finish = () => resolve(makePageData(1, pageId));
+      if (pageId === second.id) finishSecond = finish;
+      else finishThird = finish;
+    }));
+    api.setActivePage.mockImplementation(async (pageId: string) => ({ ...meta, activePageId: pageId }));
+
+    const switchToSecond = useWorkspaceStore.getState().switchPage(second.id);
+    await vi.waitFor(() => expect(api.loadPage).toHaveBeenCalledTimes(1));
+    const switchToThird = useWorkspaceStore.getState().switchPage(third.id);
+    await vi.waitFor(() => expect(api.loadPage).toHaveBeenCalledTimes(2));
+    finishThird();
+    await switchToThird;
+    finishSecond();
+    await switchToSecond;
+
+    expect(useTaskStore.getState().activePageId).toBe(third.id);
+    expect(useWorkspaceStore.getState().meta?.activePageId).toBe(third.id);
+    expect(api.setActivePage).toHaveBeenCalledTimes(1);
+    expect(api.setActivePage).toHaveBeenCalledWith(third.id, meta.revision);
+  });
+
   it('moves nodes to a newly created page using refreshed meta', async () => {
     const sourcePage = makePage('p-source', '源页面', 0);
     const targetPage = makePage('p-target', '新页面', 1);

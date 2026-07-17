@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildTopLevelCollisionRects, rectsOverlap, type Task } from '@todograph/shared';
 import { useTaskStore } from '@/stores/useTaskStore';
+import { useHistoryStore } from '@/stores/useHistoryStore';
 
 const task = (id: string, x: number, y: number, parentId?: string): Task => ({
   id,
@@ -18,6 +19,102 @@ beforeEach(() => {
     nodes: [],
     edges: [],
     recommendationRevision: 0,
+  });
+  useHistoryStore.getState().clear();
+});
+
+describe('atomic hierarchy commands', () => {
+  const worldPosition = (nodes: Task[], id: string) => {
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    let node = byId.get(id);
+    let x = node?.x ?? 0;
+    let y = node?.y ?? 0;
+    while (node?.parentId) {
+      node = byId.get(node.parentId);
+      if (!node) break;
+      x += node.x ?? 0;
+      y += node.y ?? 0;
+    }
+    return { x, y };
+  };
+
+  it('keeps world position when a grandchild ascends one level', () => {
+    useTaskStore.setState({
+      nodes: [
+        task('grandparent', 100, 200),
+        task('parent', 20, 30, 'grandparent'),
+        task('child', 400, 300, 'parent'),
+      ],
+    });
+    const before = { x: 520, y: 530 };
+
+    expect(useTaskStore.getState().ascendOneLevel('child')).toBe(true);
+
+    const nodes = useTaskStore.getState().nodes;
+    const child = nodes.find((node) => node.id === 'child')!;
+    const grandparent = nodes.find((node) => node.id === 'grandparent')!;
+    expect(child.parentId).toBe('grandparent');
+    expect({
+      x: (grandparent.x ?? 0) + (child.x ?? 0),
+      y: (grandparent.y ?? 0) + (child.y ?? 0),
+    }).toEqual(before);
+  });
+
+  it('deletes a selection as one undoable command', () => {
+    useTaskStore.setState({
+      nodes: [task('a', 0, 0), task('b', 240, 0), task('c', 480, 0)],
+    });
+
+    useTaskStore.getState().deleteTasks(['a', 'b']);
+
+    expect(useTaskStore.getState().nodes.map((node) => node.id)).toEqual(['c']);
+    expect(useHistoryStore.getState().undoStack).toHaveLength(1);
+    expect(useTaskStore.getState().undo()).toBe(true);
+    expect(useTaskStore.getState().nodes.map((node) => node.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('detaches a selection as one command and preserves world positions', () => {
+    useTaskStore.setState({
+      nodes: [
+        task('group', 100, 200),
+        task('a', 20, 30, 'group'),
+        task('b', 240, 30, 'group'),
+      ],
+    });
+
+    useTaskStore.getState().detachTasks(['a', 'b']);
+
+    expect(useTaskStore.getState().nodes.find((node) => node.id === 'a')).toMatchObject({
+      parentId: undefined,
+      x: 120,
+      y: 230,
+    });
+    expect(useTaskStore.getState().nodes.find((node) => node.id === 'b')).toMatchObject({
+      parentId: undefined,
+      x: 340,
+      y: 230,
+    });
+    expect(useHistoryStore.getState().undoStack).toHaveLength(1);
+  });
+
+  it('preserves a deeply nested task position when grouping into another branch', () => {
+    useTaskStore.setState({
+      nodes: [
+        task('left-root', 100, 100),
+        task('left-parent', 20, 30, 'left-root'),
+        task('child', 400, 300, 'left-parent'),
+        task('right-root', 1000, 100),
+        task('right-parent', 30, 40, 'right-root'),
+      ],
+    });
+    const before = worldPosition(useTaskStore.getState().nodes, 'child');
+
+    expect(useTaskStore.getState().groupTasks(['child'], { existingParentId: 'right-parent' }))
+      .toBe('right-parent');
+
+    const nodes = useTaskStore.getState().nodes;
+    expect(nodes.find((node) => node.id === 'child')?.parentId).toBe('right-parent');
+    expect(worldPosition(nodes, 'child')).toEqual(before);
   });
 });
 

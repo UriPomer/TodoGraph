@@ -118,6 +118,28 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     );
   });
 
+  it('keeps a committed page deletion successful when orphan cleanup fails', async () => {
+    const initial = await repo.loadMeta();
+    const deletedPageId = initial.activePageId;
+    const created = await repo.createPage('保留页面', initial.revision);
+    const deletedPagePath = path.join(userDir, 'pages', `${deletedPageId}.json`);
+    const originalUnlink = fs.unlink;
+    const unlinkSpy = vi.spyOn(fs, 'unlink').mockImplementation(async (target) => {
+      if (target === deletedPagePath) throw new Error('simulated cleanup failure');
+      return originalUnlink(target);
+    });
+
+    try {
+      await expect(repo.deletePage(deletedPageId, created.meta.revision)).resolves.toMatchObject({
+        activePageId: created.page.id,
+      });
+      expect((await repo.loadMeta()).pages.map((page) => page.id)).toEqual([created.page.id]);
+      await expect(fs.access(deletedPagePath)).resolves.toBeUndefined();
+    } finally {
+      unlinkSpy.mockRestore();
+    }
+  });
+
   it('savePages aborts all writes when any expected version is stale', async () => {
     const meta = await repo.loadMeta();
     const sourceId = meta.activePageId;

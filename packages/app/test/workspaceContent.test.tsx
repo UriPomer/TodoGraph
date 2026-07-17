@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/features/graph/GraphView', () => ({
-  GraphView: () => <div data-testid="graph" />,
+  GraphView: ({ viewportScope }: { viewportScope: string }) => <div data-testid="graph" data-viewport-scope={viewportScope} />,
 }));
 vi.mock('@/features/tasks/ListView', () => ({
   ListView: () => <div data-testid="list" />,
@@ -20,6 +20,7 @@ describe('responsive workspace content', () => {
       <WorkspaceContent isDesktop tab="graph" onLogout={vi.fn()} />,
     );
     expect(html.match(/data-testid="graph"/g)).toHaveLength(1);
+    expect(html).toContain('data-viewport-scope="desktop"');
   });
 
   it('mounts exactly one graph on the mobile graph tab', () => {
@@ -27,6 +28,7 @@ describe('responsive workspace content', () => {
       <WorkspaceContent isDesktop={false} tab="graph" onLogout={vi.fn()} />,
     );
     expect(html.match(/data-testid="graph"/g)).toHaveLength(1);
+    expect(html).toContain('data-viewport-scope="mobile"');
   });
 
   it('does not keep a hidden graph mounted on other mobile tabs', () => {

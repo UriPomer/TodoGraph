@@ -196,14 +196,14 @@ export function WorkspaceContent({
   if (isDesktop) {
     return (
       <div className="min-h-0 flex-1">
-        <SplitPane storageKey="todograph.splitLeftWidth" defaultLeftWidth={360} minLeft={260} maxLeft={720} left={<ListView />} right={<GraphView />} />
+        <SplitPane storageKey="todograph.splitLeftWidth" defaultLeftWidth={360} minLeft={260} maxLeft={720} left={<ListView />} right={<GraphView viewportScope="desktop" />} />
       </div>
     );
   }
   return (
     <main data-mobile-tab={tab} className="mobile-frosted-bg min-h-0 flex-1" style={{ paddingBottom: 'calc(3rem + env(safe-area-inset-bottom))' }}>
       {tab === 'list' && <div className="h-full overflow-auto"><ListView /></div>}
-      {tab === 'graph' && <div className="h-full"><GraphView /></div>}
+      {tab === 'graph' && <div className="h-full"><GraphView viewportScope="mobile" /></div>}
       {tab === 'more' && <MobileMorePanel onLogout={onLogout} />}
     </main>
   );

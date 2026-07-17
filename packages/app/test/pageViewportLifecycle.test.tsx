@@ -5,6 +5,7 @@ import {
   type PageViewportLifecycle,
   usePageViewportLifecycle,
 } from '@/features/graph/usePageViewportLifecycle';
+import type { PageViewportCache } from '@/features/graph/pageViewportCache';
 
 let viewportLifecycle: PageViewportLifecycle | null = null;
 
@@ -12,18 +13,27 @@ function Harness({
   activePageId,
   cache,
   rf,
+  viewportScope = 'desktop',
+  minZoom = 0.5,
+  withNode = false,
 }: {
   activePageId: string;
-  cache: Map<string, Viewport>;
+  cache: PageViewportCache;
   rf: ReactFlowInstance;
+  viewportScope?: 'desktop' | 'mobile';
+  minZoom?: number;
+  withNode?: boolean;
 }) {
   viewportLifecycle = usePageViewportLifecycle({
     activePageId,
     renderedPageId: activePageId,
-    nodeIds: [],
-    renderedNodes: [],
+    viewportScope,
+    minZoom,
+    nodeIds: withNode ? ['node'] : [],
+    renderedNodes: withNode ? [{ id: 'node', width: 180, height: 56 }] : [],
     cache,
     rf,
+    getViewportDimensions: () => ({ width: 360, height: 700 }),
     updateViewportCenter: vi.fn(),
   });
   return null;
@@ -56,8 +66,8 @@ describe('page viewport lifecycle', () => {
       getViewport: () => currentViewport,
       setViewport,
     } as unknown as ReactFlowInstance;
-    const firstCache = new Map<string, Viewport>();
-    const secondCache = new Map<string, Viewport>();
+    const firstCache: PageViewportCache = new Map();
+    const secondCache: PageViewportCache = new Map();
 
     let renderer!: ReturnType<typeof create>;
     await act(async () => {
@@ -70,7 +80,7 @@ describe('page viewport lifecycle', () => {
       viewportLifecycle?.onMoveEnd(null, { x: 20, y: 30, zoom: 1.2 });
     });
 
-    expect(secondCache.get('b')).toEqual({ x: 20, y: 30, zoom: 1.2 });
+    expect(secondCache.get('b')?.desktop?.viewport).toEqual({ x: 20, y: 30, zoom: 1.2 });
     expect(firstCache.has('b')).toBe(false);
 
     await act(async () => finishOldRestore(true));
@@ -84,8 +94,11 @@ describe('page viewport lifecycle', () => {
     });
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
 
-    const cache = new Map<string, Viewport>([
-      ['a', { x: 20, y: 30, zoom: 1.8 }],
+    const cache: PageViewportCache = new Map([
+      ['a', { desktop: {
+        viewport: { x: 20, y: 30, zoom: 1.8 },
+        dimensions: { width: 360, height: 700 },
+      } }],
     ]);
     const setViewport = vi.fn(async () => true);
     const rf = {
@@ -100,6 +113,46 @@ describe('page viewport lifecycle', () => {
 
     expect(setViewport).toHaveBeenCalledWith({ x: 20, y: 30, zoom: 1 });
     expect(viewportLifecycle?.isRestoring).toBe(false);
+    act(() => renderer.unmount());
+  });
+
+  it('does not restore a desktop viewport into the mobile graph', async () => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+
+    const cache: PageViewportCache = new Map([
+      ['a', { desktop: {
+        viewport: { x: 200, y: 100, zoom: 0.5 },
+        dimensions: { width: 1200, height: 800 },
+      } }],
+    ]);
+    const setViewport = vi.fn(async () => true);
+    const fitView = vi.fn(async () => true);
+    const rf = {
+      getViewport: () => ({ x: 0, y: 0, zoom: 1 }),
+      setViewport,
+      fitView,
+    } as unknown as ReactFlowInstance;
+
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(
+        <Harness
+          activePageId="a"
+          cache={cache}
+          rf={rf}
+          viewportScope="mobile"
+          minZoom={0.1}
+          withNode
+        />,
+      );
+    });
+
+    expect(fitView).toHaveBeenCalledWith({ padding: 0.3, minZoom: 0.1, maxZoom: 1 });
+    expect(setViewport).not.toHaveBeenCalledWith({ x: 200, y: 100, zoom: 0.5 });
     act(() => renderer.unmount());
   });
 
@@ -121,7 +174,7 @@ describe('page viewport lifecycle', () => {
       getViewport: () => currentViewport,
       fitView,
     } as unknown as ReactFlowInstance;
-    const cache = new Map<string, Viewport>();
+    const cache: PageViewportCache = new Map();
 
     function FitHarness({
       activePageId,
@@ -133,10 +186,13 @@ describe('page viewport lifecycle', () => {
       viewportLifecycle = usePageViewportLifecycle({
         activePageId,
         renderedPageId,
+        viewportScope: 'desktop',
+        minZoom: 0.5,
         nodeIds: ['node'],
         renderedNodes: [{ id: 'node', width: 180, height: 56 }],
         cache,
         rf,
+        getViewportDimensions: () => ({ width: 1200, height: 800 }),
         updateViewportCenter: vi.fn(),
       });
       return null;
@@ -158,7 +214,7 @@ describe('page viewport lifecycle', () => {
       renderer.update(<FitHarness activePageId="b" renderedPageId="b" />);
     });
     expect(viewportLifecycle?.isRestoring).toBe(true);
-    expect(fitView).toHaveBeenLastCalledWith({ padding: 0.3, maxZoom: 1 });
+    expect(fitView).toHaveBeenLastCalledWith({ padding: 0.3, minZoom: 0.5, maxZoom: 1 });
 
     currentViewport = { x: 30, y: 40, zoom: 0.9 };
     await act(async () => finishSecondFit(true));
@@ -174,7 +230,7 @@ describe('page viewport lifecycle', () => {
     });
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
 
-    const cache = new Map<string, Viewport>();
+    const cache: PageViewportCache = new Map();
     const updateViewportCenter = vi.fn();
     let currentViewport = { x: 0, y: 0, zoom: 1 };
     const rf = {
@@ -189,10 +245,13 @@ describe('page viewport lifecycle', () => {
       viewportLifecycle = usePageViewportLifecycle({
         activePageId: 'a',
         renderedPageId: 'a',
+        viewportScope: 'desktop',
+        minZoom: 0.5,
         nodeIds: [],
         renderedNodes: [],
         cache,
         rf,
+        getViewportDimensions: () => ({ width: 1200, height: 800 }),
         updateViewportCenter,
       });
       return null;
@@ -212,7 +271,7 @@ describe('page viewport lifecycle', () => {
       viewportLifecycle?.onMoveEnd(null, settledViewport);
     });
     expect(viewportLifecycle?.isMoving).toBe(false);
-    expect(cache.get('a')).toEqual(settledViewport);
+    expect(cache.get('a')?.desktop?.viewport).toEqual(settledViewport);
     expect(updateViewportCenter).toHaveBeenCalled();
 
     act(() => renderer.unmount());

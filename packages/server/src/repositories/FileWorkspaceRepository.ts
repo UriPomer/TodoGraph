@@ -177,7 +177,9 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         await fs.unlink(this.pageFilePath(pageId));
       } catch (err) {
         const e = err as NodeJS.ErrnoException;
-        if (e.code !== 'ENOENT') throw err;
+        // Meta is the commit point. A failed unlink leaves an unreachable orphan,
+        // but must not turn a committed delete into an error.
+        if (e.code !== 'ENOENT') return nextMeta;
       }
       return nextMeta;
     });

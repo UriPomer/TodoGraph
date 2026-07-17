@@ -9,6 +9,7 @@ import { api, getApiSessionGeneration, resetApiSession } from '@/api/client';
 import { toast } from '@/components/ui/toaster-store';
 import { useTaskStore } from './useTaskStore';
 import { subscribeAllTasksInvalidated } from './workspaceEvents';
+import type { PageViewportCache } from '@/features/graph/pageViewportCache';
 
 interface WorkspaceStore {
   sessionUserId: string | null;
@@ -18,7 +19,7 @@ interface WorkspaceStore {
   allTasks: AllTasksItem[];
   allTasksLoading: boolean;
   /** Session-scoped graph viewports; mutated by the graph controller as an LRU. */
-  pageViewportCache: Map<string, { x: number; y: number; zoom: number }>;
+  pageViewportCache: PageViewportCache;
 
   // ---- lifecycle ----
   bootstrap: (userId: string) => Promise<void>;
@@ -49,6 +50,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   let metaPollTimer: ReturnType<typeof setInterval> | null = null;
   let metaPollInFlight = false;
   let allTasksRequest = 0;
+  let pageSwitchRequest = 0;
   const isCurrentSession = (generation: number) => generation === getApiSessionGeneration();
   const WORKSPACE_SYNCED_MESSAGE = '工作区已被其他设备修改，已同步最新状态';
   const WORKSPACE_RETRY_MESSAGE = '工作区已被其他设备修改，已刷新最新状态，请重新执行刚才的操作';
@@ -104,10 +106,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   const syncMetaAfterConflict = async (
     generation: number,
     preferredActivePageId?: string,
+    isStillCurrent: () => boolean = () => true,
   ): Promise<Meta | null> => {
     try {
       const latestMeta = await api.loadMeta();
-      if (!isCurrentSession(generation)) return null;
+      if (!isCurrentSession(generation) || !isStillCurrent()) return null;
       const storePageId = useTaskStore.getState().activePageId;
       const pageIds = new Set(latestMeta.pages.map((page) => page.id));
       let nextActivePageId = preferredActivePageId;
@@ -119,7 +122,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       }
       if (nextActivePageId && storePageId !== nextActivePageId) {
         await useTaskStore.getState().loadPage(nextActivePageId);
-        if (!isCurrentSession(generation)) return null;
+        if (!isCurrentSession(generation) || !isStillCurrent()) return null;
       }
       const nextMeta = nextActivePageId
         ? { ...latestMeta, activePageId: nextActivePageId }
@@ -148,6 +151,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
   subscribeAllTasksInvalidated(scheduleAllTasksRefresh);
 
   const resetSession = () => {
+    pageSwitchRequest += 1;
     resetApiSession();
     stopMetaPolling();
     if (allTasksTimer) clearTimeout(allTasksTimer);
@@ -201,37 +205,39 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     },
 
     switchPage: async (pageId) => {
+      const requestId = ++pageSwitchRequest;
+      const isCurrentSwitch = () => requestId === pageSwitchRequest;
       const generation = getApiSessionGeneration();
       const meta = get().meta;
       if (!meta) return;
       if (meta.activePageId === pageId) return;
       try {
         await useTaskStore.getState().flush();
-        if (!isCurrentSession(generation)) return;
+        if (!isCurrentSession(generation) || !isCurrentSwitch()) return;
       } catch {
         return;
       }
       try {
         await useTaskStore.getState().loadPage(pageId);
-        if (!isCurrentSession(generation)) return;
+        if (!isCurrentSession(generation) || !isCurrentSwitch()) return;
       } catch (err) {
-        if (!isCurrentSession(generation)) return;
+        if (!isCurrentSession(generation) || !isCurrentSwitch()) return;
         toast.error('切换页面失败', String((err as Error).message));
         return;
       }
       try {
         const nextMeta = await api.setActivePage(pageId, get().meta?.revision ?? meta.revision);
-        if (!isCurrentSession(generation)) return;
+        if (!isCurrentSession(generation) || !isCurrentSwitch()) return;
         if (nextMeta) {
           set({ meta: nextMeta });
           scheduleAllTasksRefresh();
           return;
         }
       } catch (err) {
-        if (!isCurrentSession(generation)) return;
+        if (!isCurrentSession(generation) || !isCurrentSwitch()) return;
         if (isConflictError(err)) {
-          const synced = await syncMetaAfterConflict(generation, pageId);
-          if (!isCurrentSession(generation)) return;
+          const synced = await syncMetaAfterConflict(generation, pageId, isCurrentSwitch);
+          if (!isCurrentSession(generation) || !isCurrentSwitch()) return;
           if (synced) toast.info('切换页面已同步', WORKSPACE_SYNCED_MESSAGE);
           else toast.error('切换页面同步失败', WORKSPACE_SYNC_FAILED_MESSAGE);
           return;

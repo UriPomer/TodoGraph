@@ -1,34 +1,48 @@
 import { describe, expect, it } from 'vitest';
 import {
   arePageViewportNodesReady,
+  areViewportDimensionsCompatible,
+  type PageViewportCache,
   PageViewportController,
   recallPageViewport,
   rememberPageViewport,
 } from '@/features/graph/pageViewportCache';
 
+const dimensions = { width: 1000, height: 700 };
+
 describe('page viewport LRU cache', () => {
   it('stores and restores a page viewport', () => {
-    const cache = new Map();
-    rememberPageViewport(cache, 'a', { x: 10, y: 20, zoom: 1.5 });
-    expect(recallPageViewport(cache, 'a')).toEqual({ x: 10, y: 20, zoom: 1.5 });
+    const cache: PageViewportCache = new Map();
+    rememberPageViewport(cache, 'a', 'desktop', { x: 10, y: 20, zoom: 1.5 }, dimensions);
+    expect(recallPageViewport(cache, 'a', 'desktop')).toEqual({
+      viewport: { x: 10, y: 20, zoom: 1.5 },
+      dimensions,
+    });
   });
 
-  it('refreshes recency when a page is recalled', () => {
-    const cache = new Map();
-    rememberPageViewport(cache, 'a', { x: 1, y: 1, zoom: 1 }, 2);
-    rememberPageViewport(cache, 'b', { x: 2, y: 2, zoom: 1 }, 2);
-    recallPageViewport(cache, 'a');
-    rememberPageViewport(cache, 'c', { x: 3, y: 3, zoom: 1 }, 2);
+  it('refreshes page recency when a viewport is recalled', () => {
+    const cache: PageViewportCache = new Map();
+    rememberPageViewport(cache, 'a', 'desktop', { x: 1, y: 1, zoom: 1 }, dimensions, 2);
+    rememberPageViewport(cache, 'b', 'desktop', { x: 2, y: 2, zoom: 1 }, dimensions, 2);
+    recallPageViewport(cache, 'a', 'desktop');
+    rememberPageViewport(cache, 'c', 'desktop', { x: 3, y: 3, zoom: 1 }, dimensions, 2);
     expect(cache.has('a')).toBe(true);
     expect(cache.has('b')).toBe(false);
   });
 
-  it('replaces an existing viewport without growing the cache', () => {
-    const cache = new Map();
-    rememberPageViewport(cache, 'a', { x: 1, y: 1, zoom: 1 });
-    rememberPageViewport(cache, 'a', { x: 9, y: 8, zoom: 2 });
+  it('stores both layouts without consuming another page slot', () => {
+    const cache: PageViewportCache = new Map();
+    rememberPageViewport(cache, 'a', 'desktop', { x: 1, y: 2, zoom: 1 }, dimensions);
+    rememberPageViewport(cache, 'a', 'mobile', { x: 3, y: 4, zoom: 0.2 }, dimensions);
     expect(cache.size).toBe(1);
-    expect(recallPageViewport(cache, 'a')).toEqual({ x: 9, y: 8, zoom: 2 });
+    expect(recallPageViewport(cache, 'a', 'desktop')?.viewport).toEqual({ x: 1, y: 2, zoom: 1 });
+    expect(recallPageViewport(cache, 'a', 'mobile')?.viewport).toEqual({ x: 3, y: 4, zoom: 0.2 });
+  });
+
+  it('accepts small size changes but rejects materially different canvases', () => {
+    expect(areViewportDimensionsCompatible(dimensions, { width: 1100, height: 650 })).toBe(true);
+    expect(areViewportDimensionsCompatible({ width: 1100, height: 650 }, dimensions)).toBe(true);
+    expect(areViewportDimensionsCompatible(dimensions, { width: 700, height: 1000 })).toBe(false);
   });
 });
 
@@ -63,7 +77,7 @@ describe('page viewport switching', () => {
   });
 
   it('restores cached pages after the graph controller is remounted', () => {
-    const sessionCache = new Map();
+    const sessionCache: PageViewportCache = new Map();
     const firstMount = new PageViewportController('a', sessionCache);
     const token = firstMount.beginRestore('a')!;
     firstMount.completeRestore(token, true, { x: 0, y: 0, zoom: 1 });
@@ -71,6 +85,37 @@ describe('page viewport switching', () => {
 
     const secondMount = new PageViewportController('a', sessionCache);
     expect(secondMount.beginRestore('a')?.cachedViewport).toEqual({ x: 70, y: 80, zoom: 1.4 });
+  });
+
+  it('discards a cached viewport after a material canvas resize', () => {
+    const sessionCache: PageViewportCache = new Map();
+    const firstMount = new PageViewportController(
+      'a',
+      sessionCache,
+      'mobile',
+      () => ({ width: 360, height: 700 }),
+    );
+    const token = firstMount.beginRestore('a')!;
+    firstMount.completeRestore(token, true, { x: 0, y: 0, zoom: 1 });
+    firstMount.recordMove({ x: 70, y: 80, zoom: 0.4 });
+
+    const rotatedMount = new PageViewportController(
+      'a',
+      sessionCache,
+      'mobile',
+      () => ({ width: 700, height: 360 }),
+    );
+    const rotatedToken = rotatedMount.beginRestore('a')!;
+    expect(rotatedToken.cachedViewport).toBeUndefined();
+    rotatedMount.completeRestore(rotatedToken, true, { x: 10, y: 20, zoom: 0.2 });
+
+    const nextMount = new PageViewportController(
+      'a',
+      sessionCache,
+      'mobile',
+      () => ({ width: 700, height: 360 }),
+    );
+    expect(nextMount.beginRestore('a')?.cachedViewport).toEqual({ x: 10, y: 20, zoom: 0.2 });
   });
 
   it('serializes restores and rejects completion from an old page', () => {
@@ -97,7 +142,7 @@ describe('page viewport switching', () => {
   });
 
   it('adopts the current viewport after three failed attempts', () => {
-    const cache = new Map();
+    const cache: PageViewportCache = new Map();
     const controller = new PageViewportController('a', cache);
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const token = controller.beginRestore('a')!;
@@ -106,7 +151,7 @@ describe('page viewport switching', () => {
     const finalToken = controller.beginRestore('a')!;
     expect(controller.completeRestore(finalToken, false, { x: 4, y: 5, zoom: 0.8 })).toBe('adopted');
     controller.recordMove({ x: 9, y: 10, zoom: 1.2 });
-    expect(cache.get('a')).toEqual({ x: 9, y: 10, zoom: 1.2 });
+    expect(recallPageViewport(cache, 'a', 'desktop')?.viewport).toEqual({ x: 9, y: 10, zoom: 1.2 });
   });
 });
 

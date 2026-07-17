@@ -1,15 +1,41 @@
 import type { Viewport } from '@xyflow/react';
 
 export const PAGE_VIEWPORT_CACHE_LIMIT = 20;
+export const PAGE_VIEWPORT_SIZE_TOLERANCE = 0.15;
+
+export type ViewportScope = 'desktop' | 'mobile';
+
+export interface ViewportDimensions {
+  width: number;
+  height: number;
+}
+
+export interface CachedPageViewport {
+  viewport: Viewport;
+  dimensions: ViewportDimensions;
+}
+
+export type PageViewportCache = Map<
+  string,
+  Partial<Record<ViewportScope, CachedPageViewport>>
+>;
+
+const DEFAULT_DIMENSIONS: ViewportDimensions = { width: 1, height: 1 };
 
 export function rememberPageViewport(
-  cache: Map<string, Viewport>,
+  cache: PageViewportCache,
   pageId: string,
+  scope: ViewportScope,
   viewport: Viewport,
+  dimensions: ViewportDimensions,
   limit = PAGE_VIEWPORT_CACHE_LIMIT,
 ): void {
+  const variants = cache.get(pageId) ?? {};
   cache.delete(pageId);
-  cache.set(pageId, viewport);
+  cache.set(pageId, {
+    ...variants,
+    [scope]: { viewport, dimensions },
+  });
   while (cache.size > limit) {
     const oldest = cache.keys().next().value;
     if (oldest === undefined) break;
@@ -18,14 +44,30 @@ export function rememberPageViewport(
 }
 
 export function recallPageViewport(
-  cache: Map<string, Viewport>,
+  cache: PageViewportCache,
   pageId: string,
-): Viewport | undefined {
-  const viewport = cache.get(pageId);
-  if (!viewport) return undefined;
+  scope: ViewportScope,
+): CachedPageViewport | undefined {
+  const variants = cache.get(pageId);
+  const cached = variants?.[scope];
+  if (!cached) return undefined;
   cache.delete(pageId);
-  cache.set(pageId, viewport);
-  return viewport;
+  cache.set(pageId, variants);
+  return cached;
+}
+
+export function areViewportDimensionsCompatible(
+  cached: ViewportDimensions,
+  current: ViewportDimensions,
+): boolean {
+  if (cached.width <= 0 || cached.height <= 0 || current.width <= 0 || current.height <= 0) {
+    return false;
+  }
+  const relativeDifference = (a: number, b: number) => Math.abs(a - b) / Math.max(a, b);
+  return (
+    relativeDifference(current.width, cached.width) <= PAGE_VIEWPORT_SIZE_TOLERANCE &&
+    relativeDifference(current.height, cached.height) <= PAGE_VIEWPORT_SIZE_TOLERANCE
+  );
 }
 
 export interface PageViewportRestoreToken {
@@ -45,14 +87,22 @@ export class PageViewportController {
 
   constructor(
     initialPageId: string | null,
-    private readonly cache = new Map<string, Viewport>(),
+    private readonly cache: PageViewportCache = new Map(),
+    private readonly scope: ViewportScope = 'desktop',
+    private readonly getDimensions: () => ViewportDimensions = () => DEFAULT_DIMENSIONS,
   ) {
     this.desiredPageId = initialPageId;
   }
 
   switchTo(pageId: string | null, currentViewport: Viewport): void {
     if (this.ownerPageId && this.ownerPageId !== pageId) {
-      rememberPageViewport(this.cache, this.ownerPageId, currentViewport);
+      rememberPageViewport(
+        this.cache,
+        this.ownerPageId,
+        this.scope,
+        currentViewport,
+        this.getDimensions(),
+      );
     }
     this.ownerPageId = null;
     this.desiredPageId = pageId;
@@ -66,10 +116,14 @@ export class PageViewportController {
 
   beginRestore(pageId: string): PageViewportRestoreToken | null {
     if (!this.shouldRestore(pageId)) return null;
+    const cached = recallPageViewport(this.cache, pageId, this.scope);
     const token: PageViewportRestoreToken = {
       pageId,
       generation: this.generation,
-      cachedViewport: recallPageViewport(this.cache, pageId),
+      cachedViewport:
+        cached && areViewportDimensionsCompatible(cached.dimensions, this.getDimensions())
+          ? cached.viewport
+          : undefined,
     };
     this.inFlight = token;
     return token;
@@ -78,7 +132,7 @@ export class PageViewportController {
   completeRestore(
     token: PageViewportRestoreToken,
     success: boolean,
-    fallbackViewport: Viewport,
+    currentViewport: Viewport,
   ): PageViewportRestoreResult {
     if (this.inFlight !== token) return 'stale';
     this.inFlight = null;
@@ -86,6 +140,13 @@ export class PageViewportController {
       return 'stale';
     }
     if (success) {
+      rememberPageViewport(
+        this.cache,
+        token.pageId,
+        this.scope,
+        currentViewport,
+        this.getDimensions(),
+      );
       this.desiredPageId = null;
       this.ownerPageId = token.pageId;
       this.attempts = 0;
@@ -95,13 +156,25 @@ export class PageViewportController {
     if (this.attempts < 3) return 'retry';
     this.desiredPageId = null;
     this.ownerPageId = token.pageId;
-    rememberPageViewport(this.cache, token.pageId, fallbackViewport);
+    rememberPageViewport(
+      this.cache,
+      token.pageId,
+      this.scope,
+      currentViewport,
+      this.getDimensions(),
+    );
     return 'adopted';
   }
 
   recordMove(viewport: Viewport): void {
     if (!this.ownerPageId || this.desiredPageId || this.inFlight) return;
-    rememberPageViewport(this.cache, this.ownerPageId, viewport);
+    rememberPageViewport(
+      this.cache,
+      this.ownerPageId,
+      this.scope,
+      viewport,
+      this.getDimensions(),
+    );
   }
 }
 

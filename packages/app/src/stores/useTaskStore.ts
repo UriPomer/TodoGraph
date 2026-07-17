@@ -47,6 +47,8 @@ interface TaskStore {
   }) => Task;
   updateTask: (id: string, patch: Partial<Omit<Task, 'id'>>) => void;
   deleteTask: (id: string) => void;
+  deleteTasks: (ids: readonly string[]) => void;
+  detachTasks: (ids: readonly string[]) => void;
   /** 批量更新坐标等，避免每次 set 都触发订阅者重渲染。 */
   updateTasksBulk: (patches: Array<{ id: string; patch: Partial<Omit<Task, 'id'>> }>) => void;
   toggleStatus: (id: string) => boolean;
@@ -119,6 +121,21 @@ function depthOfFromIndex(index: HierarchyIndex, id: string): number {
     depth++;
   }
   return depth;
+}
+
+function worldPositionFromIndex(index: HierarchyIndex, id: string): { x: number; y: number } {
+  let node = index.byId.get(id);
+  let x = node?.x ?? 0;
+  let y = node?.y ?? 0;
+  const seen = new Set<string>([id]);
+  while (node?.parentId && !seen.has(node.parentId)) {
+    seen.add(node.parentId);
+    node = index.byId.get(node.parentId);
+    if (!node) break;
+    x += node.x ?? 0;
+    y += node.y ?? 0;
+  }
+  return { x, y };
 }
 
 function collectDepths(index: HierarchyIndex): Map<string, number> {
@@ -256,6 +273,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
   const hasPendingSave = () => saveTimer !== null || pendingPageId !== null || saveDrain !== null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let pollInFlight = false;
+  let loadRequestId = 0;
   const stopPolling = () => {
     if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
   };
@@ -376,6 +394,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     pendingPageId = null;
   };
   const resetSession = () => {
+    loadRequestId += 1;
     stopPolling();
     cancelScheduledSave();
     useHistoryStore.getState().clear();
@@ -402,22 +421,24 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     backupRevision: 0,
     setViewportCenter: (p) => set({ viewportCenter: p }),
     loadPage: async (pageId) => {
+      const requestId = ++loadRequestId;
       const generation = getApiSessionGeneration();
       await flush();
-      if (generation !== getApiSessionGeneration()) return;
+      if (generation !== getApiSessionGeneration() || requestId !== loadRequestId) return;
       try {
         const g = await api.loadPage(pageId);
-        if (generation !== getApiSessionGeneration()) return;
+        if (generation !== getApiSessionGeneration() || requestId !== loadRequestId) return;
         applyPage(pageId, g);
         startPolling(pageId);
       } catch (err) {
-        if (generation !== getApiSessionGeneration()) return;
+        if (generation !== getApiSessionGeneration() || requestId !== loadRequestId) return;
         toast.error('加载页面失败', String((err as Error).message));
         set({ loaded: true });
         throw err;
       }
     },
     replaceLoadedPage: (pageId, data) => {
+      loadRequestId += 1;
       cancelScheduledSave();
       applyPage(pageId, data);
       startPolling(pageId);
@@ -492,28 +513,48 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       });
       scheduleSave();
     },
-    deleteTask: (id) => {
+    deleteTask: (id) => get().deleteTasks([id]),
+    deleteTasks: (ids) => {
+      const state = get();
+      const deletedIds = new Set(ids.filter((id) => state.nodes.some((node) => node.id === id)));
+      if (deletedIds.size === 0) return;
       pushPre();
       set((s) => {
-        const deleted = s.nodes.find((n) => n.id === id);
-        const px = deleted?.x ?? 0;
-        const py = deleted?.y ?? 0;
+        const index = buildHierarchyIndex(s.nodes);
+        const releasedIds: string[] = [];
         const nodes = s.nodes
-          .filter((n) => n.id !== id)
-          .map((n) =>
-            n.parentId === id
-              ? { ...n, parentId: undefined, x: (n.x ?? 0) + px, y: (n.y ?? 0) + py }
-              : n,
-          );
-        const changedIds = s.nodes
-          .filter((node) => node.parentId === id)
-          .map((node) => node.id);
+          .filter((node) => !deletedIds.has(node.id))
+          .map((node) => {
+            if (!node.parentId || !deletedIds.has(node.parentId)) return node;
+            releasedIds.push(node.id);
+            const world = worldPositionFromIndex(index, node.id);
+            return { ...node, parentId: undefined, ...world };
+          });
         return {
-          nodes: repairGeometry(nodes, changedIds),
-          edges: s.edges.filter((e) => e.from !== id && e.to !== id),
+          nodes: repairGeometry(nodes, releasedIds),
+          edges: s.edges.filter((edge) => !deletedIds.has(edge.from) && !deletedIds.has(edge.to)),
           recommendationRevision: s.recommendationRevision + 1,
         };
       });
+      scheduleSave();
+    },
+    detachTasks: (ids) => {
+      const state = get();
+      const index = buildHierarchyIndex(state.nodes);
+      const detachedIds = new Set(ids.filter((id) => index.byId.get(id)?.parentId));
+      if (detachedIds.size === 0) return;
+      const worldById = new Map(
+        [...detachedIds].map((id) => [id, worldPositionFromIndex(index, id)]),
+      );
+      pushPre();
+      set((s) => ({
+        nodes: repairGeometry(
+          s.nodes.map((node) => detachedIds.has(node.id)
+            ? { ...node, parentId: undefined, ...worldById.get(node.id)! }
+            : node),
+          [...detachedIds],
+        ),
+      }));
       scheduleSave();
     },
     toggleStatus: (id) => {
@@ -625,23 +666,15 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       const child = idx.byId.get(childId);
       if (!child) return false;
       pushPre();
-      const newParent = parentId ? idx.byId.get(parentId) : undefined;
-      const oldParent = child.parentId
-        ? idx.byId.get(child.parentId)
-        : undefined;
       let patch: Partial<Task> = { parentId: parentId ?? undefined };
-      const cx = child.x ?? 0;
-      const cy = child.y ?? 0;
       if (positionHint) {
         patch = { ...patch, x: positionHint.x, y: positionHint.y };
-      } else if (oldParent && !newParent) {
-        patch = { ...patch, x: cx + (oldParent.x ?? 0), y: cy + (oldParent.y ?? 0) };
-      } else if (!oldParent && newParent) {
-        patch = { ...patch, x: cx - (newParent.x ?? 0), y: cy - (newParent.y ?? 0) };
-      } else if (oldParent && newParent && oldParent.id !== newParent.id) {
-        const worldX = cx + (oldParent.x ?? 0);
-        const worldY = cy + (oldParent.y ?? 0);
-        patch = { ...patch, x: worldX - (newParent.x ?? 0), y: worldY - (newParent.y ?? 0) };
+      } else {
+        const world = worldPositionFromIndex(idx, childId);
+        const parentWorld = parentId
+          ? worldPositionFromIndex(idx, parentId)
+          : { x: 0, y: 0 };
+        patch = { ...patch, x: world.x - parentWorld.x, y: world.y - parentWorld.y };
       }
       set((s) => ({
         nodes: s.nodes.map((n) => (n.id === childId ? { ...n, ...patch } : n)),
@@ -690,10 +723,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
 
       const byId = index.byId;
       const worldPosOf = (id: string): { x: number; y: number } => {
-        const n = byId.get(id)!;
-        if (!n.parentId) return { x: n.x ?? 0, y: n.y ?? 0 };
-        const p = byId.get(n.parentId);
-        return { x: (n.x ?? 0) + (p?.x ?? 0), y: (n.y ?? 0) + (p?.y ?? 0) };
+        return worldPositionFromIndex(index, id);
       };
       const existingParent = opts?.existingParentId ? byId.get(opts.existingParentId) : undefined;
       let parentTask: Task;
@@ -717,9 +747,11 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       }
 
       const parentId = parentTask.id;
-      const parentX = parentTask.x ?? 0;
-      const parentY = parentTask.y ?? 0;
+      const parentWorld = isNewParent
+        ? { x: parentTask.x ?? 0, y: parentTask.y ?? 0 }
+        : worldPositionFromIndex(index, parentTask.id);
       const targetSet = new Set(targets);
+      const targetWorldById = new Map(targets.map((id) => [id, worldPositionFromIndex(index, id)]));
       pushPre();
       set((s) => {
         let next = s.nodes;
@@ -727,20 +759,12 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         next = next.map((n) => {
           if (!targetSet.has(n.id)) return n;
           if (!isNewParent && wouldCreateParentCycleFromIndex(index, n.id, parentId)) return n;
-          let worldX = n.x ?? 0;
-          let worldY = n.y ?? 0;
-          if (n.parentId) {
-            const oldParent = index.byId.get(n.parentId);
-            if (oldParent) {
-              worldX += oldParent.x ?? 0;
-              worldY += oldParent.y ?? 0;
-            }
-          }
+          const world = targetWorldById.get(n.id)!;
           return {
             ...n,
             parentId,
-            x: worldX - parentX,
-            y: worldY - parentY,
+            x: world.x - parentWorld.x,
+            y: world.y - parentWorld.y,
           };
         });
         return {
