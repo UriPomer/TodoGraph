@@ -147,13 +147,28 @@ body {
   opacity: 0;
 }
 
-.graph-viewport-moving .react-flow__edge.animated path {
+.graph-viewport-moving .react-flow__edge.animated path,
+.graph-node-dragging .react-flow__edge.animated path {
   animation-play-state: paused;
 }
 
 .graph-viewport-moving .graph-toolbar {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+@media (max-width: 1023px) {
+  .graph-minimap-mobile {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    contain: paint;
+  }
+
+  .graph-viewport-moving .react-flow__node > [data-lens],
+  .graph-node-dragging .react-flow__node > [data-lens] {
+    box-shadow: none !important;
+    transition: none !important;
+  }
 }
 
 /* 覆盖 React Flow 自带的 node-group 默认样式 */

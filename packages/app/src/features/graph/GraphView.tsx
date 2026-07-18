@@ -40,6 +40,7 @@ import {
   type Task,
 } from '@todograph/shared';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { UndoRedoButtons } from '@/components/UndoRedoButtons';
 import { buildHierarchyMetrics, useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
@@ -76,6 +77,8 @@ const GHOST_ID = '__merge_ghost__';
 const DESKTOP_MIN_ZOOM = 0.5;
 const MOBILE_MIN_ZOOM = 0.1;
 const MOBILE_FIT_MIN_ZOOM = 0.35;
+const MOBILE_DRAG_ANALYSIS_INTERVAL_MS = 32;
+const MINI_MAP_STYLE = { width: 160, height: 110 } as const;
 interface RFTaskNode extends RFNode<TaskNodeData | GroupNodeData | MergeGhostData> {}
 
 function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile' }) {
@@ -204,6 +207,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
   const isMultiDragRef = useRef(false);
   const multiDragSessionRef = useRef(new MultiDragSession());
   const dragDescendantIdsRef = useRef(new Set<string>());
+  const lastDragAnalysisAtRef = useRef(Number.NEGATIVE_INFINITY);
   const hierarchyMetrics = useMemo(() => buildHierarchyMetrics(nodes), [nodes]);
   const parentMap = hierarchyMetrics.childIdsByParentId;
   const byId = hierarchyMetrics.byId;
@@ -310,6 +314,12 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
       }),
     [edges, nodeStatusById],
   );
+  const miniMapNodeColor = useCallback((node: RFNode) => {
+    const status = (node.data as TaskNodeData | undefined)?.status;
+    if (status === 'done') return 'hsl(var(--muted-foreground) / 0.6)';
+    if (status === 'doing') return 'hsl(var(--primary))';
+    return 'hsl(var(--muted-foreground) / 0.35)';
+  }, []);
 
   /**
    * 只做 applyNodeChanges + remove dispatch + draggingRef 维护。
@@ -370,46 +380,52 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     (_evt: React.MouseEvent, draggedNode: RFNode) => {
       if (isMultiDragRef.current) return;
       const dragId = draggedNode.id;
-      const draggedHeight = subtreeHeightById.get(dragId) ?? 0;
-      let mergeCandidate: RFNode | null = null;
-      const intersecting = rf.getIntersectingNodes(draggedNode);
-      for (const n of intersecting) {
-        if (n.id === dragId) continue;
-        if (n.id === GHOST_ID || n.type === 'mergeGhost') continue;
-        if (dragDescendantIdsRef.current.has(n.id)) continue;
-        if (draggedNode.parentId === n.id) continue;
-        const candDepth = depthById.get(n.id) ?? 0;
-        if (candDepth + 1 + draggedHeight + 1 > MAX_HIERARCHY_DEPTH) continue;
-        if (n.type === 'group') {
-          mergeCandidate = n;
-          break;
+      const shouldAnalyzeMerge =
+        viewportScope !== 'mobile' ||
+        _evt.timeStamp - lastDragAnalysisAtRef.current >= MOBILE_DRAG_ANALYSIS_INTERVAL_MS;
+      if (shouldAnalyzeMerge) {
+        lastDragAnalysisAtRef.current = _evt.timeStamp;
+        const draggedHeight = subtreeHeightById.get(dragId) ?? 0;
+        let mergeCandidate: RFNode | null = null;
+        const intersecting = rf.getIntersectingNodes(draggedNode);
+        for (const n of intersecting) {
+          if (n.id === dragId) continue;
+          if (n.id === GHOST_ID || n.type === 'mergeGhost') continue;
+          if (dragDescendantIdsRef.current.has(n.id)) continue;
+          if (draggedNode.parentId === n.id) continue;
+          const candDepth = depthById.get(n.id) ?? 0;
+          if (candDepth + 1 + draggedHeight + 1 > MAX_HIERARCHY_DEPTH) continue;
+          if (n.type === 'group') {
+            mergeCandidate = n;
+            break;
+          }
+          if (!mergeCandidate) mergeCandidate = n;
         }
-        if (!mergeCandidate) mergeCandidate = n;
-      }
 
-      const candidateId = mergeCandidate?.id ?? null;
-      if (candidateId !== mergeCandidateRef.current) {
-        clearMergeTimer();
-        mergeCandidateRef.current = candidateId;
-        if (candidateId) {
-          setDragState((s) =>
-            s && s.dragId === dragId
-              ? { ...s, mergeCandidatePending: candidateId, mergeTarget: null }
-              : s,
-          );
-          mergeTimerRef.current = window.setTimeout(() => {
+        const candidateId = mergeCandidate?.id ?? null;
+        if (candidateId !== mergeCandidateRef.current) {
+          clearMergeTimer();
+          mergeCandidateRef.current = candidateId;
+          if (candidateId) {
             setDragState((s) =>
               s && s.dragId === dragId
-                ? { ...s, mergeCandidatePending: null, mergeTarget: candidateId }
+                ? { ...s, mergeCandidatePending: candidateId, mergeTarget: null }
                 : s,
             );
-          }, mergeHoverMs);
-        } else {
-          setDragState((s) =>
-            s && (s.mergeTarget || s.mergeCandidatePending)
-              ? { ...s, mergeTarget: null, mergeCandidatePending: null }
-              : s,
-          );
+            mergeTimerRef.current = window.setTimeout(() => {
+              setDragState((s) =>
+                s && s.dragId === dragId
+                  ? { ...s, mergeCandidatePending: null, mergeTarget: candidateId }
+                  : s,
+              );
+            }, mergeHoverMs);
+          } else {
+            setDragState((s) =>
+              s && (s.mergeTarget || s.mergeCandidatePending)
+                ? { ...s, mergeTarget: null, mergeCandidatePending: null }
+                : s,
+            );
+          }
         }
       }
 
@@ -457,12 +473,14 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
       ungroupConfirmMs,
       depthById,
       subtreeHeightById,
+      viewportScope,
     ],
   );
   const onNodeDragStart = useCallback(
     (_evt: React.MouseEvent, node: RFNode) => {
       const startsNewGesture = !draggingRef.current;
       draggingRef.current = true;
+      lastDragAnalysisAtRef.current = Number.NEGATIVE_INFINITY;
       if (startsNewGesture) {
         multiDragSessionRef.current.start(selectedIdsRef.current);
       }
@@ -489,7 +507,13 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     (_evt: React.MouseEvent, draggedNode: RFNode) => {
       const dragId = draggedNode.id;
       const state = dragStateRef.current;
-      const mergeTarget = state?.mergeTarget ?? null;
+      let mergeTarget = state?.mergeTarget ?? null;
+      if (
+        mergeTarget &&
+        !rf.getIntersectingNodes(draggedNode).some((node) => node.id === mergeTarget)
+      ) {
+        mergeTarget = null;
+      }
       const ungroupFrom = state?.ungroupFrom ?? null;
       setDragState(null);
       clearMergeTimer();
@@ -979,7 +1003,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     ];
   }, [selectionMenu, nodes, groupTasks, setParent, detachTasks, updateTasksBulk, deleteTasks, promptMoveSelectionToPage, insertBetween]);
   return (
-    <div ref={containerRef} className={`graph-surface relative h-full w-full${isViewportMoving ? ' graph-viewport-moving' : ''}${isViewportRestoring ? ' graph-viewport-restoring' : ''}`} style={{ touchAction: 'none', WebkitTouchCallout: 'none' }} onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
+    <div ref={containerRef} className={`graph-surface relative h-full w-full${isViewportMoving ? ' graph-viewport-moving' : ''}${dragState ? ' graph-node-dragging' : ''}${isViewportRestoring ? ' graph-viewport-restoring' : ''}`} style={{ touchAction: 'none', WebkitTouchCallout: 'none' }} onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
       <div className="graph-toolbar absolute left-3 right-3 top-3 z-10 flex items-center justify-center gap-2 rounded-xl border border-border bg-card/90 p-2 backdrop-blur lg:right-auto lg:justify-start lg:rounded-lg">
         <span className="text-xs text-muted-foreground hidden lg:inline">
           拖 <b>●</b> 连边；拖到空白处创建新节点；<kbd className="text-[10px]">Shift</kbd>+左键框选
@@ -1036,30 +1060,29 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
         minZoom={minZoom}
         maxZoom={PAGE_VIEWPORT_MAX_ZOOM}
         defaultEdgeOptions={{ interactionWidth: 32 }}
+        onlyRenderVisibleElements={viewportScope === 'mobile'}
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={null}
       >
         <Background gap={24} size={1} color="hsl(var(--border))" />
         <Controls />
-        {!isViewportMoving && !isViewportRestoring && (
+        {!isViewportRestoring && (
           <MiniMap
             pannable
             zoomable
             ariaLabel="概览"
             position="bottom-right"
-            nodeColor={(node) => {
-              const s = (node.data as TaskNodeData | undefined)?.status;
-              if (s === 'done') return 'hsl(var(--muted-foreground) / 0.6)';
-              if (s === 'doing') return 'hsl(var(--primary))';
-              return 'hsl(var(--muted-foreground) / 0.35)';
-            }}
+            nodeColor={miniMapNodeColor}
             nodeStrokeWidth={0}
             nodeBorderRadius={3}
             maskColor="hsl(var(--background) / 0.6)"
             maskStrokeColor="hsl(var(--border))"
             maskStrokeWidth={1}
-            className="!bg-card/80 !border-border !rounded-lg !shadow-md backdrop-blur"
-            style={{ width: 160, height: 110 }}
+            className={cn(
+              '!bg-card/80 !border-border !rounded-lg !shadow-md',
+              viewportScope === 'mobile' ? 'graph-minimap-mobile' : 'backdrop-blur',
+            )}
+            style={MINI_MAP_STYLE}
           />
         )}
       </ReactFlow>

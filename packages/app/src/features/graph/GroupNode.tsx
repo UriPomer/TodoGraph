@@ -185,8 +185,9 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
         onDoubleClick={(e) => e.stopPropagation()}
       >
         <button
+          type="button"
           className={cn(
-            'relative flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full',
+            'nodrag nopan relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl lg:h-[18px] lg:w-[18px] lg:rounded-full',
             'transition-transform duration-150 hover:scale-110 active:scale-90',
           )}
           onClick={(e) => {
@@ -241,14 +242,27 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
                   key={child.id}
                   className="flex min-w-0 items-center rounded-lg border border-border/70 bg-background/55 py-1 pl-2.5 pr-1 shadow-sm"
                   title={child.description || child.title}
+                  onDoubleClick={(event) => event.stopPropagation()}
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <span className={cn(
-                      'h-2 w-2 shrink-0 rounded-full',
-                      child.status === 'todo' && 'border border-muted-foreground/70',
-                      child.status === 'doing' && 'bg-[hsl(var(--primary))]',
-                      child.status === 'done' && 'bg-muted-foreground/60',
-                    )} />
+                    <button
+                      type="button"
+                      className="nodrag nopan nowheel flex h-11 w-11 shrink-0 items-center justify-center rounded-lg active:bg-foreground/10 lg:h-8 lg:w-8"
+                      aria-label={`推进 ${child.title} 状态`}
+                      title="切换状态"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleStatus(child.id);
+                      }}
+                      onDoubleClick={(event) => event.stopPropagation()}
+                    >
+                      <span className={cn(
+                        'h-3 w-3 rounded-full',
+                        child.status === 'todo' && 'border border-muted-foreground/70',
+                        child.status === 'doing' && 'bg-[hsl(var(--primary))]',
+                        child.status === 'done' && 'bg-muted-foreground/60',
+                      )} />
+                    </button>
                     <span className={cn('truncate text-xs', child.status === 'done' && 'line-through text-muted-foreground')}>
                       {child.depth > 1 ? `${'·'.repeat(child.depth - 1)} ` : ''}{child.title}
                     </span>
@@ -278,6 +292,7 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
           title={d.title}
           descendants={descendants}
           returnFocus={returnFocusRef.current}
+          onToggleStatus={toggleStatus}
           onClose={closeAll}
         />
       )}

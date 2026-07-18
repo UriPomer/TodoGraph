@@ -205,3 +205,19 @@ describe('list revision', () => {
     expect(useTaskStore.getState().listRevision).toBe(10);
   });
 });
+
+describe('parent status progression', () => {
+  it('allows a parent to start but blocks completion until its children are done', () => {
+    useTaskStore.setState({
+      nodes: [task('parent', 0, 0), { ...task('child', 40, 60), parentId: 'parent' }],
+    });
+    expect(useTaskStore.getState().toggleStatus('parent')).toBe(true);
+    expect(useTaskStore.getState().nodes.find((node) => node.id === 'parent')?.status).toBe('doing');
+    expect(useTaskStore.getState().toggleStatus('parent')).toBe(false);
+    expect(useTaskStore.getState().nodes.find((node) => node.id === 'parent')?.status).toBe('doing');
+
+    useTaskStore.getState().setStatus('child', 'done');
+    expect(useTaskStore.getState().toggleStatus('parent')).toBe(true);
+    expect(useTaskStore.getState().nodes.find((node) => node.id === 'parent')?.status).toBe('done');
+  });
+});

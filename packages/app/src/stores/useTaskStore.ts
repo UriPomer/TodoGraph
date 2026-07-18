@@ -560,7 +560,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       const s = get();
       const node = s.nodes.find((n) => n.id === id);
       if (!node) return false;
-      if (node.status !== 'done') {
+      if (nextStatus[node.status] === 'done') {
         const hasUndoneChild = s.nodes.some((n) => n.parentId === id && n.status !== 'done');
         if (hasUndoneChild) return false;
       }

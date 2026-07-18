@@ -32,13 +32,14 @@ describe('GroupContentsDialog', () => {
     vi.unstubAllGlobals();
   });
 
-  const renderDialog = (onClose: () => void, returnFocus = vi.fn()) => {
+  const renderDialog = (onClose: () => void, returnFocus = vi.fn(), onToggleStatus = vi.fn()) => {
     act(() => {
       renderer = create(
         <GroupContentsDialog
           title="父节点"
           descendants={[{ id: 'child', title: '子节点', status: 'todo', depth: 1, width: 180, height: 56 }]}
           returnFocus={{ focus: returnFocus } as HTMLButtonElement}
+          onToggleStatus={onToggleStatus}
           onClose={onClose}
         />,
       );
@@ -52,7 +53,11 @@ describe('GroupContentsDialog', () => {
     const dialog = renderer.root.findByProps({ role: 'dialog' });
     const backdrop = dialog.parent!;
 
-    act(() => backdrop.props.onClick({ target: backdrop, currentTarget: backdrop }));
+    act(() => backdrop.props.onClick({
+      target: backdrop,
+      currentTarget: backdrop,
+      stopPropagation: vi.fn(),
+    }));
     act(() => renderer.root.findByProps({ 'aria-label': '关闭' }).props.onClick());
     act(() => keydown?.({ key: 'Escape', preventDefault: vi.fn() } as unknown as KeyboardEvent));
 
@@ -65,5 +70,21 @@ describe('GroupContentsDialog', () => {
     act(() => renderer.unmount());
 
     expect(returnFocus).toHaveBeenCalledOnce();
+  });
+
+  it('toggles a child once and stops portal events from reaching the group node', () => {
+    const onToggleStatus = vi.fn();
+    renderDialog(vi.fn(), vi.fn(), onToggleStatus);
+    const statusButton = renderer.root.findByProps({ 'aria-label': '推进 子节点 状态' });
+    const clickEvent = { stopPropagation: vi.fn() };
+    act(() => statusButton.props.onClick(clickEvent));
+    expect(clickEvent.stopPropagation).toHaveBeenCalledOnce();
+    expect(onToggleStatus).toHaveBeenCalledOnce();
+    expect(onToggleStatus).toHaveBeenCalledWith('child');
+
+    const backdrop = renderer.root.findByProps({ role: 'dialog' }).parent!;
+    const doubleClickEvent = { stopPropagation: vi.fn() };
+    act(() => backdrop.props.onDoubleClick(doubleClickEvent));
+    expect(doubleClickEvent.stopPropagation).toHaveBeenCalledOnce();
   });
 });
