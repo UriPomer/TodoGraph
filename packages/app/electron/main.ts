@@ -11,16 +11,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const isDev = !app.isPackaged;
 
-// ===== 便携模式：把用户数据与可执行文件放在一起 =====
+// ===== 默认数据目录：开发时放仓库根目录，便携版放可执行文件旁 =====
 // electron-builder 的 portable target 在运行时会把 exe 解压到临时目录，
 // 但会设置 PORTABLE_EXECUTABLE_DIR 指向**用户实际双击的 exe 所在目录**。
-// 所以把 userData 重定位到它下面的 ./data，这样应用就是真正的绿色软件：
+// 开发构建的 main bundle 位于 packages/app/out/main，向上四级即仓库根目录。
+// 统一把 userData 重定位到根目录下的 ./data：
 // 拷贝整个文件夹到别的机器依然能用，不留痕。
-if (!isDev) {
-  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
-  const baseDir = portableDir ?? path.dirname(process.execPath);
-  app.setPath('userData', path.join(baseDir, 'data'));
-}
+const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+const dataRoot = isDev
+  ? path.resolve(__dirname, '../../../..')
+  : portableDir ?? path.dirname(process.execPath);
+app.setPath('userData', path.join(dataRoot, 'data'));
 
 let apiBase = '';
 

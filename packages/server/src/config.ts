@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export interface ServerConfig {
   port: number;
@@ -26,6 +27,11 @@ export interface ServerConfig {
 
 /** dev 模式下的默认 session 密钥（仅本地开发用，32 字节，生产必须通过 SESSION_SECRET 覆盖） */
 const DEV_SESSION_SECRET = 'todograph-dev-key-01234567890123'; // exactly 32 bytes
+const DEFAULT_DATA_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../..',
+  'data',
+);
 
 function parseBooleanEnv(name: string): boolean | undefined {
   const raw = process.env[name];
@@ -37,13 +43,12 @@ function parseBooleanEnv(name: string): boolean | undefined {
 }
 
 export function resolveConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
-  const cwd = process.cwd();
-  // 兼容旧的 DATA_FILE：取其父目录；否则走 DATA_DIR / 默认 cwd/data
+  // 兼容旧的 DATA_FILE：取其父目录；否则走 DATA_DIR / 默认仓库根目录 data/
   const envDataDir = process.env.DATA_DIR;
   const legacyDataFile = process.env.DATA_FILE;
   const fallbackDir = legacyDataFile
     ? path.dirname(legacyDataFile)
-    : path.join(cwd, 'data');
+    : DEFAULT_DATA_DIR;
   const isProd = !!process.env.STATIC_DIR;
   return {
     port: Number(process.env.PORT ?? 5173),
