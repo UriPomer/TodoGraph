@@ -170,4 +170,21 @@ describe('page viewport node readiness', () => {
     expect(arePageViewportNodesReady([], [])).toBe(true);
     expect(arePageViewportNodesReady([], [{ id: 'old', width: 100, height: 50 }])).toBe(false);
   });
+
+  it('does not wait for hidden descendants to be measured', () => {
+    expect(arePageViewportNodesReady(
+      ['group', 'hidden-child'],
+      [
+        { id: 'group', width: 420, height: 420 },
+        { id: 'hidden-child', hidden: true },
+      ],
+    )).toBe(true);
+    expect(arePageViewportNodesReady(
+      ['group', 'visible-child'],
+      [
+        { id: 'group', width: 420, height: 420 },
+        { id: 'visible-child' },
+      ],
+    )).toBe(false);
+  });
 });

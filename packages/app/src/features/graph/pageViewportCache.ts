@@ -182,6 +182,7 @@ export function arePageViewportNodesReady(
   nodeIds: readonly string[],
   renderedNodes: ReadonlyArray<{
     id: string;
+    hidden?: boolean;
     width?: number;
     height?: number;
     measured?: { width?: number; height?: number };
@@ -191,6 +192,7 @@ export function arePageViewportNodesReady(
   const renderedIds = new Set(renderedNodes.map((node) => node.id));
   if (nodeIds.some((id) => !renderedIds.has(id))) return false;
   return renderedNodes.every((node) =>
+    node.hidden ||
     Boolean((node.measured?.width ?? node.width) && (node.measured?.height ?? node.height)),
   );
 }

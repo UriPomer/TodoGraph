@@ -37,7 +37,7 @@ describe('GroupContentsDialog', () => {
       renderer = create(
         <GroupContentsDialog
           title="父节点"
-          descendants={[{ id: 'child', title: '子节点', status: 'todo', depth: 1 }]}
+          descendants={[{ id: 'child', title: '子节点', status: 'todo', depth: 1, width: 180, height: 56 }]}
           returnFocus={{ focus: returnFocus } as HTMLButtonElement}
           onClose={onClose}
         />,

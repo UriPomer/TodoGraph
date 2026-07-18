@@ -10,6 +10,8 @@ export interface GroupDescendant {
   status: TaskStatus;
   description?: string;
   depth: number;
+  width: number;
+  height: number;
 }
 
 interface Props {

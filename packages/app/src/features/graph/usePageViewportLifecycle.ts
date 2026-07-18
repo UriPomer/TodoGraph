@@ -14,7 +14,7 @@ interface PageViewportLifecycleOptions {
   viewportScope: ViewportScope;
   minZoom: number;
   nodeIds: string[];
-  renderedNodes: Array<Pick<Node, 'id' | 'width' | 'height' | 'measured'>>;
+  renderedNodes: Array<Pick<Node, 'id' | 'hidden' | 'width' | 'height' | 'measured'>>;
   cache: PageViewportCache;
   rf: ReactFlowInstance;
   getViewportDimensions: () => ViewportDimensions;

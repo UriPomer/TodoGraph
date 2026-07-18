@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Check } from 'lucide-react';
 import { PasswordInput } from '@/components/ui/password-input';
 
 interface Props {
@@ -79,14 +80,17 @@ export function LoginPage({ onLogin, onRegister }: Props) {
             </div>
           )}
 
-          <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-xl px-1 text-sm text-muted-foreground transition-colors duration-200 hover:bg-foreground/5">
+          <label className="inline-flex min-h-11 cursor-pointer items-center gap-2.5 px-2 text-sm text-muted-foreground">
             <input
               type="checkbox"
               checked={remember}
               onChange={(event) => setRemember(event.target.checked)}
-              className="h-5 w-5 accent-[hsl(var(--primary))]"
+              className="peer sr-only"
             />
-            在这台设备上保持登录
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border bg-card transition-colors peer-checked:border-[hsl(var(--primary))] peer-checked:bg-[hsl(var(--primary))] peer-focus-visible:ring-2 peer-focus-visible:ring-[hsl(var(--ring))] peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background">
+              {remember && <Check className="h-3 w-3 text-[hsl(var(--primary-foreground))]" strokeWidth={3} />}
+            </span>
+            <span>在这台设备上保持登录</span>
           </label>
 
           {error && (

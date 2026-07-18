@@ -1,12 +1,14 @@
-import { memo, useCallback, useRef, useState } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Check, ChevronDown, ChevronUp } from 'lucide-react';
+import { memo, useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { createPortal } from 'react-dom';
+import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
+import { Check, ChevronDown, ChevronUp, GripVertical } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { dialog } from '@/components/ui/dialog-store';
 import type { TaskStatus } from '@todograph/shared';
 import { GroupContentsDialog, type GroupDescendant } from './GroupContentsDialog';
+import { centeredDropPosition, isOutsideRect } from './collapsedGroupDrag';
 
 export interface GroupNodeData extends Record<string, unknown> {
   title: string;
@@ -40,12 +42,81 @@ export interface GroupNodeData extends Record<string, unknown> {
  */
 function GroupNodeImpl({ id, data, selected }: NodeProps) {
   const d = data as GroupNodeData;
+  const rf = useReactFlow();
   const toggleStatus = useTaskStore((s) => s.toggleStatus);
   const updateTask = useTaskStore((s) => s.updateTask);
+  const setParent = useTaskStore((s) => s.setParent);
   const [showAll, setShowAll] = useState(false);
   const descendants = d.descendants ?? [];
+  const rootRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLButtonElement | null>(null);
   const closeAll = useCallback(() => setShowAll(false), []);
+  const dragRef = useRef<{
+    child: GroupDescendant;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    x: number;
+    y: number;
+    active: boolean;
+  } | null>(null);
+  const [childDrag, setChildDrag] = useState(dragRef.current);
+
+  const startChildDrag = useCallback((event: ReactPointerEvent<HTMLButtonElement>, child: GroupDescendant) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const next = {
+      child,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      active: false,
+    };
+    dragRef.current = next;
+    setChildDrag(next);
+  }, []);
+
+  const moveChildDrag = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const current = dragRef.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const active = current.active || Math.hypot(
+      event.clientX - current.startX,
+      event.clientY - current.startY,
+    ) >= 6;
+    const next = { ...current, x: event.clientX, y: event.clientY, active };
+    dragRef.current = next;
+    setChildDrag(next);
+  }, []);
+
+  const finishChildDrag = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const current = dragRef.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const point = { x: event.clientX, y: event.clientY };
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (current.active && rect && isOutsideRect(point, rect)) {
+      const flowPoint = rf.screenToFlowPosition(point);
+      setParent(current.child.id, null, centeredDropPosition(flowPoint, {
+        width: current.child.width,
+        height: current.child.height,
+      }));
+    }
+    dragRef.current = null;
+    setChildDrag(null);
+  }, [rf, setParent]);
+
+  const cancelChildDrag = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    setChildDrag(null);
+  }, []);
 
   const expandButton = (position: 'top' | 'bottom') => (
     <button
@@ -69,6 +140,7 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
 
   return (
     <div
+      ref={rootRef}
       data-lens
       className={cn(
         'relative h-full w-full rounded-xl bg-card',
@@ -167,10 +239,10 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
               {descendants.map((child) => (
                 <div
                   key={child.id}
-                  className="min-w-0 rounded-lg border border-border/70 bg-background/55 px-2.5 py-2 shadow-sm"
+                  className="flex min-w-0 items-center rounded-lg border border-border/70 bg-background/55 py-1 pl-2.5 pr-1 shadow-sm"
                   title={child.description || child.title}
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
                     <span className={cn(
                       'h-2 w-2 shrink-0 rounded-full',
                       child.status === 'todo' && 'border border-muted-foreground/70',
@@ -181,6 +253,18 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
                       {child.depth > 1 ? `${'·'.repeat(child.depth - 1)} ` : ''}{child.title}
                     </span>
                   </div>
+                  <button
+                    type="button"
+                    className="nodrag nopan nowheel flex h-11 w-11 shrink-0 touch-none items-center justify-center rounded-lg text-muted-foreground cursor-grab active:cursor-grabbing lg:h-8 lg:w-8"
+                    aria-label={`拖出 ${child.title}`}
+                    title="拖出父节点"
+                    onPointerDown={(event) => startChildDrag(event, child)}
+                    onPointerMove={moveChildDrag}
+                    onPointerUp={finishChildDrag}
+                    onPointerCancel={cancelChildDrag}
+                  >
+                    <GripVertical className="h-4 w-4" />
+                  </button>
                 </div>
               ))}
             </div>
@@ -196,6 +280,22 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
           returnFocus={returnFocusRef.current}
           onClose={closeAll}
         />
+      )}
+
+      {childDrag?.active && createPortal(
+        <div
+          className="pointer-events-none fixed z-[1100] flex items-center gap-2 rounded-lg border border-[hsl(var(--primary)/0.7)] bg-card px-3 py-2 text-sm shadow-xl"
+          style={{
+            left: childDrag.x,
+            top: childDrag.y,
+            width: Math.min(childDrag.child.width, 240),
+            transform: 'translate(-50%, -50%)',
+          }}
+        >
+          <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate">{childDrag.child.title}</span>
+        </div>,
+        document.body,
       )}
     </div>
   );

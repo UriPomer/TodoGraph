@@ -243,6 +243,8 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
             status: child.status,
             description: child.description,
             depth,
+            width: nodeGeometryById.get(child.id)!.displayedSize.w,
+            height: nodeGeometryById.get(child.id)!.displayedSize.h,
           });
           visit(child.id, depth + 1);
         }
