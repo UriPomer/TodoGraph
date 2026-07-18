@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Task } from '@todograph/shared';
 import {
   buildTopLevelCollisionRects,
+  computeNodeGeometryMap,
   computeNodeSizeMap,
   placeMovedNodesOnTarget,
   rectsOverlap,
@@ -23,13 +24,31 @@ const task = (id: string, x: number, y: number, parentId?: string, title = id): 
 
 describe('pagePlacement', () => {
   it('uses the folded group height for shared collision geometry', () => {
-    const sizes = computeNodeSizeMap([
+    const nodes = [
       task('group', 0, 0),
       task('top', 24, 60, 'group'),
       task('far', 24, 1_000, 'group'),
-    ]);
+    ];
+    const sizes = computeNodeSizeMap(nodes);
+    const geometry = computeNodeGeometryMap(nodes).get('group')!;
 
     expect(sizes.get('group')?.h).toBe(GROUP_COLLAPSED_MAX_H);
+    expect(geometry.collapsed).toBe(true);
+    expect(geometry.fullSize.h).toBeGreaterThan(geometry.displayedSize.h);
+  });
+
+  it('treats an omitted ancestor as the boundary of a partial subtree', () => {
+    expect(computeNodeGeometryMap([task('child', 0, 0, 'outside')]).get('child')).toMatchObject({
+      displayedSize: { w: 180, h: 56 },
+      collapsed: false,
+    });
+  });
+
+  it('rejects a parent cycle instead of inventing fallback geometry', () => {
+    expect(() => computeNodeGeometryMap([
+      task('a', 0, 0, 'b'),
+      task('b', 0, 0, 'a'),
+    ])).toThrow('parent cycle');
   });
 
   it('keeps moved nodes in place when target page is free', () => {

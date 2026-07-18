@@ -36,7 +36,7 @@ export function GroupContentsDialog({ title, descendants, returnFocus, onClose }
     const previousOverflow = document.body.style.overflow;
     if (appRoot) appRoot.inert = true;
     document.body.style.overflow = 'hidden';
-    const focusFrame = requestAnimationFrame(() => closeRef.current?.focus());
+    closeRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -62,7 +62,6 @@ export function GroupContentsDialog({ title, descendants, returnFocus, onClose }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => {
-      cancelAnimationFrame(focusFrame);
       window.removeEventListener('keydown', handleKeyDown);
       if (appRoot) appRoot.inert = wasAppRootInert;
       document.body.style.overflow = previousOverflow;

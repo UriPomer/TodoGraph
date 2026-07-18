@@ -1,5 +1,5 @@
 export type ConsumeRememberTokenResult =
-  | { status: 'valid'; userId: string; sessionVersion: number; token: string; expiresAt: string }
+  | { status: 'valid'; userId: string; sessionVersion: number; rotatedToken?: string; expiresAt: string }
   | { status: 'invalid' | 'replayed' };
 
 export interface RememberTokenRepository {

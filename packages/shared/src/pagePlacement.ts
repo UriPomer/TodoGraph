@@ -37,37 +37,44 @@ const PAGE_MOVE_OFFSETS = (() => {
   return offsets;
 })();
 
-export function computeNodeSizeMap(nodes: Task[]): Map<string, { w: number; h: number }> {
+export interface NodeGeometry {
+  fullSize: { w: number; h: number };
+  displayedSize: { w: number; h: number };
+  collapsed: boolean;
+}
+
+export function computeNodeGeometryMap(nodes: Task[]): Map<string, NodeGeometry> {
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  if (byId.size !== nodes.length) throw new Error('duplicate task id in geometry input');
   const childrenOf = new Map<string, string[]>();
   for (const n of nodes) {
-    if (!n.parentId) continue;
+    // Partial subtrees intentionally omit ancestors; only index parent links inside this input.
+    if (!n.parentId || !byId.has(n.parentId)) continue;
     const arr = childrenOf.get(n.parentId);
     if (arr) arr.push(n.id);
     else childrenOf.set(n.parentId, [n.id]);
   }
 
-  const memo = new Map<string, { w: number; h: number }>();
+  const memo = new Map<string, NodeGeometry>();
   const visiting = new Set<string>();
-  const visit = (id: string): { w: number; h: number } => {
+  const visit = (id: string): NodeGeometry => {
     const cached = memo.get(id);
     if (cached) return cached;
-    const node = byId.get(id);
-    if (!node || visiting.has(id)) {
-      return { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
-    }
+    if (visiting.has(id)) throw new Error(`parent cycle at task ${id}`);
+    const node = byId.get(id)!;
     visiting.add(id);
     const childIds = childrenOf.get(id) ?? [];
     if (childIds.length === 0) {
-      const leaf = { w: node.width ?? CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+      const size = { w: node.width ?? CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+      const leaf = { fullSize: size, displayedSize: size, collapsed: false };
       memo.set(id, leaf);
       visiting.delete(id);
       return leaf;
     }
-    const size = capGroupSize(computeGroupSize(
+    const fullSize = computeGroupSize(
       childIds.map((childId) => {
         const child = byId.get(childId)!;
-        const childSize = visit(childId);
+        const childSize = visit(childId).displayedSize;
         return {
           x: child.x ?? 0,
           y: child.y ?? 0,
@@ -75,14 +82,22 @@ export function computeNodeSizeMap(nodes: Task[]): Map<string, { w: number; h: n
           h: childSize.h,
         };
       }),
-    ));
+    );
+    const displayedSize = capGroupSize(fullSize);
+    const geometry = { fullSize, displayedSize, collapsed: displayedSize.h < fullSize.h };
     visiting.delete(id);
-    memo.set(id, size);
-    return size;
+    memo.set(id, geometry);
+    return geometry;
   };
 
   for (const n of nodes) visit(n.id);
   return memo;
+}
+
+export function computeNodeSizeMap(nodes: Task[]): Map<string, { w: number; h: number }> {
+  return new Map(
+    [...computeNodeGeometryMap(nodes)].map(([id, geometry]) => [id, geometry.displayedSize]),
+  );
 }
 
 export function buildTopLevelCollisionRects(nodes: Task[]): CollisionRect[] {
@@ -90,7 +105,7 @@ export function buildTopLevelCollisionRects(nodes: Task[]): CollisionRect[] {
   return nodes
     .filter((n) => !n.parentId)
     .map((n) => {
-      const size = sizeMap.get(n.id) ?? { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+      const size = sizeMap.get(n.id)!;
       return {
         id: n.id,
         x: n.x ?? 0,
@@ -112,7 +127,7 @@ export function placeMovedNodesOnTarget(targetNodes: Task[], movedNodes: Task[])
 
   const sizeMap = computeNodeSizeMap(safeMovedNodes);
   const movingRects = movedRoots.map((n) => {
-    const size = sizeMap.get(n.id) ?? { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+    const size = sizeMap.get(n.id)!;
     return {
       id: n.id,
       x: n.x ?? 0,
@@ -473,7 +488,7 @@ function resolveScope(
   const index = new CollisionRectIndex();
   const patches = new Map<string, { x: number; y: number }>();
   const initialRight = Math.max(...siblings.map((node) => {
-    const size = sizeMap.get(node.id) ?? { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+    const size = sizeMap.get(node.id)!;
     return (node.x ?? 0) + size.w;
   }));
   let fallbackX: number | null = null;
@@ -511,7 +526,7 @@ function rectForNode(
   node: Task,
   sizeMap: Map<string, { w: number; h: number }>,
 ): CollisionRect {
-  const size = sizeMap.get(node.id) ?? { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+  const size = sizeMap.get(node.id)!;
   return { id: node.id, x: node.x ?? 0, y: node.y ?? 0, w: size.w, h: size.h };
 }
 

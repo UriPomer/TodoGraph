@@ -28,7 +28,6 @@ import {
   MAX_HIERARCHY_DEPTH,
   MAX_PAGE_TITLE_LENGTH,
   type CollisionRect,
-  computeGroupSize,
   computeNodeSizeMap,
   GROUP_PADDING_X,
   GROUP_PADDING_Y,
@@ -36,8 +35,7 @@ import {
   CHILD_DEFAULT_H,
   GROUP_MIN_W,
   GROUP_MIN_H,
-  GROUP_COLLAPSED_MAX_H,
-  capGroupSize,
+  computeNodeGeometryMap,
   resolveClusterTranslationAvoidingOccupied,
   type Task,
 } from '@todograph/shared';
@@ -204,56 +202,32 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
   const isMultiDragRef = useRef(false);
   const multiDragSessionRef = useRef(new MultiDragSession());
   const dragDescendantIdsRef = useRef(new Set<string>());
-  const parentMap = useMemo(() => {
-    const m = new Map<string, string[]>();
-    for (const n of nodes) {
-      if (n.parentId) {
-        const arr = m.get(n.parentId);
-        if (arr) arr.push(n.id);
-        else m.set(n.parentId, [n.id]);
-      }
-    }
-    return m;
-  }, [nodes]);
   const hierarchyMetrics = useMemo(() => buildHierarchyMetrics(nodes), [nodes]);
+  const parentMap = hierarchyMetrics.childIdsByParentId;
+  const byId = hierarchyMetrics.byId;
   const depthById = hierarchyMetrics.depthById;
   const subtreeHeightById = hierarchyMetrics.subtreeHeightById;
+  const nodeGeometryById = useMemo(() => computeNodeGeometryMap(nodes), [nodes]);
   const dataCacheRef = useRef(new Map<string, TaskNodeData | GroupNodeData>());
   const prevGroupSizesRef = useRef(new Map<string, { w: number; h: number }>());
   const [resizedGroupIds, setResizedGroupIds] = useState<string[]>([]);
   useEffect(() => {
     if (draggingRef.current) return;
-    const byId = new Map(nodes.map((n) => [n.id, n]));
     const groupIds = [...parentMap.keys()];
     groupIds.sort((a, b) => (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0));
     const groupSizes = new Map<string, { w: number; h: number }>();
     const collapsedGroupIds = new Set<string>();
     for (const pid of groupIds) {
-      const childIds = parentMap.get(pid) ?? [];
-      const childPositions: Array<{ x: number; y: number; w: number; h: number }> = [];
-      for (const cid of childIds) {
-        const c = byId.get(cid);
-        if (!c) continue;
-        const childSize = groupSizes.get(cid);
-        childPositions.push({
-          x: c.x ?? 0,
-          y: c.y ?? 0,
-          w: childSize?.w ?? c.width ?? CHILD_DEFAULT_W,
-          h: childSize?.h ?? CHILD_DEFAULT_H,
-        });
-      }
-      const fullSize = computeGroupSize(childPositions);
-      if (fullSize.h > GROUP_COLLAPSED_MAX_H) collapsedGroupIds.add(pid);
-      groupSizes.set(pid, capGroupSize(fullSize));
+      const geometry = nodeGeometryById.get(pid)!;
+      if (geometry.collapsed) collapsedGroupIds.add(pid);
+      groupSizes.set(pid, geometry.displayedSize);
     }
 
     const isInsideCollapsedGroup = (node: Task): boolean => {
-      const seen = new Set<string>();
       let parentId = node.parentId;
-      while (parentId && !seen.has(parentId)) {
+      while (parentId) {
         if (collapsedGroupIds.has(parentId)) return true;
-        seen.add(parentId);
-        parentId = byId.get(parentId)?.parentId;
+        parentId = byId.get(parentId)!.parentId;
       }
       return false;
     };
@@ -262,8 +236,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
       const descendants: NonNullable<GroupNodeData['descendants']> = [];
       const visit = (id: string, depth: number) => {
         for (const childId of parentMap.get(id) ?? []) {
-          const child = byId.get(childId);
-          if (!child) continue;
+          const child = byId.get(childId)!;
           descendants.push({
             id: child.id,
             title: child.title,
@@ -347,7 +320,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
       return built;
     });
     setRfNodesPageId(activePageId);
-  }, [activePageId, nodes, readySet, recommended, parentMap]);
+  }, [activePageId, nodes, readySet, recommended, parentMap, byId, depthById, nodeGeometryById]);
   const updateNodeInternals = useUpdateNodeInternals();
   useEffect(() => {
     const ids = new Set<string>([...parentMap.keys(), ...resizedGroupIds]);
@@ -848,7 +821,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     }));
     const workingNodes = rfNodes.map((node) => ({
       ...node,
-      position: groupLayout.positions.get(node.id) ?? node.position,
+      position: groupLayout.positions.get(node.id)!,
     }));
 
     const topLevel = workingNodes.filter((n) => !n.parentId);
@@ -862,15 +835,12 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     const finalPositions = new Map(workingNodes.map((node) => [node.id, node.position]));
     for (const node of laid) finalPositions.set(node.id, node.position);
     setRfNodes((prev) =>
-      prev.map((node) => ({ ...node, position: finalPositions.get(node.id) ?? node.position })),
+      prev.map((node) => ({ ...node, position: finalPositions.get(node.id)! })),
     );
-    const patches = workingNodes.map((node) => ({
-      id: node.id,
-      patch: {
-        x: finalPositions.get(node.id)?.x ?? node.position.x,
-        y: finalPositions.get(node.id)?.y ?? node.position.y,
-      },
-    }));
+    const patches = workingNodes.map((node) => {
+      const position = finalPositions.get(node.id)!;
+      return { id: node.id, patch: { x: position.x, y: position.y } };
+    });
     updateTasksBulk(patches);
   }, [rfNodes, rfEdges, updateTasksBulk, parentMap, depthById]);
   const autoLayoutCheckedPagesRef = useRef(new Set<string>());
@@ -1251,7 +1221,7 @@ export function buildAlignedPatches(
   let cursor = -Infinity;
   const patches = new Map<string, Partial<Task>>();
   for (const node of ordered) {
-    const size = sizeMap.get(node.id) ?? { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+    const size = sizeMap.get(node.id)!;
     if (axis === 'horizontal') {
       const x = Math.max(node.x ?? 0, cursor);
       patches.set(node.id, { x, y: anchor.y ?? 0 });

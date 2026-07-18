@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import dagre from 'dagre';
-import { CHILD_DEFAULT_H, CHILD_DEFAULT_W, computeNodeSizeMap, type Task } from '@todograph/shared';
+import { computeNodeSizeMap, type Task } from '@todograph/shared';
 import type { client as ClientType } from '../client.js';
 
 // ── Handler ──
@@ -32,7 +32,7 @@ export async function handleAutoLayout(
   const sizeMap = computeNodeSizeMap(nodes);
 
   for (const n of roots) {
-    const size = sizeMap.get(n.id) ?? { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+    const size = sizeMap.get(n.id)!;
     g.setNode(n.id, { width: size.w, height: size.h });
   }
   for (const e of page.edges) {
@@ -44,7 +44,7 @@ export async function handleAutoLayout(
   const positions = page.nodes.map((n) => {
     const p = g.node(n.id);
     if (!p) return { task_id: n.id, x: n.x ?? 0, y: n.y ?? 0 };
-    const size = sizeMap.get(n.id) ?? { w: CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+    const size = sizeMap.get(n.id)!;
     return {
       task_id: n.id,
       x: Math.round(p.x - size.w / 2),

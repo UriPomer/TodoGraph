@@ -8,7 +8,6 @@ import type {
 } from './RememberTokenRepository.js';
 
 const MAX_TOKENS_PER_USER = 20;
-const MAX_PARALLEL_ROTATIONS = 8;
 const REPLAY_GRACE_MS = 5_000;
 const REMEMBER_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
 
@@ -18,16 +17,6 @@ const RememberTokenSchema = z.object({
   currentSecretHashes: z.array(z.string().length(64)).min(1),
   previousSecretHashes: z.array(z.string().length(64)).default([]),
   previousValidUntil: z.string().datetime().optional(),
-  sessionVersion: z.number().int().nonnegative(),
-  createdAt: z.string().datetime(),
-  lastUsedAt: z.string().datetime(),
-  expiresAt: z.string().datetime(),
-});
-
-const LegacyRememberTokenSchema = z.object({
-  id: z.string().min(1),
-  userId: z.string().min(1),
-  secretHash: z.string().length(64),
   sessionVersion: z.number().int().nonnegative(),
   createdAt: z.string().datetime(),
   lastUsedAt: z.string().datetime(),
@@ -124,26 +113,26 @@ export class FileRememberTokenRepository implements RememberTokenRepository {
         await this.writeTokens(tokens);
         return { status: 'replayed' };
       }
-      if (isGraceReplay && record.currentSecretHashes.length >= MAX_PARALLEL_ROTATIONS) {
-        return { status: 'invalid' };
+      if (isGraceReplay) {
+        return {
+          status: 'valid',
+          userId: record.userId,
+          sessionVersion: record.sessionVersion,
+          expiresAt: record.expiresAt,
+        };
       }
 
       const nextSecret = randomBytes(32).toString('base64url');
-      const nextHash = hashSecret(nextSecret).toString('hex');
-      if (isCurrent) {
-        record.previousSecretHashes = record.currentSecretHashes;
-        record.previousValidUntil = new Date(now.getTime() + REPLAY_GRACE_MS).toISOString();
-        record.currentSecretHashes = [nextHash];
-      } else {
-        record.currentSecretHashes.push(nextHash);
-      }
+      record.previousSecretHashes = record.currentSecretHashes;
+      record.previousValidUntil = new Date(now.getTime() + REPLAY_GRACE_MS).toISOString();
+      record.currentSecretHashes = [hashSecret(nextSecret).toString('hex')];
       record.lastUsedAt = now.toISOString();
       await this.writeTokens(tokens);
       return {
         status: 'valid',
         userId: record.userId,
         sessionVersion: record.sessionVersion,
-        token: encodeToken(record.id, nextSecret),
+        rotatedToken: encodeToken(record.id, nextSecret),
         expiresAt: record.expiresAt,
       };
     });
@@ -170,23 +159,7 @@ export class FileRememberTokenRepository implements RememberTokenRepository {
   private async readTokens(): Promise<RememberToken[]> {
     try {
       const raw = await fs.readFile(this.filePath, 'utf8');
-      const parsed = z
-        .array(z.union([RememberTokenSchema, LegacyRememberTokenSchema]))
-        .parse(JSON.parse(raw));
-      return parsed.map((token) =>
-        'secretHash' in token
-          ? {
-              id: token.id,
-              userId: token.userId,
-              currentSecretHashes: [token.secretHash],
-              previousSecretHashes: [],
-              sessionVersion: token.sessionVersion,
-              createdAt: token.createdAt,
-              lastUsedAt: token.lastUsedAt,
-              expiresAt: token.expiresAt,
-            }
-          : token,
-      );
+      return z.array(RememberTokenSchema).parse(JSON.parse(raw));
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;

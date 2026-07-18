@@ -100,8 +100,6 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     protectedApi.addHook('onRequest', authHook(
       userRepo,
       keyStore,
-      rememberTokenStore,
-      opts.cookieSecure ?? false,
     ));
     await protectedApi.register(mcpRoutes, { keyStore });
     await protectedApi.register(workspaceRoutes, { getRepo });

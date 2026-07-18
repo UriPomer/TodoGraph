@@ -122,18 +122,20 @@ async function validateSessionUser(
   const userId = req.session.userId;
   if (!userId) return { ok: false, error: 'unauthenticated' };
 
-  if (
-    typeof req.session.issuedAt === 'number' &&
-    Date.now() - req.session.issuedAt > SESSION_ABSOLUTE_MAX_AGE_MS
-  ) {
+  if (typeof req.session.issuedAt !== 'number') {
+    return { ok: false, error: 'invalidated' };
+  }
+  if (Date.now() - req.session.issuedAt > SESSION_ABSOLUTE_MAX_AGE_MS) {
     return { ok: false, error: 'expired' };
   }
 
   const user = await userRepo.findById(userId);
   if (!user) return { ok: false, error: 'missing-user' };
 
-  const sessionVersion = req.session.sessionVersion ?? 0;
-  if (sessionVersion !== user.sessionVersion) {
+  if (
+    typeof req.session.sessionVersion !== 'number' ||
+    req.session.sessionVersion !== user.sessionVersion
+  ) {
     return { ok: false, error: 'invalidated' };
   }
 
@@ -162,18 +164,20 @@ async function authenticateBrowser(
 
   const user = await userRepo.findById(remembered.userId);
   if (!user || user.sessionVersion !== remembered.sessionVersion) {
-    await rememberTokenStore.revoke(remembered.token);
+    await rememberTokenStore.revoke(rawToken);
     req.session.delete();
     clearRememberCookie(reply, cookieSecure);
     return { ok: false, error: user ? 'invalidated' : 'missing-user' };
   }
 
   establishSession(req, user);
-  const secondsRemaining = Math.max(
-    1,
-    Math.floor((new Date(remembered.expiresAt).getTime() - Date.now()) / 1000),
-  );
-  setRememberCookie(reply, remembered.token, cookieSecure, secondsRemaining);
+  if (remembered.rotatedToken) {
+    const secondsRemaining = Math.max(
+      1,
+      Math.floor((new Date(remembered.expiresAt).getTime() - Date.now()) / 1000),
+    );
+    setRememberCookie(reply, remembered.rotatedToken, cookieSecure, secondsRemaining);
+  }
   return { ok: true, user };
 }
 
@@ -433,8 +437,6 @@ async function resolveUserId(
 export function authHook(
   userRepo: UserRepository,
   keyStore: McpKeyStore | null,
-  rememberTokenStore: RememberTokenRepository,
-  cookieSecure = false,
 ) {
   return async function (req: FastifyRequest, reply: FastifyReply) {
     if (req.url.startsWith('/api/auth/')) return;
@@ -452,13 +454,7 @@ export function authHook(
     }
 
     // 回退到 session 认证（浏览器用户，无限制）
-    const session = await authenticateBrowser(
-      req,
-      reply,
-      userRepo,
-      rememberTokenStore,
-      cookieSecure,
-    );
+    const session = await validateSessionUser(req, userRepo);
     if (!session.ok) {
       if (session.error !== 'unauthenticated') {
         req.session.delete();

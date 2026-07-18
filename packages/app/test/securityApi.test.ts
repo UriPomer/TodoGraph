@@ -89,6 +89,30 @@ describe('security API client', () => {
     unsubscribe();
   });
 
+  it('restores an expired session once and retries concurrent protected requests', async () => {
+    const attempts = new Map<string, number>();
+    let restoreCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === '/api/auth/me') {
+        restoreCalls++;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      const attempt = (attempts.get(path) ?? 0) + 1;
+      attempts.set(path, attempt);
+      return new Response(null, { status: attempt === 1 ? 401 : 200 });
+    });
+
+    const [meta, page] = await Promise.all([
+      apiFetch('/api/meta'),
+      apiFetch('/api/pages/page-1'),
+    ]);
+
+    expect(meta.status).toBe(200);
+    expect(page.status).toBe(200);
+    expect(restoreCalls).toBe(1);
+  });
+
   it('discards responses started under a previous user session', async () => {
     let resolveResponse!: (response: Response) => void;
     vi.spyOn(globalThis, 'fetch').mockReturnValue(
@@ -102,6 +126,29 @@ describe('security API client', () => {
     resolveResponse(new Response('{}'));
 
     await expect(request).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('does not reuse an in-flight restore after the user session changes', async () => {
+    let resolveRestore!: (response: Response) => void;
+    const listener = vi.fn();
+    const unsubscribe = subscribeToUnauthorized(listener);
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (String(input) === '/api/auth/me') {
+        return new Promise<Response>((resolve) => {
+          resolveRestore = resolve;
+        });
+      }
+      return Promise.resolve(new Response(null, { status: 401 }));
+    });
+
+    const request = apiFetch('/api/meta');
+    await vi.waitFor(() => expect(resolveRestore).toBeTypeOf('function'));
+    resetApiSession();
+    resolveRestore(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' });
+    expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
   });
 
   it('posts password change payload', async () => {

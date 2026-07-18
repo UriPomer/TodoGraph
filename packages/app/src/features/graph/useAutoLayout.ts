@@ -62,10 +62,12 @@ export function layoutNestedGroupChildren<NodeData extends Record<string, unknow
 
   for (const parentId of groupIdsDeepestFirst) {
     const children = (childrenByParent.get(parentId) ?? [])
-      .map((id) => byId.get(id))
-      .filter((node): node is RFNode<NodeData> => Boolean(node))
-      .map((node) => ({ ...node, position: positions.get(node.id) ?? node.position }));
-    const layout = layoutChildrenInTwoColumns(children, (node) => sizes.get(node.id) ?? sizeOf(node));
+      .map((id) => {
+        const node = byId.get(id);
+        if (!node) throw new Error(`missing layout child ${id} for group ${parentId}`);
+        return { ...node, position: positions.get(id)! };
+      });
+    const layout = layoutChildrenInTwoColumns(children, (node) => sizes.get(node.id)!);
     for (const [id, position] of layout.positions) positions.set(id, position);
     const displayedSize = capGroupSize(layout.size);
     sizes.set(parentId, { width: displayedSize.w, height: displayedSize.h });

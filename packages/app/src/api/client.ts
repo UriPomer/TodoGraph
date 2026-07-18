@@ -49,6 +49,7 @@ export function getApiBase(): string {
 
 const unauthorizedListeners = new Set<() => void>();
 let apiSessionGeneration = 0;
+let restoreSessionAttempt: { generation: number; promise: Promise<boolean> } | null = null;
 export function subscribeToUnauthorized(listener: () => void): () => void {
   unauthorizedListeners.add(listener);
   return () => unauthorizedListeners.delete(listener);
@@ -72,20 +73,67 @@ function requestPath(input: RequestInfo | URL): string {
   }
 }
 
+function fetchWithCredentials(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (!getApiBase()) {
+    return init === undefined ? globalThis.fetch(input) : globalThis.fetch(input, init);
+  }
+  return globalThis.fetch(input, { ...init, credentials: 'include' });
+}
+
+async function restoreBrowserSession(generation: number): Promise<boolean> {
+  if (!restoreSessionAttempt || restoreSessionAttempt.generation !== generation) {
+    const attempt = {
+      generation,
+      promise: (async () => {
+        try {
+          const response = await fetchWithCredentials(`${getApiBase()}/api/auth/me`);
+          if (generation !== apiSessionGeneration || !response.ok) return false;
+          const body = (await response.json()) as { ok?: boolean };
+          return body.ok === true;
+        } catch {
+          return false;
+        }
+      })(),
+    };
+    restoreSessionAttempt = attempt;
+    void attempt.promise.finally(() => {
+      if (restoreSessionAttempt === attempt) restoreSessionAttempt = null;
+    });
+  }
+  return restoreSessionAttempt.promise;
+}
+
+function notifyUnauthorized(): void {
+  for (const listener of unauthorizedListeners) listener();
+}
+
 export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const generation = apiSessionGeneration;
-  const response = !getApiBase()
-    ? init === undefined
-      ? await globalThis.fetch(input)
-      : await globalThis.fetch(input, init)
-    : await globalThis.fetch(input, { ...init, credentials: 'include' });
+  const retryInput = input instanceof Request ? input.clone() : input;
+  let response = await fetchWithCredentials(input, init);
   if (generation !== apiSessionGeneration) {
     throw Object.assign(new Error('API session changed'), { name: 'AbortError' });
   }
-  if (response.status === 401 && (
-    !requestPath(input).startsWith('/api/auth/') || response.headers.get('x-session-expired') === '1'
-  )) {
-    for (const listener of unauthorizedListeners) listener();
+
+  const path = requestPath(input);
+  if (response.status === 401 && path.startsWith('/api/') && !path.startsWith('/api/auth/')) {
+    const restored = await restoreBrowserSession(generation);
+    if (generation !== apiSessionGeneration) {
+      throw Object.assign(new Error('API session changed'), { name: 'AbortError' });
+    }
+    if (restored) {
+      response = await fetchWithCredentials(retryInput, init);
+      if (generation !== apiSessionGeneration) {
+        throw Object.assign(new Error('API session changed'), { name: 'AbortError' });
+      }
+    }
+    if (response.status === 401) notifyUnauthorized();
+  } else if (
+    response.status === 401 &&
+    path.startsWith('/api/auth/') &&
+    response.headers.get('x-session-expired') === '1'
+  ) {
+    notifyUnauthorized();
   }
   return response;
 }

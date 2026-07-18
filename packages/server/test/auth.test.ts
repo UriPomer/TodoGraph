@@ -314,6 +314,28 @@ describe('auth routes', () => {
     expect(expired.json()).toEqual({ ok: false });
   });
 
+  it.each([
+    { sessionVersion: 0 },
+    { issuedAt: Date.now() },
+  ])('rejects sessions missing required security fields', async (sessionData) => {
+    const registration = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'secret123' },
+    });
+    const cookies = Object.fromEntries(registration.cookies.map((cookie) => [cookie.name, cookie.value]));
+    const me = await app.inject({ method: 'GET', url: '/api/auth/me', cookies });
+    const incompleteSession = app.createSecureSession({ userId: me.json().id as string, ...sessionData });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/meta',
+      cookies: { session: app.encodeSecureSession(incompleteSession) },
+    });
+
+    expect(response.statusCode).toBe(401);
+  });
+
   it('uses an HttpOnly one-year device credential only when requested', async () => {
     const remembered = await app.inject({
       method: 'POST',
@@ -345,7 +367,7 @@ describe('auth routes', () => {
     expect(notRemembered.cookies.find((cookie) => cookie.name === 'todograph_remember')?.value).toBe('');
   });
 
-  it('allows concurrent rotation, then revokes the token family on delayed replay', async () => {
+  it('reuses one rotation for concurrent restores, then revokes it on delayed replay', async () => {
     const registration = await app.inject({
       method: 'POST',
       url: '/api/auth/register',
@@ -353,24 +375,20 @@ describe('auth routes', () => {
     });
     const original = registration.cookies.find((cookie) => cookie.name === 'todograph_remember')!;
 
-    const [firstRestore, secondRestore] = await Promise.all([
-      app.inject({
+    const restores = await Promise.all(
+      Array.from({ length: 12 }, () => app.inject({
         method: 'GET',
         url: '/api/auth/me',
         cookies: { todograph_remember: original.value },
-      }),
-      app.inject({
-        method: 'GET',
-        url: '/api/auth/me',
-        cookies: { todograph_remember: original.value },
-      }),
-    ]);
-    expect(firstRestore.json()).toMatchObject({ ok: true, username: 'alice' });
-    expect(secondRestore.json()).toMatchObject({ ok: true, username: 'alice' });
-    const firstRotated = firstRestore.cookies.find((cookie) => cookie.name === 'todograph_remember')!;
-    const secondRotated = secondRestore.cookies.find((cookie) => cookie.name === 'todograph_remember')!;
-    expect(firstRotated.value).not.toBe(original.value);
-    expect(secondRotated.value).not.toBe(firstRotated.value);
+      })),
+    );
+    expect(restores.every((response) => response.json().ok === true)).toBe(true);
+    const rotatedCookies = restores.flatMap((response) =>
+      response.cookies.filter((cookie) => cookie.name === 'todograph_remember'),
+    );
+    expect(rotatedCookies).toHaveLength(1);
+    const rotated = rotatedCookies[0]!;
+    expect(rotated.value).not.toBe(original.value);
 
     vi.useFakeTimers();
     try {
@@ -388,7 +406,7 @@ describe('auth routes', () => {
     const revokedCurrentToken = await app.inject({
       method: 'GET',
       url: '/api/auth/me',
-      cookies: { todograph_remember: secondRotated.value },
+      cookies: { todograph_remember: rotated.value },
     });
     expect(revokedCurrentToken.json()).toEqual({ ok: false });
   });

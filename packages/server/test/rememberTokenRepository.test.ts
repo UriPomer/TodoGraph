@@ -16,19 +16,21 @@ describe('FileRememberTokenRepository', () => {
     await fs.rm(dataDir, { recursive: true, force: true });
   });
 
-  it('reads and rotates credentials written by the pre-repository format', async () => {
-    const id = 'legacy-token-id';
-    const secret = 'legacy-token-secret';
+  it('collapses credentials issued by the previous parallel-rotation model', async () => {
     const now = new Date();
+    const secrets = ['first-secret', 'second-secret'];
     const tokenDir = path.join(dataDir, 'users');
+    const filePath = path.join(tokenDir, 'remember-tokens.json');
     await fs.mkdir(tokenDir, { recursive: true });
     await fs.writeFile(
-      path.join(tokenDir, 'remember-tokens.json'),
+      filePath,
       JSON.stringify([
         {
-          id,
+          id: 'device-id',
           userId: 'user-1',
-          secretHash: createHash('sha256').update(secret).digest('hex'),
+          currentSecretHashes: secrets.map((secret) =>
+            createHash('sha256').update(secret).digest('hex')),
+          previousSecretHashes: [],
           sessionVersion: 0,
           createdAt: now.toISOString(),
           lastUsedAt: now.toISOString(),
@@ -37,8 +39,16 @@ describe('FileRememberTokenRepository', () => {
       ]),
     );
 
-    const result = await new FileRememberTokenRepository(dataDir).consume(`${id}.${secret}`);
+    const result = await new FileRememberTokenRepository(dataDir).consume(
+      `device-id.${secrets[1]}`,
+    );
+    const stored = JSON.parse(await fs.readFile(filePath, 'utf8')) as Array<{
+      currentSecretHashes: string[];
+      previousSecretHashes: string[];
+    }>;
 
     expect(result).toMatchObject({ status: 'valid', userId: 'user-1' });
+    expect(stored[0]?.currentSecretHashes).toHaveLength(1);
+    expect(stored[0]?.previousSecretHashes).toHaveLength(2);
   });
 });
