@@ -1,74 +1,12 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import dagre from 'dagre';
-import {
-  resolveNodeOverlaps,
-  type PageData,
-  type Task,
-  type TaskStatus,
-} from '@todograph/shared';
+import type { TaskStatus } from '@todograph/shared';
 import type { client as ClientType } from '../client.js';
-import { backupBeforeMutation } from './backup.js';
 import { textResult } from './result.js';
 
-function generateId(): string {
-  return 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+function runCommand<T>(c: typeof ClientType, pageId: string, command: unknown): Promise<T> {
+  return c.post<T>(`/api/pages/${encodeURIComponent(pageId)}/commands`, command);
 }
-
-type Layoutable = Task;
-type Page = PageData;
-
-const pagePath = (pageId: string) => `/api/pages/${encodeURIComponent(pageId)}`;
-const loadPage = (c: typeof ClientType, pageId: string) => c.get<Page>(pagePath(pageId));
-async function savePage(c: typeof ClientType, pageId: string, page: Page) {
-  await backupBeforeMutation(c, pageId);
-  await c.put(pagePath(pageId), {
-    nodes: page.nodes,
-    edges: page.edges,
-    expectedVersion: page.version,
-  });
-}
-
-/** 对已有节点+新节点跑 dagre LR 布局，把坐标写入新节点 */
-function layoutNodes(
-  allNodes: Layoutable[],
-  newNodeIds: Set<string>,
-  edges: Array<{ from: string; to: string }>,
-): void {
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80, marginx: 20, marginy: 20 });
-
-  const seen = new Set<string>();
-  for (const n of allNodes) {
-    if (seen.has(n.id)) continue;
-    seen.add(n.id);
-    if (newNodeIds.has(n.id)) {
-      g.setNode(n.id, { width: n.width ?? DEFAULT_W, height: DEFAULT_H });
-    } else {
-      // Pin 已有节点位置，dagre 只排新节点
-      const w = n.width ?? DEFAULT_W;
-      const h = DEFAULT_H;
-      g.setNode(n.id, { width: w, height: h, x: (n.x ?? 0) + w / 2, y: (n.y ?? 0) + h / 2, fixed: true });
-    }
-  }
-  for (const e of edges) g.setEdge(e.from, e.to);
-
-  dagre.layout(g);
-
-  // 只写回新节点的坐标
-  for (const n of allNodes) {
-    if (newNodeIds.has(n.id)) {
-      const p = g.node(n.id);
-      if (p) {
-        n.x = Math.round(p.x - (n.width ?? DEFAULT_W) / 2);
-        n.y = Math.round(p.y - DEFAULT_H / 2);
-      }
-    }
-  }
-}
-
-const DEFAULT_W = 180, DEFAULT_H = 56;
 
 export async function handleDeleteTasks(
   c: typeof ClientType,
@@ -77,48 +15,11 @@ export async function handleDeleteTasks(
     task_ids: string[];
   },
 ) {
-  const page = await loadPage(c, params.page_id);
-
-  const ids = new Set(params.task_ids);
-  const removed: string[] = [];
-  const removedNodes = new Map(page.nodes.map((node) => [node.id, node]));
-  const releasedIds: string[] = [];
-  const keptNodes = page.nodes.filter((n) => {
-    if (ids.has(n.id)) {
-      removed.push(n.id);
-      return false;
-    }
-    return true;
-  }).map((node) => {
-    if (!node.parentId || !ids.has(node.parentId)) return node;
-    let x = node.x ?? 0;
-    let y = node.y ?? 0;
-    let parentId: string | undefined = node.parentId;
-    const seen = new Set<string>();
-    while (parentId && !seen.has(parentId)) {
-      seen.add(parentId);
-      const parent = removedNodes.get(parentId);
-      if (!parent) break;
-      x += parent.x ?? 0;
-      y += parent.y ?? 0;
-      parentId = parent.parentId;
-    }
-    releasedIds.push(node.id);
-    return { ...node, parentId: undefined, x, y };
-  });
-  const keptEdges = page.edges.filter((e) => !ids.has(e.from) && !ids.has(e.to));
-
-  if (removed.length === 0) {
-    return { removed: 0, warning: 'none of the requested task_ids were found' };
-  }
-
-  const repaired = resolveNodeOverlaps(keptNodes, {
-    changedIds: releasedIds,
-    pinnedIds: releasedIds,
-  }).nodes;
-  await savePage(c, params.page_id, { ...page, nodes: repaired, edges: keptEdges });
-
-  return { removed: removed.length, removedIds: removed };
+  return runCommand<{ removed: number; removedIds?: string[]; warning?: string }>(
+    c,
+    params.page_id,
+    { type: 'delete_tasks', taskIds: params.task_ids },
+  );
 }
 
 export async function handleCreateTask(
@@ -131,44 +32,16 @@ export async function handleCreateTask(
     depends_on?: string[];
   },
 ) {
-  const page = await loadPage(c, params.page_id);
-
-  const newId = generateId();
-  const newNode: Layoutable = {
-    id: newId,
+  return runCommand<{
+    task: { id: string; title: string; status: TaskStatus; x?: number; y?: number };
+    rejectedDependencies?: string[];
+  }>(c, params.page_id, {
+    type: 'create_task',
     title: params.title,
-    status: params.status ?? 'todo',
-    ...(params.description ? { description: params.description } : {}),
-  };
-
-  const newEdges = [...page.edges];
-  const existingIds = new Set(page.nodes.map((node) => node.id));
-  const rejectedDependencies: string[] = [];
-  for (const depId of new Set(params.depends_on ?? [])) {
-    if (existingIds.has(depId)) newEdges.push({ from: depId, to: newId });
-    else rejectedDependencies.push(depId);
-  }
-
-  // Dagre 布局 + 碰撞避免
-  const newIdSet = new Set([newId]);
-  const existing = resolveNodeOverlaps(page.nodes).nodes;
-  const all: Layoutable[] = [...existing, newNode];
-  layoutNodes(all, newIdSet, newEdges);
-  const resolved = resolveNodeOverlaps(all, { changedIds: [newId], pinnedIds: [newId], gap: 48 }).nodes;
-  const savedNode = resolved.find((node) => node.id === newId)!;
-
-  await savePage(c, params.page_id, { ...page, nodes: resolved, edges: newEdges });
-
-  return {
-    task: {
-      id: newId,
-      title: params.title,
-      status: params.status ?? 'todo',
-      x: savedNode.x,
-      y: savedNode.y,
-    },
-    ...(rejectedDependencies.length ? { rejectedDependencies } : {}),
-  };
+    status: params.status,
+    description: params.description,
+    dependsOn: params.depends_on,
+  });
 }
 
 export async function handleCreateTasks(
@@ -179,72 +52,11 @@ export async function handleCreateTasks(
     edges?: Array<{ from: number; to: number }>;
   },
 ) {
-  const page = await loadPage(c, params.page_id);
-
-  const ids = params.tasks.map(() => generateId());
-  const newNodes: Layoutable[] = params.tasks.map((t, i) => ({
-    id: ids[i]!,
-    title: t.title,
-    status: t.status ?? 'todo',
-    ...(t.description ? { description: t.description } : {}),
-  }));
-
-  const newEdges = [...page.edges];
-  const rejectedEdges: Array<{ from: number; to: number; reason: string }> = [];
-
-  const edgeKeys = new Set<string>();
-  if (params.edges) {
-    for (const e of params.edges) {
-      if (e.from === e.to) {
-        rejectedEdges.push({ from: e.from, to: e.to, reason: 'self-loop' });
-        continue;
-      }
-      if (e.from < 0 || e.from >= ids.length || e.to < 0 || e.to >= ids.length) {
-        rejectedEdges.push({ from: e.from, to: e.to, reason: 'index out of range' });
-        continue;
-      }
-      const key = `${e.from}:${e.to}`;
-      if (edgeKeys.has(key)) {
-        rejectedEdges.push({ from: e.from, to: e.to, reason: 'duplicate' });
-        continue;
-      }
-      edgeKeys.add(key);
-      newEdges.push({ from: ids[e.from]!, to: ids[e.to]! });
-    }
-  }
-
-  // Dagre 自动布局 + 碰撞避免
-  const newNodeIds = new Set(ids);
-  const existingNodes = resolveNodeOverlaps(page.nodes).nodes;
-  const allNodes: Layoutable[] = [...existingNodes, ...newNodes];
-  layoutNodes(allNodes, newNodeIds, newEdges);
-  const resolved = resolveNodeOverlaps(allNodes, {
-    changedIds: ids,
-    pinnedIds: ids,
-    gap: 48,
-  }).nodes;
-
-  try {
-    await savePage(c, params.page_id, { ...page, nodes: resolved, edges: newEdges });
-  } catch (err) {
-    const msg = String((err as Error).message ?? err);
-    if (msg.includes('cycle')) {
-      throw new Error(`graph contains a cycle — some edges were rejected. Review the edges array.`);
-    }
-    throw err;
-  }
-
-  return {
-    created: ids.map((id) => resolved.find((node) => node.id === id)!).map((n) => ({
-      id: n.id,
-      title: n.title ?? '',
-      status: n.status ?? 'todo',
-      x: n.x,
-      y: n.y,
-    })),
-    edgesCreated: params.edges ? params.edges.length - rejectedEdges.length : 0,
-    ...(rejectedEdges.length > 0 ? { rejectedEdges } : {}),
-  };
+  return runCommand<{
+    created: Array<{ id: string; title: string; status: TaskStatus; x?: number; y?: number }>;
+    edgesCreated: number;
+    rejectedEdges?: Array<{ from: number; to: number; reason: string }>;
+  }>(c, params.page_id, { type: 'create_tasks', tasks: params.tasks, edges: params.edges });
 }
 
 export async function handleUpdateTask(
@@ -259,34 +71,19 @@ export async function handleUpdateTask(
     y?: number;
   },
 ) {
-  const page = await loadPage(c, params.page_id);
-
-  const repaired = resolveNodeOverlaps(page.nodes).nodes;
-  const idx = repaired.findIndex((n) => n.id === params.task_id);
-  if (idx === -1) throw new Error(`task not found: ${params.task_id}`);
-  if (params.title === undefined && params.status === undefined && params.description === undefined &&
-      params.x === undefined && params.y === undefined) throw new Error('no fields to update');
-
-  const node = repaired[idx]!;
-  const updated: typeof node = { ...node };
-  if (params.title !== undefined) updated.title = params.title;
-  if (params.status !== undefined) updated.status = params.status;
-  if (params.description !== undefined) updated.description = params.description;
-  if (params.x !== undefined) updated.x = params.x;
-  if (params.y !== undefined) updated.y = params.y;
-
-  const newNodes = [...repaired];
-  newNodes[idx] = updated;
-  const resolved = resolveNodeOverlaps(newNodes, {
-    changedIds: [updated.id],
-    pinnedIds: [updated.id],
-    gap: 48,
-  }).nodes;
-  const savedNode = resolved.find((candidate) => candidate.id === updated.id)!;
-
-  await savePage(c, params.page_id, { ...page, nodes: resolved });
-
-  return { task: savedNode };
+  return runCommand<{ task: { id: string; title?: string; status?: TaskStatus; x?: number; y?: number } }>(
+    c,
+    params.page_id,
+    {
+      type: 'update_task',
+      taskId: params.task_id,
+      title: params.title,
+      status: params.status,
+      description: params.description,
+      x: params.x,
+      y: params.y,
+    },
+  );
 }
 
 export function registerTaskTools(server: McpServer, c: typeof ClientType) {

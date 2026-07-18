@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Check } from 'lucide-react';
 import { PasswordInput } from '@/components/ui/password-input';
 
@@ -16,6 +16,12 @@ export function LoginPage({ onLogin, onRegister }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.dataset.appSurface = 'auth';
+    return () => { delete document.documentElement.dataset.appSurface; };
+  }, []);
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
@@ -29,7 +35,7 @@ export function LoginPage({ onLogin, onRegister }: Props) {
   };
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-background px-4">
+    <div className="flex min-h-full items-center justify-center bg-card px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <span className="text-[hsl(var(--primary))] text-3xl">◈</span>

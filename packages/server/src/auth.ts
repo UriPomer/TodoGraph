@@ -484,6 +484,7 @@ const API_KEY_ALLOWLIST = new Set([
   'PUT:/api/pages/{id}',
   'DELETE:/api/pages/{id}',
   'POST:/api/pages/{id}/backup',
+  'POST:/api/pages/{id}/commands',
   'POST:/api/pages/{id}/restore',
   'POST:/api/pages/{id}/move-nodes',
 ]);

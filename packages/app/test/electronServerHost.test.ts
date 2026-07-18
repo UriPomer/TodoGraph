@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { electronServerHost } from '../src/lib/electronServerHost';
+import { electronServerHost } from '../../desktop-host/src/index';
 
 describe('electronServerHost', () => {
   it('allows only loopback renderer hosts', () => {

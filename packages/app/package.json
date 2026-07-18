@@ -23,7 +23,7 @@
     "@radix-ui/react-tabs": "^1.1.2",
     "@radix-ui/react-toast": "^1.2.4",
     "@todograph/core": "workspace:*",
-    "@todograph/server": "workspace:*",
+    "@todograph/desktop-host": "workspace:*",
     "@todograph/shared": "workspace:*",
     "@xyflow/react": "^12.3.6",
     "class-variance-authority": "^0.7.1",

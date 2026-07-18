@@ -13,6 +13,7 @@ import {
 } from '@todograph/shared';
 import { useHistoryStore } from './useHistoryStore';
 import { emitAllTasksInvalidated } from './workspaceEvents';
+import { createTaskPersistenceCoordinator } from './taskPersistenceCoordinator';
 interface TaskStore {
   /** 当前页的 pageId —— 供 scheduleSave/flush 使用。null 表示未加载任何页。 */
   activePageId: string | null;
@@ -22,6 +23,8 @@ interface TaskStore {
   edges: Edge[];
   /** Only changes when ids, statuses, or dependency edges change. */
   recommendationRevision: number;
+  /** Only changes when fields used by the list projection change; coordinates are excluded. */
+  listRevision: number;
   loaded: boolean;
   /**
    * 图视口中心（世界坐标系）。GraphView 在初始化 / viewport 变动时
@@ -266,11 +269,14 @@ function patchAffectsGeometry(patch: Partial<Task>): boolean {
     Object.prototype.hasOwnProperty.call(patch, 'parentId');
 }
 
+function patchAffectsList(patch: Partial<Task>): boolean {
+  return patch.title !== undefined ||
+    patch.status !== undefined ||
+    patch.description !== undefined ||
+    Object.prototype.hasOwnProperty.call(patch, 'parentId');
+}
+
 export const useTaskStore = create<TaskStore>((set, get) => {
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  let pendingPageId: string | null = null;
-  let saveDrain: Promise<void> | null = null;
-  const hasPendingSave = () => saveTimer !== null || pendingPageId !== null || saveDrain !== null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let pollInFlight = false;
   let loadRequestId = 0;
@@ -296,6 +302,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
             pageVersion: g.version ?? 0,
             backupDirty: false,
             recommendationRevision: state.recommendationRevision + 1,
+            listRevision: state.listRevision + 1,
           }));
           useHistoryStore.getState().clear();
           if (repaired !== g.nodes) scheduleSave();
@@ -306,11 +313,18 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       }
     }, 5000);
   };
-  const saveOnce = async (): Promise<void> => {
-    if (!pendingPageId) return;
-    const pid = pendingPageId;
+  const persistence = createTaskPersistenceCoordinator({
+    getActivePageId: () => get().activePageId,
+    onScheduled: () => set((state) => ({
+      backupDirty: true,
+      backupRevision: state.backupRevision + 1,
+    })),
+    shouldRetry: (error, pageId) => {
+      const candidate = error as Error & { conflict?: boolean };
+      return !candidate.conflict && get().activePageId === pageId;
+    },
+    persist: async (pid) => {
     const generation = getApiSessionGeneration();
-    pendingPageId = null;
     const { activePageId, nodes, edges, pageVersion } = get();
     if (activePageId !== pid) return;
     try {
@@ -322,7 +336,6 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       if (generation !== getApiSessionGeneration()) return;
       const e = err as Error & { conflict?: boolean; serverVersion?: number };
       if (e.conflict) {
-        pendingPageId = null;
         const message = '页面已被其他设备修改，已重新加载最新数据，请重新执行刚才的操作';
         toast.error('保存冲突', message);
         try {
@@ -334,36 +347,14 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         }
         throw e;
       }
-      if (get().activePageId === pid) pendingPageId = pid;
       toast.error('保存失败', String(e.message ?? err));
       throw e;
     }
-  };
-  const drainSaves = (): Promise<void> => {
-    if (saveDrain) return saveDrain;
-    const drain = (async () => { while (pendingPageId) await saveOnce(); })();
-    saveDrain = drain.finally(() => { saveDrain = null; });
-    return saveDrain;
-  };
-  const scheduleSave = () => {
-    const active = get().activePageId;
-    if (!active) return;
-    pendingPageId = active;
-    set((state) => ({ backupDirty: true, backupRevision: state.backupRevision + 1 }));
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      saveTimer = null;
-      void drainSaves().catch(() => {});
-    }, 250);
-  };
-  const flush = async (): Promise<void> => {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      saveTimer = null;
-    }
-    if (saveDrain) await saveDrain;
-    if (pendingPageId) await drainSaves();
-  };
+    },
+  });
+  const hasPendingSave = () => persistence.hasPending();
+  const scheduleSave = () => persistence.schedule();
+  const flush = () => persistence.flush();
   /**
    * 在 mutation 之前记录前态快照 —— undo 返回的就是这个前态。
    * nodes/edges 引用本身不可变（store 所有写都走 immutable 模式），
@@ -384,14 +375,13 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       viewportCenter: null,
       backupDirty: false,
       recommendationRevision: state.recommendationRevision + 1,
+      listRevision: state.listRevision + 1,
     }));
     useHistoryStore.getState().clear();
     if (repaired !== data.nodes) scheduleSave();
   };
   const cancelScheduledSave = () => {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = null;
-    pendingPageId = null;
+    persistence.cancel();
   };
   const resetSession = () => {
     loadRequestId += 1;
@@ -407,6 +397,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       viewportCenter: null,
       backupDirty: false,
       recommendationRevision: get().recommendationRevision + 1,
+      listRevision: get().listRevision + 1,
     });
   };
   return {
@@ -415,6 +406,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     nodes: [],
     edges: [],
     recommendationRevision: 0,
+    listRevision: 0,
     loaded: false,
     viewportCenter: null,
     backupDirty: false,
@@ -461,6 +453,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       set((s) => ({
         nodes: repairGeometry([...s.nodes, t], [t.id]),
         recommendationRevision: s.recommendationRevision + 1,
+        listRevision: s.listRevision + 1,
       }));
       scheduleSave();
       return get().nodes.find((node) => node.id === t.id) ?? t;
@@ -486,6 +479,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
                 patch.status === undefined
                   ? s.recommendationRevision
                   : s.recommendationRevision + 1,
+              listRevision: patchAffectsList(patch) ? s.listRevision + 1 : s.listRevision,
             }
           : s;
       });
@@ -496,6 +490,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       pushPre();
       const byId = new Map(patches.map((p) => [p.id, p.patch]));
       const affectsRecommendation = patches.some(({ patch }) => patch.status !== undefined);
+      const affectsList = patches.some(({ patch }) => patchAffectsList(patch));
       const geometryIds = patches
         .filter(({ patch }) => patchAffectsGeometry(patch))
         .map(({ id }) => id);
@@ -509,6 +504,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
           recommendationRevision: affectsRecommendation
             ? s.recommendationRevision + 1
             : s.recommendationRevision,
+          listRevision: affectsList ? s.listRevision + 1 : s.listRevision,
         };
       });
       scheduleSave();
@@ -516,7 +512,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     deleteTask: (id) => get().deleteTasks([id]),
     deleteTasks: (ids) => {
       const state = get();
-      const deletedIds = new Set(ids.filter((id) => state.nodes.some((node) => node.id === id)));
+      const existingIds = new Set(state.nodes.map((node) => node.id));
+      const deletedIds = new Set(ids.filter((id) => existingIds.has(id)));
       if (deletedIds.size === 0) return;
       pushPre();
       set((s) => {
@@ -534,6 +531,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
           nodes: repairGeometry(nodes, releasedIds),
           edges: s.edges.filter((edge) => !deletedIds.has(edge.from) && !deletedIds.has(edge.to)),
           recommendationRevision: s.recommendationRevision + 1,
+          listRevision: s.listRevision + 1,
         };
       });
       scheduleSave();
@@ -554,6 +552,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
             : node),
           [...detachedIds],
         ),
+        listRevision: s.listRevision + 1,
       }));
       scheduleSave();
     },
@@ -569,6 +568,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       set((s2) => ({
         nodes: s2.nodes.map((n) => (n.id === id ? { ...n, status: nextStatus[n.status] } : n)),
         recommendationRevision: s2.recommendationRevision + 1,
+        listRevision: s2.listRevision + 1,
       }));
       scheduleSave();
       return true;
@@ -578,6 +578,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       set((s) => ({
         nodes: s.nodes.map((n) => (n.id === id ? { ...n, status } : n)),
         recommendationRevision: s.recommendationRevision + 1,
+        listRevision: s.listRevision + 1,
       }));
       scheduleSave();
     },
@@ -596,6 +597,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       set((s) => ({
         edges: [...s.edges, { from, to }],
         recommendationRevision: s.recommendationRevision + 1,
+        listRevision: s.listRevision + 1,
       }));
       scheduleSave();
       return true;
@@ -605,6 +607,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       set((s) => ({
         edges: s.edges.filter((e) => !(e.from === from && e.to === to)),
         recommendationRevision: s.recommendationRevision + 1,
+        listRevision: s.listRevision + 1,
       }));
       scheduleSave();
     },
@@ -648,6 +651,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         nodes: repairGeometry([...state.nodes, newTask], [newTask.id]),
         edges,
         recommendationRevision: state.recommendationRevision + 1,
+        listRevision: state.listRevision + 1,
       });
       scheduleSave();
       return get().nodes.find((node) => node.id === newTask.id) ?? newTask;
@@ -678,6 +682,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       }
       set((s) => ({
         nodes: s.nodes.map((n) => (n.id === childId ? { ...n, ...patch } : n)),
+        listRevision: s.listRevision + 1,
       }));
       if (parentId) {
         get().normalizeGroupBounds(parentId, [childId]);
@@ -772,6 +777,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
           recommendationRevision: isNewParent
             ? s.recommendationRevision + 1
             : s.recommendationRevision,
+          listRevision: s.listRevision + 1,
         };
       });
       scheduleSave();
@@ -795,6 +801,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         nodes: repairGeometry(prev.nodes),
         edges: prev.edges,
         recommendationRevision: state.recommendationRevision + 1,
+        listRevision: state.listRevision + 1,
       }));
       scheduleSave();
       return true;
@@ -808,6 +815,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         nodes: repairGeometry(next.nodes),
         edges: next.edges,
         recommendationRevision: state.recommendationRevision + 1,
+        listRevision: state.listRevision + 1,
       }));
       scheduleSave();
       return true;

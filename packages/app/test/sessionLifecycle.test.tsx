@@ -1,4 +1,5 @@
 import { act, create } from 'react-test-renderer';
+import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -22,6 +23,9 @@ vi.mock('@/stores/useWorkspaceStore', () => ({
   useWorkspaceStore: (selector: (state: typeof mocks.workspace) => unknown) =>
     selector(mocks.workspace),
 }));
+vi.mock('@/features/theme/ThemeProvider', () => ({
+  ThemeProvider: ({ children }: { children: ReactNode }) => children,
+}));
 
 import App from '../src/App';
 
@@ -40,7 +44,7 @@ describe('App session lifecycle', () => {
     vi.stubGlobal('window', eventTarget);
     vi.stubGlobal('document', {
       ...eventTarget,
-      documentElement: { style: { setProperty: vi.fn() } },
+      documentElement: { dataset: {}, style: { setProperty: vi.fn() } },
     });
 
     let renderer!: ReturnType<typeof create>;
@@ -48,6 +52,11 @@ describe('App session lifecycle', () => {
       renderer = create(<App />);
     });
     expect(mocks.workspace.resetSession).not.toHaveBeenCalled();
+    expect(eventTarget.addEventListener).not.toHaveBeenCalledWith(
+      'mouseover',
+      expect.any(Function),
+      expect.anything(),
+    );
 
     act(() => {
       mocks.auth.loading = false;

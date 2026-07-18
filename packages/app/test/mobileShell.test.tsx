@@ -5,7 +5,7 @@ import {
   MobileBottomNav,
   MobileMoreHeader,
   MobileMorePanel,
-} from '../src/App';
+} from '../src/features/workspace/WorkspaceApp';
 import { ThemeProvider } from '../src/features/theme/ThemeProvider';
 
 describe('mobile shell', () => {

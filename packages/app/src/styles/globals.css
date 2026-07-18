@@ -63,6 +63,12 @@ html, body, #root {
   display: block;
 }
 
+/* Login is fully opaque; skip the costly full-screen blur and lens layers. */
+[data-app-surface='auth'] .bg-sharp,
+[data-app-surface='auth'] .bg-matte {
+  display: none;
+}
+
 .bg-sharp {
   position: fixed;
   inset: 0;

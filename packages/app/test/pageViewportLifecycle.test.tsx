@@ -14,21 +14,21 @@ function Harness({
   cache,
   rf,
   viewportScope = 'desktop',
-  minZoom = 0.5,
+  fitMinZoom = 0.5,
   withNode = false,
 }: {
   activePageId: string;
   cache: PageViewportCache;
   rf: ReactFlowInstance;
   viewportScope?: 'desktop' | 'mobile';
-  minZoom?: number;
+  fitMinZoom?: number;
   withNode?: boolean;
 }) {
   viewportLifecycle = usePageViewportLifecycle({
     activePageId,
     renderedPageId: activePageId,
     viewportScope,
-    minZoom,
+    fitMinZoom,
     nodeIds: withNode ? ['node'] : [],
     renderedNodes: withNode ? [{ id: 'node', width: 180, height: 56 }] : [],
     cache,
@@ -116,7 +116,7 @@ describe('page viewport lifecycle', () => {
     act(() => renderer.unmount());
   });
 
-  it('does not restore a desktop viewport into the mobile graph', async () => {
+  it('uses a readable mobile auto-fit limit', async () => {
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -145,13 +145,13 @@ describe('page viewport lifecycle', () => {
           cache={cache}
           rf={rf}
           viewportScope="mobile"
-          minZoom={0.1}
+          fitMinZoom={0.35}
           withNode
         />,
       );
     });
 
-    expect(fitView).toHaveBeenCalledWith({ padding: 0.3, minZoom: 0.1, maxZoom: 1 });
+    expect(fitView).toHaveBeenCalledWith({ padding: 0.3, minZoom: 0.35, maxZoom: 1 });
     expect(setViewport).not.toHaveBeenCalledWith({ x: 200, y: 100, zoom: 0.5 });
     act(() => renderer.unmount());
   });
@@ -187,7 +187,7 @@ describe('page viewport lifecycle', () => {
         activePageId,
         renderedPageId,
         viewportScope: 'desktop',
-        minZoom: 0.5,
+        fitMinZoom: 0.5,
         nodeIds: ['node'],
         renderedNodes: [{ id: 'node', width: 180, height: 56 }],
         cache,
@@ -246,7 +246,7 @@ describe('page viewport lifecycle', () => {
         activePageId: 'a',
         renderedPageId: 'a',
         viewportScope: 'desktop',
-        minZoom: 0.5,
+        fitMinZoom: 0.5,
         nodeIds: [],
         renderedNodes: [],
         cache,

@@ -73,6 +73,17 @@ describe('atomic hierarchy commands', () => {
     expect(useTaskStore.getState().nodes.map((node) => node.id)).toEqual(['a', 'b', 'c']);
   });
 
+  it('deduplicates batch deletion ids and ignores missing ids', () => {
+    useTaskStore.setState({
+      nodes: [task('a', 0, 0), task('b', 240, 0), task('c', 480, 0)],
+    });
+
+    useTaskStore.getState().deleteTasks(['a', 'missing', 'a']);
+
+    expect(useTaskStore.getState().nodes.map((node) => node.id)).toEqual(['b', 'c']);
+    expect(useHistoryStore.getState().undoStack).toHaveLength(1);
+  });
+
   it('detaches a selection as one command and preserves world positions', () => {
     useTaskStore.setState({
       nodes: [
@@ -176,5 +187,21 @@ describe('recommendation revision', () => {
     useTaskStore.getState().addEdge('a', 'b');
     useTaskStore.getState().addTask({ title: 'c', x: 480, y: 0 });
     expect(useTaskStore.getState().recommendationRevision).toBe(initial + 3);
+  });
+});
+
+describe('list revision', () => {
+  it('ignores coordinate-only updates but tracks list semantics', () => {
+    useTaskStore.setState({
+      nodes: [task('a', 0, 0), task('b', 240, 0)],
+      listRevision: 7,
+    });
+    useTaskStore.getState().updateTask('a', { x: 100, y: 50 });
+    expect(useTaskStore.getState().listRevision).toBe(7);
+
+    useTaskStore.getState().updateTask('a', { title: 'renamed' });
+    useTaskStore.getState().setParent('b', 'a');
+    useTaskStore.getState().addEdge('a', 'b');
+    expect(useTaskStore.getState().listRevision).toBe(10);
   });
 });

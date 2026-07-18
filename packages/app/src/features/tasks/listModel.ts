@@ -5,18 +5,17 @@ export type DepInfo = { undone: number; total: number; parentTitles: string[] };
 export type FlatItem = { task: Task; depth: number };
 
 export function isDescendant(
-  children: ReadonlyMap<string, readonly Task[]>,
+  byId: ReadonlyMap<string, Task>,
   descendantId: string,
   ancestorId: string,
 ): boolean {
-  const pending = [ancestorId];
+  if (descendantId === ancestorId) return true;
+  let current = byId.get(descendantId);
   const visited = new Set<string>();
-  while (pending.length) {
-    const current = pending.pop()!;
-    if (current === descendantId) return true;
-    if (visited.has(current)) continue;
-    visited.add(current);
-    for (const child of children.get(current) ?? []) pending.push(child.id);
+  while (current?.parentId && !visited.has(current.id)) {
+    if (current.parentId === ancestorId) return true;
+    visited.add(current.id);
+    current = byId.get(current.parentId);
   }
   return false;
 }

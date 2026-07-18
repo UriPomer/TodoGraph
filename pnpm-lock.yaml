@@ -48,9 +48,9 @@ importers:
       '@todograph/core':
         specifier: workspace:*
         version: link:../core
-      '@todograph/server':
+      '@todograph/desktop-host':
         specifier: workspace:*
-        version: link:../server
+        version: link:../desktop-host
       '@todograph/shared':
         specifier: workspace:*
         version: link:../shared
@@ -150,6 +150,19 @@ importers:
         specifier: ^3.2.6
         version: 3.2.7(@types/debug@4.1.13)(@types/node@22.19.17)(jiti@2.7.0)(tsx@4.21.0)
 
+  packages/desktop-host:
+    dependencies:
+      '@todograph/server':
+        specifier: workspace:*
+        version: link:../server
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.17
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
   packages/mcp:
     dependencies:
       '@modelcontextprotocol/sdk':
@@ -210,6 +223,9 @@ importers:
       '@todograph/shared':
         specifier: workspace:*
         version: link:../shared
+      dagre:
+        specifier: ^0.8.5
+        version: 0.8.5
       fastify:
         specifier: ^5.1.0
         version: 5.8.5
@@ -220,6 +236,9 @@ importers:
         specifier: ^3.23.8
         version: 3.25.76
     devDependencies:
+      '@types/dagre':
+        specifier: ^0.7.52
+        version: 0.7.54
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.17

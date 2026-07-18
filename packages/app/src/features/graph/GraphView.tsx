@@ -59,6 +59,7 @@ import {
 } from './usePageViewportLifecycle';
 import { MultiDragSession } from './multiDragSession';
 import { claimPageForAutoLayout } from './pageAutoLayout';
+import { buildGraphNodeProjection } from './graphNodeProjection';
 const nodeTypes: NodeTypes = {
   task: TaskNode,
   group: GroupNode,
@@ -74,6 +75,7 @@ const UNGROUP_ESCAPE_PX = 12;
 const GHOST_ID = '__merge_ghost__';
 const DESKTOP_MIN_ZOOM = 0.5;
 const MOBILE_MIN_ZOOM = 0.1;
+const MOBILE_FIT_MIN_ZOOM = 0.35;
 interface RFTaskNode extends RFNode<TaskNodeData | GroupNodeData | MergeGhostData> {}
 
 function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile' }) {
@@ -213,116 +215,29 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
   const [resizedGroupIds, setResizedGroupIds] = useState<string[]>([]);
   useEffect(() => {
     if (draggingRef.current) return;
-    const groupIds = [...parentMap.keys()];
-    groupIds.sort((a, b) => (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0));
-    const groupSizes = new Map<string, { w: number; h: number }>();
-    const collapsedGroupIds = new Set<string>();
-    for (const pid of groupIds) {
-      const geometry = nodeGeometryById.get(pid)!;
-      if (geometry.collapsed) collapsedGroupIds.add(pid);
-      groupSizes.set(pid, geometry.displayedSize);
-    }
-
-    const isInsideCollapsedGroup = (node: Task): boolean => {
-      let parentId = node.parentId;
-      while (parentId) {
-        if (collapsedGroupIds.has(parentId)) return true;
-        parentId = byId.get(parentId)!.parentId;
-      }
-      return false;
-    };
-
-    const descendantsOf = (parentId: string): NonNullable<GroupNodeData['descendants']> => {
-      const descendants: NonNullable<GroupNodeData['descendants']> = [];
-      const visit = (id: string, depth: number) => {
-        for (const childId of parentMap.get(id) ?? []) {
-          const child = byId.get(childId)!;
-          descendants.push({
-            id: child.id,
-            title: child.title,
-            status: child.status,
-            description: child.description,
-            depth,
-            width: nodeGeometryById.get(child.id)!.displayedSize.w,
-            height: nodeGeometryById.get(child.id)!.displayedSize.h,
-          });
-          visit(child.id, depth + 1);
-        }
-      };
-      visit(parentId, 1);
-      return descendants;
-    };
-
+    const projection = buildGraphNodeProjection({
+      nodes,
+      hierarchy: hierarchyMetrics,
+      geometryById: nodeGeometryById,
+      readySet,
+      recommendedId: recommended?.id,
+      previousData: dataCacheRef.current,
+    });
     const prevSizes = prevGroupSizesRef.current;
     const changed: string[] = [];
-    for (const [pid, cur] of groupSizes) {
+    for (const [pid, cur] of projection.groupSizes) {
       const old = prevSizes.get(pid);
       if (!old || old.w !== cur.w || old.h !== cur.h) changed.push(pid);
     }
-    prevGroupSizesRef.current = groupSizes;
+    prevGroupSizesRef.current = projection.groupSizes;
     if (changed.length > 0) {
       setResizedGroupIds(changed);
     }
 
-    const sorted = [...nodes].sort(
-      (a, b) => (depthById.get(a.id) ?? 0) - (depthById.get(b.id) ?? 0),
-    );
-    setRfNodes(() => {
-      const cache = dataCacheRef.current;
-      const nextCache = new Map<string, TaskNodeData | GroupNodeData>();
-      const built: RFTaskNode[] = sorted.map((n) => {
-        const isGroup = parentMap.has(n.id);
-        const size = groupSizes.get(n.id);
-        const baseData = isGroup
-          ? ({
-              title: n.title,
-              status: n.status,
-              ready: readySet.has(n.id),
-              recommended: recommended?.id === n.id,
-              childrenCount: parentMap.get(n.id)?.length ?? 0,
-              description: n.description,
-              isHeightCollapsed: collapsedGroupIds.has(n.id),
-              descendants: collapsedGroupIds.has(n.id) ? descendantsOf(n.id) : undefined,
-            } as GroupNodeData)
-          : ({
-              title: n.title,
-              status: n.status,
-              ready: readySet.has(n.id),
-              recommended: recommended?.id === n.id,
-              description: n.description,
-              nodeWidth: n.width,
-            } as TaskNodeData);
-        const cached = cache.get(n.id);
-        const data =
-          cached && shallowEqualData(cached, baseData)
-            ? cached
-            : baseData;
-        nextCache.set(n.id, data);
-        const node: RFTaskNode = {
-          id: n.id,
-          type: isGroup ? 'group' : 'task',
-          position: { x: n.x ?? 0, y: n.y ?? 0 },
-          data,
-          hidden: isInsideCollapsedGroup(n),
-          className: isGroup && collapsedGroupIds.has(n.id) ? 'group-scroll-node' : undefined,
-          ...(n.parentId
-            ? { parentId: n.parentId }
-            : {}),
-          ...(isGroup ? { dragHandle: '.group-drag-handle' } : {}),
-          ...(isGroup && size
-            ? { style: { width: size.w, height: size.h }, width: size.w, height: size.h }
-            : {}),
-          ...(isGroup
-            ? {}
-            : { style: { width: n.width ?? CHILD_DEFAULT_W } }),
-        };
-        return node;
-      });
-      dataCacheRef.current = nextCache;
-      return built;
-    });
+    dataCacheRef.current = projection.dataById;
+    setRfNodes(projection.nodes);
     setRfNodesPageId(activePageId);
-  }, [activePageId, nodes, readySet, recommended, parentMap, byId, depthById, nodeGeometryById]);
+  }, [activePageId, nodes, readySet, recommended, hierarchyMetrics, nodeGeometryById]);
   const updateNodeInternals = useUpdateNodeInternals();
   useEffect(() => {
     const ids = new Set<string>([...parentMap.keys(), ...resizedGroupIds]);
@@ -891,6 +806,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     [rfNodes],
   );
   const minZoom = viewportScope === 'mobile' ? MOBILE_MIN_ZOOM : DESKTOP_MIN_ZOOM;
+  const fitMinZoom = viewportScope === 'mobile' ? MOBILE_FIT_MIN_ZOOM : DESKTOP_MIN_ZOOM;
   const {
     isMoving: isViewportMoving,
     isRestoring: isViewportRestoring,
@@ -900,7 +816,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     activePageId,
     renderedPageId: rfNodesPageId,
     viewportScope,
-    minZoom,
+    fitMinZoom,
     nodeIds: viewportNodeIds,
     renderedNodes: viewportRenderedNodes,
     cache: pageViewportCache,
@@ -1165,18 +1081,6 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
       )}
     </div>
   );
-}
-
-/** 浅比较 data 对象，命中则复用旧引用以保持 React Flow memo 生效 */
-function shallowEqualData(
-  a: Record<string, unknown>,
-  b: Record<string, unknown>,
-): boolean {
-  const ak = Object.keys(a);
-  const bk = Object.keys(b);
-  if (ak.length !== bk.length) return false;
-  for (const k of ak) if (a[k] !== b[k]) return false;
-  return true;
 }
 
 function pickDefaultMovePageTitle(selected: Task[], allNodes: Task[]): string {

@@ -13,7 +13,7 @@ import path from 'node:path';
  * symlink 布局容易让 electron-builder 打包时找不到，所以我们 **把它们
  * 从 externalize 名单里排除**，让 rollup 直接 bundle 进 main.js，省心又好打。
  */
-const workspaceDeps = ['@todograph/core', '@todograph/shared', '@todograph/server'];
+const workspaceDeps = ['@todograph/core', '@todograph/shared', '@todograph/desktop-host'];
 
 export default defineConfig({
   main: {

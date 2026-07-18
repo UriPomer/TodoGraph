@@ -12,7 +12,7 @@ interface PageViewportLifecycleOptions {
   activePageId: string | null;
   renderedPageId: string | null;
   viewportScope: ViewportScope;
-  minZoom: number;
+  fitMinZoom: number;
   nodeIds: string[];
   renderedNodes: Array<Pick<Node, 'id' | 'hidden' | 'width' | 'height' | 'measured'>>;
   cache: PageViewportCache;
@@ -34,7 +34,7 @@ export function usePageViewportLifecycle({
   activePageId,
   renderedPageId,
   viewportScope,
-  minZoom,
+  fitMinZoom,
   nodeIds,
   renderedNodes,
   cache,
@@ -121,7 +121,7 @@ export function usePageViewportLifecycle({
               zoom: Math.min(token.cachedViewport.zoom, PAGE_VIEWPORT_MAX_ZOOM),
             })
           : nodeIds.length > 0
-            ? rf.fitView({ padding: 0.3, minZoom, maxZoom: PAGE_VIEWPORT_MAX_ZOOM })
+            ? rf.fitView({ padding: 0.3, minZoom: fitMinZoom, maxZoom: PAGE_VIEWPORT_MAX_ZOOM })
             : rf.setViewport({ x: 0, y: 0, zoom: 1 });
         void restored.then(complete, () => complete(false));
       } catch {
@@ -129,7 +129,7 @@ export function usePageViewportLifecycle({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [activePageId, controller, minZoom, nodeIds, renderedNodes, renderedPageId, rf, transitionRevision, updateViewportCenter]);
+  }, [activePageId, controller, fitMinZoom, nodeIds, renderedNodes, renderedPageId, rf, transitionRevision, updateViewportCenter]);
 
   const onMoveStart = useCallback<OnMove>((event) => {
     const target = event?.target;

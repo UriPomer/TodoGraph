@@ -27,13 +27,16 @@ const DRAG_THRESHOLD_PX = 8;
  */
 export function ListView() {
   const nodes = useTaskStore((s) => s.nodes);
+  const listRevision = useTaskStore((s) => s.listRevision);
   const activePageId = useTaskStore((s) => s.activePageId);
   const allTasks = useWorkspaceStore((s) => s.allTasks);
   const setParent = useTaskStore((s) => s.setParent);
   const updateTask = useTaskStore((s) => s.updateTask);
   const addTask = useTaskStore((s) => s.addTask);
   const { graph, readySet, recommended } = useDerived();
-  const hierarchyMetrics = useMemo(() => buildHierarchyMetrics(nodes), [nodes]);
+  // Deliberately retain the last semantic snapshot during coordinate-only node updates.
+  const semanticNodes = useMemo(() => nodes, [listRevision]);
+  const hierarchyMetrics = useMemo(() => buildHierarchyMetrics(semanticNodes), [semanticNodes]);
   const hasCrossPageReady = useMemo(
     () => selectCrossPageReadyTasks(allTasks, activePageId).length > 0,
     [allTasks, activePageId],
@@ -52,8 +55,15 @@ export function ListView() {
   );
   const depInfoCacheRef = useRef(new Map<string, DepInfo>());
   const listModel = useMemo(
-    () => buildTaskListModel(nodes, graph, readySet, recommended?.id, collapsed, depInfoCacheRef.current),
-    [nodes, graph, readySet, recommended?.id, collapsed],
+    () => buildTaskListModel(
+      semanticNodes,
+      { nodes: semanticNodes, edges: graph.edges },
+      readySet,
+      recommended?.id,
+      collapsed,
+      depInfoCacheRef.current,
+    ),
+    [semanticNodes, graph.edges, readySet, recommended?.id, collapsed],
   );
   useEffect(() => {
     depInfoCacheRef.current = listModel.depInfo;
@@ -134,7 +144,7 @@ export function ListView() {
         let nearItemId: string | null = null;
         if (targetLi) {
           const tid = targetLi.getAttribute('data-task-id');
-          if (tid && tid !== current.taskId && !isDescendant(childMap, tid, current.taskId)) {
+          if (tid && tid !== current.taskId && !isDescendant(hierarchyMetrics.byId, tid, current.taskId)) {
             const candDepth = hierarchyMetrics.depthById.get(tid) ?? 0;
             if (candDepth + 1 + draggedHeight + 1 <= MAX_HIERARCHY_DEPTH) {
               targetId = tid;

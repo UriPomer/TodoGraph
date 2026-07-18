@@ -25,6 +25,7 @@ import {
 } from '../repositories/Repository.js';
 import { generateWorkspaceMarkdown } from '../markdown.js';
 import { getAuthenticatedUserId } from '../auth.js';
+import { executeTaskCommand } from '../application/taskCommands.js';
 
 interface Opts {
   getRepo: (userId: string) => WorkspaceRepository;
@@ -36,6 +37,43 @@ const MoveNodesBodySchema = z.object({
   expectedSourceVersion: z.number().int().min(0).optional(),
   expectedTargetVersion: z.number().int().min(0).optional(),
 });
+
+const TaskCommandBodySchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('delete_tasks'),
+    taskIds: z.array(z.string().min(1)).min(1).max(100),
+  }),
+  z.object({
+    type: z.literal('create_task'),
+    title: z.string().min(1).max(200),
+    status: z.enum(['todo', 'doing', 'done']).optional(),
+    description: z.string().max(4000).optional(),
+    dependsOn: z.array(z.string().min(1)).optional(),
+  }),
+  z.object({
+    type: z.literal('create_tasks'),
+    tasks: z.array(z.object({
+      title: z.string().min(1).max(200),
+      status: z.enum(['todo', 'doing', 'done']).optional(),
+      description: z.string().max(4000).optional(),
+    })).min(1).max(50),
+    edges: z.array(z.object({ from: z.number().int(), to: z.number().int() })).optional(),
+  }),
+  z.object({
+    type: z.literal('update_task'),
+    taskId: z.string().min(1),
+    title: z.string().min(1).max(200).optional(),
+    status: z.enum(['todo', 'doing', 'done']).optional(),
+    description: z.string().max(4000).optional(),
+    x: z.number().optional(),
+    y: z.number().optional(),
+  }),
+  z.object({
+    type: z.literal('manage_dependencies'),
+    add: z.array(z.object({ from: z.string().min(1), to: z.string().min(1) })).optional(),
+    remove: z.array(z.object({ from: z.string().min(1), to: z.string().min(1) })).optional(),
+  }),
+]);
 
 const CreatePageBodySchema = z.object({
   title: z.string().max(MAX_PAGE_TITLE_LENGTH),
@@ -305,6 +343,35 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       return { ok: true };
     } catch (err) {
       reply.status(500);
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
+  app.post<{ Params: { id: string } }>('/api/pages/:id/commands', async (req, reply) => {
+    const parsed = TaskCommandBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.status(400);
+      return { ok: false, error: 'invalid payload', issues: parsed.error.issues };
+    }
+    const repo = getRepo(getAuthenticatedUserId(req));
+    try {
+      const result = await executeTaskCommand(repo, req.params.id, parsed.data);
+      invalidateAll();
+      return result;
+    } catch (err) {
+      if (err instanceof VersionConflictError) {
+        reply.status(409);
+        return { ok: false, error: err.message, serverVersion: err.serverVersion };
+      }
+      if (err instanceof TaskTitleTooLongError) {
+        reply.status(400);
+        return { ok: false, error: 'task title too long', taskId: err.taskId, maxLength: err.maxLength };
+      }
+      if (err instanceof NodeOverlapError) {
+        reply.status(422);
+        return { ok: false, code: 'node-overlap', error: err.message, conflicts: err.conflicts };
+      }
+      reply.status(400);
       return { ok: false, error: (err as Error).message };
     }
   });

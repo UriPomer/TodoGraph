@@ -1,11 +1,8 @@
-import { randomBytes } from 'node:crypto';
-import { promises as fs } from 'node:fs';
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildApp } from '@todograph/server';
+import { startEmbeddedServer } from '@todograph/desktop-host';
 import { isSafeExternalUrl, isSameOrigin } from '../src/lib/externalUrl';
-import { electronServerHost } from '../src/lib/electronServerHost';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,55 +22,21 @@ app.setPath('userData', path.join(dataRoot, 'data'));
 
 let apiBase = '';
 
-async function loadOrCreateSessionSecret(dataDir: string): Promise<string> {
-  const secretPath = path.join(dataDir, '.session-secret');
-  try {
-    const existing = (await fs.readFile(secretPath, 'utf-8')).trim();
-    if (Buffer.byteLength(existing) !== 32) {
-      throw new Error(`Invalid Electron session secret: ${secretPath}`);
-    }
-    return existing;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
-
-  const secret = randomBytes(24).toString('base64');
-  await fs.mkdir(dataDir, { recursive: true });
-  try {
-    await fs.writeFile(secretPath, secret, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
-    return secret;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    const existing = (await fs.readFile(secretPath, 'utf-8')).trim();
-    if (Buffer.byteLength(existing) !== 32) {
-      throw new Error(`Invalid Electron session secret: ${secretPath}`);
-    }
-    return existing;
-  }
-}
-
 async function startServer(): Promise<void> {
   const dataDir = app.getPath('userData');
-  const sessionSecret = await loadOrCreateSessionSecret(dataDir);
   const rendererUrl = isDev && process.env.ELECTRON_RENDERER_URL
     ? new URL(process.env.ELECTRON_RENDERER_URL)
     : null;
   // 生产模式下让 Fastify 也托管静态资源（和 Web 模式同构，双保险）
   const staticDir = isDev ? undefined : path.join(__dirname, '../renderer');
-  const server = await buildApp({
+  const started = await startEmbeddedServer({
     dataDir,
     staticDir,
-    registrationKey: '',
-    sessionSecret,
-    cookieSecure: false,
-    corsOrigin: rendererUrl?.origin,
+    rendererUrl,
     logger: isDev,
   });
-  const addr = await server.listen({ port: 0, host: electronServerHost(rendererUrl) });
-  const apiUrl = new URL(addr);
-  if (rendererUrl) apiUrl.hostname = rendererUrl.hostname;
-  apiBase = apiUrl.origin;
-  console.log('[electron-main] Fastify listening at', addr);
+  apiBase = started.apiBase;
+  console.log('[electron-main] Fastify listening at', started.address);
   console.log('[electron-main] Data directory:', dataDir);
 }
 

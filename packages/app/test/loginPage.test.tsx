@@ -1,9 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LoginPage } from '../src/features/auth/LoginPage';
 
 describe('LoginPage', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it('does not apply new-password length rules to login passwords', () => {
     const html = renderToStaticMarkup(
       <LoginPage onLogin={vi.fn()} onRegister={vi.fn()} />,
@@ -29,5 +31,19 @@ describe('LoginPage', () => {
     );
     expect(registrationKeyInput.props.type).toBe('password');
     expect(renderer.root.findByProps({ 'aria-label': '显示邀请码' })).toBeTruthy();
+  });
+
+  it('disables the glass background while the login screen is mounted', () => {
+    const dataset: Record<string, string | undefined> = {};
+    vi.stubGlobal('document', { documentElement: { dataset } });
+
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(<LoginPage onLogin={vi.fn()} onRegister={vi.fn()} />);
+    });
+    expect(dataset.appSurface).toBe('auth');
+
+    act(() => renderer.unmount());
+    expect(dataset.appSurface).toBeUndefined();
   });
 });

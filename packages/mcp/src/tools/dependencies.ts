@@ -1,8 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { resolveNodeOverlaps, type PageData } from '@todograph/shared';
 import type { client as ClientType } from '../client.js';
-import { backupBeforeMutation } from './backup.js';
 import { textResult } from './result.js';
 
 // ── Handlers ──
@@ -15,75 +13,15 @@ export async function handleManageDependencies(
     remove?: Array<{ from: string; to: string }>;
   },
 ) {
-  const page = await c.get<PageData>(`/api/pages/${encodeURIComponent(params.page_id)}`);
-
-  const nodeIds = new Set(page.nodes.map((n) => n.id));
-  const edgeSet = new Set(page.edges.map((e) => `${e.from}→${e.to}`));
-  const rejected: Array<{ from: string; to: string; reason: string }> = [];
-  let added = 0;
-  let removed = 0;
-
-  if (params.remove) {
-    for (const e of params.remove) {
-      const key = `${e.from}→${e.to}`;
-      if (edgeSet.has(key)) {
-        edgeSet.delete(key);
-        removed++;
-      }
-    }
-  }
-
-  if (params.add) {
-    for (const e of params.add) {
-      if (e.from === e.to) {
-        rejected.push({ from: e.from, to: e.to, reason: 'self-loop' });
-        continue;
-      }
-      if (!nodeIds.has(e.from)) {
-        rejected.push({ from: e.from, to: e.to, reason: `node not found: ${e.from}` });
-        continue;
-      }
-      if (!nodeIds.has(e.to)) {
-        rejected.push({ from: e.from, to: e.to, reason: `node not found: ${e.to}` });
-        continue;
-      }
-      const key = `${e.from}→${e.to}`;
-      if (edgeSet.has(key)) {
-        rejected.push({ from: e.from, to: e.to, reason: 'duplicate' });
-        continue;
-      }
-      edgeSet.add(key);
-      added++;
-    }
-  }
-
-  const newEdges = Array.from(edgeSet).map((key) => {
-    const [from, to] = key.split('→');
-    return { from: from!, to: to! };
+  return c.post<{
+    added: number;
+    removed: number;
+    rejected?: Array<{ from: string; to: string; reason: string }>;
+  }>(`/api/pages/${encodeURIComponent(params.page_id)}/commands`, {
+    type: 'manage_dependencies',
+    add: params.add,
+    remove: params.remove,
   });
-
-  try {
-    await backupBeforeMutation(c, params.page_id);
-    await c.put(`/api/pages/${encodeURIComponent(params.page_id)}`, {
-      nodes: resolveNodeOverlaps(page.nodes).nodes,
-      edges: newEdges,
-      expectedVersion: page.version,
-    });
-  } catch (err) {
-    const msg = String((err as Error).message ?? err);
-    if (msg.includes('cycle')) {
-      throw new Error(
-        `graph contains a cycle — some edges were rejected by the server. Remove at least one edge in the cycle and try again.`,
-      );
-    }
-    throw err;
-  }
-
-  return {
-    added,
-    removed,
-    ...(rejected.length > 0 ? { rejected } : {}),
-  };
 }
 
 export async function handleGetRecommendations(

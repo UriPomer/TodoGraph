@@ -12,7 +12,7 @@ vi.mock('@/components/SplitPane', () => ({
   SplitPane: ({ left, right }: { left: ReactNode; right: ReactNode }) => <>{left}{right}</>,
 }));
 
-import { WorkspaceContent } from '../src/App';
+import { WorkspaceContent } from '../src/features/workspace/WorkspaceApp';
 
 describe('responsive workspace content', () => {
   it('mounts exactly one graph on desktop', () => {

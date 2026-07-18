@@ -19,9 +19,30 @@ describe('task list model', () => {
   it('terminates and shows every node once when legacy data contains a hierarchy cycle', () => {
     const nodes = [task('a', 'b'), task('b', 'a')];
     const model = buildTaskListModel(nodes, { nodes, edges: [] }, new Set(['a', 'b']), undefined, {});
+    const byId = new Map(nodes.map((node) => [node.id, node]));
     expect(model.ready.map(({ task: item }) => item.id).sort()).toEqual(['a', 'b']);
-    expect(isDescendant(model.childMap, 'b', 'a')).toBe(true);
-    expect(isDescendant(model.childMap, 'missing', 'a')).toBe(false);
+    expect(isDescendant(byId, 'b', 'a')).toBe(true);
+    expect(isDescendant(byId, 'missing', 'a')).toBe(false);
+  });
+
+  it('checks ancestry without scanning unrelated branches', () => {
+    const nodes = [
+      task('root'),
+      task('parent', 'root'),
+      task('leaf', 'parent'),
+      ...Array.from({ length: 10_000 }, (_, index) => task(`unrelated-${index}`, 'root')),
+    ];
+    const source = new Map(nodes.map((node) => [node.id, node]));
+    let lookups = 0;
+    const byId = {
+      get(id: string) {
+        lookups += 1;
+        return source.get(id);
+      },
+    } as ReadonlyMap<string, Task>;
+
+    expect(isDescendant(byId, 'leaf', 'root')).toBe(true);
+    expect(lookups).toBe(2);
   });
 
   it('keeps children beside their sorted root', () => {
