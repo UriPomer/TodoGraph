@@ -36,6 +36,8 @@ import {
   CHILD_DEFAULT_H,
   GROUP_MIN_W,
   GROUP_MIN_H,
+  GROUP_COLLAPSED_MAX_H,
+  capGroupSize,
   resolveClusterTranslationAvoidingOccupied,
   type Task,
 } from '@todograph/shared';
@@ -50,7 +52,7 @@ import { MergeGhostNode, type MergeGhostData } from './MergeGhostNode';
 import { SelectionMenu, type SelectionMenuAction } from './SelectionMenu';
 import { dialog } from '@/components/ui/dialog-store';
 import { InlineCreateInput } from './InlineCreateInput';
-import { dagreLayout } from './useAutoLayout';
+import { dagreLayout, layoutNestedGroupChildren } from './useAutoLayout';
 import { resolvePinnedDropPushAway } from './dropCollision';
 import { useTouchManager } from './useTouchManager';
 import {
@@ -225,6 +227,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     const groupIds = [...parentMap.keys()];
     groupIds.sort((a, b) => (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0));
     const groupSizes = new Map<string, { w: number; h: number }>();
+    const collapsedGroupIds = new Set<string>();
     for (const pid of groupIds) {
       const childIds = parentMap.get(pid) ?? [];
       const childPositions: Array<{ x: number; y: number; w: number; h: number }> = [];
@@ -239,8 +242,41 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
           h: childSize?.h ?? CHILD_DEFAULT_H,
         });
       }
-      groupSizes.set(pid, computeGroupSize(childPositions));
+      const fullSize = computeGroupSize(childPositions);
+      if (fullSize.h > GROUP_COLLAPSED_MAX_H) collapsedGroupIds.add(pid);
+      groupSizes.set(pid, capGroupSize(fullSize));
     }
+
+    const isInsideCollapsedGroup = (node: Task): boolean => {
+      const seen = new Set<string>();
+      let parentId = node.parentId;
+      while (parentId && !seen.has(parentId)) {
+        if (collapsedGroupIds.has(parentId)) return true;
+        seen.add(parentId);
+        parentId = byId.get(parentId)?.parentId;
+      }
+      return false;
+    };
+
+    const descendantsOf = (parentId: string): NonNullable<GroupNodeData['descendants']> => {
+      const descendants: NonNullable<GroupNodeData['descendants']> = [];
+      const visit = (id: string, depth: number) => {
+        for (const childId of parentMap.get(id) ?? []) {
+          const child = byId.get(childId);
+          if (!child) continue;
+          descendants.push({
+            id: child.id,
+            title: child.title,
+            status: child.status,
+            description: child.description,
+            depth,
+          });
+          visit(child.id, depth + 1);
+        }
+      };
+      visit(parentId, 1);
+      return descendants;
+    };
 
     const prevSizes = prevGroupSizesRef.current;
     const changed: string[] = [];
@@ -270,6 +306,8 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
               recommended: recommended?.id === n.id,
               childrenCount: parentMap.get(n.id)?.length ?? 0,
               description: n.description,
+              isHeightCollapsed: collapsedGroupIds.has(n.id),
+              descendants: collapsedGroupIds.has(n.id) ? descendantsOf(n.id) : undefined,
             } as GroupNodeData)
           : ({
               title: n.title,
@@ -290,6 +328,8 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
           type: isGroup ? 'group' : 'task',
           position: { x: n.x ?? 0, y: n.y ?? 0 },
           data,
+          hidden: isInsideCollapsedGroup(n),
+          className: isGroup && collapsedGroupIds.has(n.id) ? 'group-scroll-node' : undefined,
           ...(n.parentId
             ? { parentId: n.parentId }
             : {}),
@@ -799,29 +839,40 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     [removeEdge],
   );
   const applyAutoLayout = useCallback(() => {
-    const topLevel = rfNodes.filter((n) => !n.parentId);
+    const groupIds = [...parentMap.keys()].sort(
+      (left, right) => (depthById.get(right) ?? 0) - (depthById.get(left) ?? 0),
+    );
+    const groupLayout = layoutNestedGroupChildren(rfNodes, groupIds, parentMap, (node) => ({
+      width: typeof node.width === 'number' ? node.width : CHILD_DEFAULT_W,
+      height: typeof node.height === 'number' ? node.height : CHILD_DEFAULT_H,
+    }));
+    const workingNodes = rfNodes.map((node) => ({
+      ...node,
+      position: groupLayout.positions.get(node.id) ?? node.position,
+    }));
+
+    const topLevel = workingNodes.filter((n) => !n.parentId);
     const topLevelSet = new Set(topLevel.map((n) => n.id));
     const topLevelEdges = rfEdges.filter(
       (e) => topLevelSet.has(e.source) && topLevelSet.has(e.target),
     );
-    const { nodes: laid } = dagreLayout(topLevel, topLevelEdges, (n) => {
-      const w = typeof n.width === 'number' ? n.width : undefined;
-      const h = typeof n.height === 'number' ? n.height : undefined;
-      if (w !== undefined && h !== undefined) return { width: w, height: h };
-      return { width: CHILD_DEFAULT_W, height: CHILD_DEFAULT_H };
-    });
-    const byId = new Map(laid.map((n) => [n.id, n.position]));
+    const { nodes: laid } = dagreLayout(topLevel, topLevelEdges, (node) => (
+      groupLayout.sizes.get(node.id) ?? { width: CHILD_DEFAULT_W, height: CHILD_DEFAULT_H }
+    ));
+    const finalPositions = new Map(workingNodes.map((node) => [node.id, node.position]));
+    for (const node of laid) finalPositions.set(node.id, node.position);
     setRfNodes((prev) =>
-      prev.map((p) =>
-        p.parentId ? p : { ...p, position: byId.get(p.id) ?? p.position },
-      ),
+      prev.map((node) => ({ ...node, position: finalPositions.get(node.id) ?? node.position })),
     );
-    const patches = laid.map((n) => ({
-      id: n.id,
-      patch: { x: n.position.x, y: n.position.y },
+    const patches = workingNodes.map((node) => ({
+      id: node.id,
+      patch: {
+        x: finalPositions.get(node.id)?.x ?? node.position.x,
+        y: finalPositions.get(node.id)?.y ?? node.position.y,
+      },
     }));
     updateTasksBulk(patches);
-  }, [rfNodes, rfEdges, updateTasksBulk]);
+  }, [rfNodes, rfEdges, updateTasksBulk, parentMap, depthById]);
   const autoLayoutCheckedPagesRef = useRef(new Set<string>());
   useEffect(() => {
     if (!activePageId || !claimPageForAutoLayout(

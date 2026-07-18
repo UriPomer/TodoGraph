@@ -36,12 +36,12 @@ export function useAuth() {
     [],
   );
 
-  const login = async (username: string, password: string): Promise<string | null> => {
+  const login = async (username: string, password: string, remember: boolean): Promise<string | null> => {
     try {
       const res = await apiFetch(`${getApiBase()}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, remember }),
       });
       const data = await res.json() as { ok: boolean; username?: string; error?: string };
       if (data.ok) {
@@ -54,12 +54,17 @@ export function useAuth() {
     }
   };
 
-  const register = async (username: string, password: string, registrationKey: string): Promise<string | null> => {
+  const register = async (
+    username: string,
+    password: string,
+    registrationKey: string,
+    remember: boolean,
+  ): Promise<string | null> => {
     try {
       const res = await apiFetch(`${getApiBase()}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, registrationKey }),
+        body: JSON.stringify({ username, password, registrationKey, remember }),
       });
       const data = await res.json() as { ok: boolean; username?: string; error?: string };
       if (data.ok) {

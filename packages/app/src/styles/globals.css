@@ -312,6 +312,13 @@ body {
     -webkit-touch-callout: none !important;
     touch-action: none !important;
   }
+  .react-flow__node.group-scroll-node,
+  .react-flow__node.group-scroll-node .group-scroll-viewport {
+    touch-action: pan-y !important;
+  }
+  .react-flow__node.group-scroll-node .group-drag-handle {
+    touch-action: none !important;
+  }
 }
 .react-flow__attribution {
   background: transparent;

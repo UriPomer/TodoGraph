@@ -12,6 +12,7 @@ import { authRoutes, authHook } from './auth.js';
 import { McpKeyStore } from './mcp-keys.js';
 import { FileWorkspaceRepository } from './repositories/FileWorkspaceRepository.js';
 import { FileUserRepository } from './repositories/FileUserRepository.js';
+import { FileRememberTokenRepository } from './repositories/FileRememberTokenRepository.js';
 import type { WorkspaceRepository } from './repositories/Repository.js';
 
 export interface AppOptions {
@@ -73,14 +74,19 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
       httpOnly: true,
       secure: opts.cookieSecure ?? false,
       sameSite: 'strict',
-      maxAge: 5 * 24 * 60 * 60, // 5d
     },
   });
 
   // User repo + auth routes
   const userRepo = new FileUserRepository(opts.dataDir);
+  const rememberTokenStore = new FileRememberTokenRepository(opts.dataDir);
   const keyStore = new McpKeyStore(opts.dataDir);
-  await app.register(authRoutes, { userRepo, registrationKey: opts.registrationKey });
+  await app.register(authRoutes, {
+    userRepo,
+    rememberTokenStore,
+    registrationKey: opts.registrationKey,
+    cookieSecure: opts.cookieSecure ?? false,
+  });
 
   // Per-user workspace repo factory
   const getRepo = (userId: string): WorkspaceRepository =>
@@ -88,19 +94,17 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
 
   // Protected API routes share one auth hook scope so every request is validated consistently.
   await app.register(async (protectedApi) => {
-    protectedApi.addHook('onRequest', authHook(userRepo, keyStore));
+    protectedApi.addHook('onSend', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+    });
+    protectedApi.addHook('onRequest', authHook(
+      userRepo,
+      keyStore,
+      rememberTokenStore,
+      opts.cookieSecure ?? false,
+    ));
     await protectedApi.register(mcpRoutes, { keyStore });
     await protectedApi.register(workspaceRoutes, { getRepo });
-  });
-
-  // Sliding session expiry: refresh cookie maxAge on each authenticated request
-  app.addHook('preHandler', async (req) => {
-    if (req.session.userId) {
-      req.session.userId = req.session.userId;
-      if (typeof req.session.sessionVersion === 'number') {
-        req.session.sessionVersion = req.session.sessionVersion;
-      }
-    }
   });
 
   // Static files (production)

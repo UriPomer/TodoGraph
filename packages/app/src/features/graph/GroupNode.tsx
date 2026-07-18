@@ -1,11 +1,12 @@
-import { memo } from 'react';
+import { memo, useCallback, useRef, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Check } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { dialog } from '@/components/ui/dialog-store';
 import type { TaskStatus } from '@todograph/shared';
+import { GroupContentsDialog, type GroupDescendant } from './GroupContentsDialog';
 
 export interface GroupNodeData extends Record<string, unknown> {
   title: string;
@@ -21,6 +22,8 @@ export interface GroupNodeData extends Record<string, unknown> {
   isMergePending?: boolean;
   /** 子节点拖离父框超过阈值 —— 即将 ungroup 的警告态 */
   isUngroupWarn?: boolean;
+  isHeightCollapsed?: boolean;
+  descendants?: GroupDescendant[];
 }
 
 /**
@@ -39,6 +42,30 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
   const d = data as GroupNodeData;
   const toggleStatus = useTaskStore((s) => s.toggleStatus);
   const updateTask = useTaskStore((s) => s.updateTask);
+  const [showAll, setShowAll] = useState(false);
+  const descendants = d.descendants ?? [];
+  const returnFocusRef = useRef<HTMLButtonElement | null>(null);
+  const closeAll = useCallback(() => setShowAll(false), []);
+
+  const expandButton = (position: 'top' | 'bottom') => (
+    <button
+      type="button"
+      className={cn(
+        'nodrag nopan nowheel absolute left-2 right-2 z-10 flex h-11 items-center justify-center gap-1',
+        'rounded-xl bg-foreground/5 text-xs text-muted-foreground transition-colors duration-200',
+        'hover:bg-foreground/5 hover:text-foreground active:bg-foreground/10',
+        position === 'top' ? 'top-11' : 'bottom-1',
+      )}
+      onClick={(event) => {
+        event.stopPropagation();
+        returnFocusRef.current = event.currentTarget;
+        setShowAll(true);
+      }}
+    >
+      {position === 'top' ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+      展开全部 {descendants.length} 个节点
+    </button>
+  );
 
   return (
     <div
@@ -131,6 +158,45 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
           {d.childrenCount}
         </span>
       </div>
+
+      {d.isHeightCollapsed && (
+        <>
+          {expandButton('top')}
+          <div className="group-scroll-viewport nodrag nopan nowheel absolute inset-x-2 bottom-12 top-[92px] touch-pan-y overflow-y-auto overscroll-contain rounded-xl px-1 py-2">
+            <div className="grid grid-cols-2 gap-2">
+              {descendants.map((child) => (
+                <div
+                  key={child.id}
+                  className="min-w-0 rounded-lg border border-border/70 bg-background/55 px-2.5 py-2 shadow-sm"
+                  title={child.description || child.title}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={cn(
+                      'h-2 w-2 shrink-0 rounded-full',
+                      child.status === 'todo' && 'border border-muted-foreground/70',
+                      child.status === 'doing' && 'bg-[hsl(var(--primary))]',
+                      child.status === 'done' && 'bg-muted-foreground/60',
+                    )} />
+                    <span className={cn('truncate text-xs', child.status === 'done' && 'line-through text-muted-foreground')}>
+                      {child.depth > 1 ? `${'·'.repeat(child.depth - 1)} ` : ''}{child.title}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          {expandButton('bottom')}
+        </>
+      )}
+
+      {showAll && (
+        <GroupContentsDialog
+          title={d.title}
+          descendants={descendants}
+          returnFocus={returnFocusRef.current}
+          onClose={closeAll}
+        />
+      )}
     </div>
   );
 }

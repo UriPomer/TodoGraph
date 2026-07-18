@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -294,6 +294,155 @@ describe('auth routes', () => {
     expect(res.json()).toEqual({ ok: false });
   });
 
+  it('enforces the thirty-day absolute session lifetime without a device credential', async () => {
+    const registration = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'secret123', remember: false },
+    });
+    const cookies = Object.fromEntries(registration.cookies.map((cookie) => [cookie.name, cookie.value]));
+
+    vi.useFakeTimers();
+    let expired;
+    try {
+      vi.setSystemTime(Date.now() + 31 * 24 * 60 * 60 * 1000);
+      expired = await app.inject({ method: 'GET', url: '/api/auth/me', cookies });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(expired.json()).toEqual({ ok: false });
+  });
+
+  it('uses an HttpOnly one-year device credential only when requested', async () => {
+    const remembered = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'secret123', remember: true },
+    });
+    const rememberCookie = remembered.cookies.find((cookie) => cookie.name === 'todograph_remember');
+    expect(remembered.headers['cache-control']).toBe('no-store');
+    expect(rememberCookie).toMatchObject({
+      httpOnly: true,
+      sameSite: 'Strict',
+      maxAge: 365 * 24 * 60 * 60,
+      path: '/api',
+    });
+
+    await app.close();
+    app = await buildApp({
+      dataDir,
+      registrationKey: '',
+      sessionSecret: makeSecret(),
+      logger: false,
+    });
+    await app.ready();
+    const notRemembered = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'alice', password: 'secret123', remember: false },
+    });
+    expect(notRemembered.cookies.find((cookie) => cookie.name === 'todograph_remember')?.value).toBe('');
+  });
+
+  it('allows concurrent rotation, then revokes the token family on delayed replay', async () => {
+    const registration = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'secret123', remember: true },
+    });
+    const original = registration.cookies.find((cookie) => cookie.name === 'todograph_remember')!;
+
+    const [firstRestore, secondRestore] = await Promise.all([
+      app.inject({
+        method: 'GET',
+        url: '/api/auth/me',
+        cookies: { todograph_remember: original.value },
+      }),
+      app.inject({
+        method: 'GET',
+        url: '/api/auth/me',
+        cookies: { todograph_remember: original.value },
+      }),
+    ]);
+    expect(firstRestore.json()).toMatchObject({ ok: true, username: 'alice' });
+    expect(secondRestore.json()).toMatchObject({ ok: true, username: 'alice' });
+    const firstRotated = firstRestore.cookies.find((cookie) => cookie.name === 'todograph_remember')!;
+    const secondRotated = secondRestore.cookies.find((cookie) => cookie.name === 'todograph_remember')!;
+    expect(firstRotated.value).not.toBe(original.value);
+    expect(secondRotated.value).not.toBe(firstRotated.value);
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(Date.now() + 6_000);
+      const replay = await app.inject({
+        method: 'GET',
+        url: '/api/auth/me',
+        cookies: { todograph_remember: original.value },
+      });
+      expect(replay.json()).toEqual({ ok: false });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const revokedCurrentToken = await app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      cookies: { todograph_remember: secondRotated.value },
+    });
+    expect(revokedCurrentToken.json()).toEqual({ ok: false });
+  });
+
+  it('revokes the device credential server-side on logout', async () => {
+    const registration = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'secret123', remember: true },
+    });
+    const cookies = Object.fromEntries(registration.cookies.map((cookie) => [cookie.name, cookie.value]));
+    const rememberToken = cookies.todograph_remember!;
+
+    await app.inject({ method: 'POST', url: '/api/auth/logout', cookies });
+    const restore = await app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      cookies: { todograph_remember: rememberToken },
+    });
+    expect(restore.json()).toEqual({ ok: false });
+  });
+
+  it('revokes other devices when the password changes', async () => {
+    const firstDevice = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'alice', password: 'secret123', remember: true },
+    });
+    const firstCookies = Object.fromEntries(firstDevice.cookies.map((cookie) => [cookie.name, cookie.value]));
+    const secondDevice = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'alice', password: 'secret123', remember: true },
+    });
+    const secondRememberToken = secondDevice.cookies.find(
+      (cookie) => cookie.name === 'todograph_remember',
+    )!.value;
+
+    const changed = await app.inject({
+      method: 'POST',
+      url: '/api/auth/change-password',
+      cookies: firstCookies,
+      payload: { currentPassword: 'secret123', newPassword: 'changed456' },
+    });
+    expect(changed.statusCode).toBe(200);
+
+    const staleDevice = await app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      cookies: { todograph_remember: secondRememberToken },
+    });
+    expect(staleDevice.json()).toEqual({ ok: false });
+  });
+
   it('validates username length on register', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -503,6 +652,7 @@ describe('auth routes', () => {
 
     const metaRes = await app.inject({ method: 'GET', url: '/api/meta', cookies: cookieObj });
     expect(metaRes.statusCode).toBe(200);
+    expect(metaRes.headers['cache-control']).toBe('no-store');
     const meta = metaRes.json() as { revision: number };
 
     const first = await app.inject({

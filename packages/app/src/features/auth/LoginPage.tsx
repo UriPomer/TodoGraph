@@ -2,8 +2,8 @@ import { useState, type FormEvent } from 'react';
 import { PasswordInput } from '@/components/ui/password-input';
 
 interface Props {
-  onLogin: (username: string, password: string) => Promise<string | null>;
-  onRegister: (username: string, password: string, registrationKey: string) => Promise<string | null>;
+  onLogin: (username: string, password: string, remember: boolean) => Promise<string | null>;
+  onRegister: (username: string, password: string, registrationKey: string, remember: boolean) => Promise<string | null>;
 }
 
 export function LoginPage({ onLogin, onRegister }: Props) {
@@ -11,6 +11,7 @@ export function LoginPage({ onLogin, onRegister }: Props) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [registrationKey, setRegistrationKey] = useState('');
+  const [remember, setRemember] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -20,8 +21,8 @@ export function LoginPage({ onLogin, onRegister }: Props) {
     setError(null);
     setBusy(true);
     const err = mode === 'login'
-      ? await onLogin(username.trim(), password)
-      : await onRegister(username.trim(), password, registrationKey.trim());
+      ? await onLogin(username.trim(), password, remember)
+      : await onRegister(username.trim(), password, registrationKey.trim(), remember);
     if (err) setError(err);
     setBusy(false);
   };
@@ -77,6 +78,16 @@ export function LoginPage({ onLogin, onRegister }: Props) {
               />
             </div>
           )}
+
+          <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-xl px-1 text-sm text-muted-foreground transition-colors duration-200 hover:bg-foreground/5">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(event) => setRemember(event.target.checked)}
+              className="h-5 w-5 accent-[hsl(var(--primary))]"
+            />
+            在这台设备上保持登录
+          </label>
 
           {error && (
             <p className="text-sm text-destructive">{error}</p>

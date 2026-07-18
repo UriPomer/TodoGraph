@@ -9,6 +9,7 @@ import {
   resolveClusterTranslationAvoidingOccupied,
   separateSiblingNodeOverlaps,
   validateNoSiblingOverlaps,
+  GROUP_COLLAPSED_MAX_H,
 } from '@todograph/shared';
 
 const task = (id: string, x: number, y: number, parentId?: string, title = id): Task => ({
@@ -21,6 +22,16 @@ const task = (id: string, x: number, y: number, parentId?: string, title = id): 
 });
 
 describe('pagePlacement', () => {
+  it('uses the folded group height for shared collision geometry', () => {
+    const sizes = computeNodeSizeMap([
+      task('group', 0, 0),
+      task('top', 24, 60, 'group'),
+      task('far', 24, 1_000, 'group'),
+    ]);
+
+    expect(sizes.get('group')?.h).toBe(GROUP_COLLAPSED_MAX_H);
+  });
+
   it('keeps moved nodes in place when target page is free', () => {
     const moved = [task('a', 120, 40)];
     expect(placeMovedNodesOnTarget([], moved)).toEqual(moved);

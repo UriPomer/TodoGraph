@@ -13,6 +13,7 @@ describe('LoginPage', () => {
     expect(passwordInput).toBeTruthy();
     expect(passwordInput).toContain('autoComplete="current-password"');
     expect(passwordInput).not.toContain('minLength');
+    expect(html).not.toContain('checked=""');
   });
 
   it('masks the registration key and provides a visibility toggle', () => {

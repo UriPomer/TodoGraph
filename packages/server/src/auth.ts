@@ -3,10 +3,14 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import '@fastify/secure-session';
 import type { StoredUser, UserRepository } from './repositories/UserRepository.js';
 import type { McpKeyStore } from './mcp-keys.js';
+import type { RememberTokenRepository } from './repositories/RememberTokenRepository.js';
 
 const SALT_LEN = 32;
 const KEY_LEN = 64;
 const DUMMY_PASSWORD_HASH = `${'00'.repeat(SALT_LEN)}:${'00'.repeat(KEY_LEN)}`;
+const REMEMBER_COOKIE = 'todograph_remember';
+const REMEMBER_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
+const SESSION_ABSOLUTE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 function secureStringEqual(left: string, right: string): boolean {
   const leftHash = createHash('sha256').update(left, 'utf8').digest();
@@ -53,6 +57,7 @@ declare module '@fastify/secure-session' {
   interface SessionData {
     userId: string;
     sessionVersion?: number;
+    issuedAt?: number;
   }
 }
 
@@ -70,12 +75,45 @@ export function getAuthenticatedUserId(req: FastifyRequest): string {
 
 interface AuthRouteOpts {
   userRepo: UserRepository;
+  rememberTokenStore: RememberTokenRepository;
   registrationKey: string;
+  cookieSecure: boolean;
 }
 
 type SessionValidationResult =
   | { ok: true; user: StoredUser }
-  | { ok: false; error: 'unauthenticated' | 'invalidated' | 'missing-user' };
+  | { ok: false; error: 'unauthenticated' | 'expired' | 'invalidated' | 'missing-user' };
+
+function establishSession(req: FastifyRequest, user: StoredUser): void {
+  req.session.regenerate();
+  req.session.userId = user.id;
+  req.session.sessionVersion = user.sessionVersion;
+  req.session.issuedAt = Date.now();
+}
+
+function setRememberCookie(
+  reply: FastifyReply,
+  token: string,
+  cookieSecure: boolean,
+  maxAge = REMEMBER_MAX_AGE_SECONDS,
+): void {
+  reply.setCookie(REMEMBER_COOKIE, token, {
+    path: '/api',
+    httpOnly: true,
+    secure: cookieSecure,
+    sameSite: 'strict',
+    maxAge,
+  });
+}
+
+function clearRememberCookie(reply: FastifyReply, cookieSecure: boolean): void {
+  reply.clearCookie(REMEMBER_COOKIE, {
+    path: '/api',
+    httpOnly: true,
+    secure: cookieSecure,
+    sameSite: 'strict',
+  });
+}
 
 async function validateSessionUser(
   req: FastifyRequest,
@@ -83,6 +121,13 @@ async function validateSessionUser(
 ): Promise<SessionValidationResult> {
   const userId = req.session.userId;
   if (!userId) return { ok: false, error: 'unauthenticated' };
+
+  if (
+    typeof req.session.issuedAt === 'number' &&
+    Date.now() - req.session.issuedAt > SESSION_ABSOLUTE_MAX_AGE_MS
+  ) {
+    return { ok: false, error: 'expired' };
+  }
 
   const user = await userRepo.findById(userId);
   if (!user) return { ok: false, error: 'missing-user' };
@@ -95,8 +140,49 @@ async function validateSessionUser(
   return { ok: true, user };
 }
 
+async function authenticateBrowser(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  userRepo: UserRepository,
+  rememberTokenStore: RememberTokenRepository,
+  cookieSecure: boolean,
+): Promise<SessionValidationResult> {
+  const session = await validateSessionUser(req, userRepo);
+  if (session.ok) return session;
+
+  const rawToken = req.cookies[REMEMBER_COOKIE];
+  if (!rawToken) return session;
+
+  const remembered = await rememberTokenStore.consume(rawToken);
+  if (remembered.status !== 'valid') {
+    req.session.delete();
+    clearRememberCookie(reply, cookieSecure);
+    return { ok: false, error: 'invalidated' };
+  }
+
+  const user = await userRepo.findById(remembered.userId);
+  if (!user || user.sessionVersion !== remembered.sessionVersion) {
+    await rememberTokenStore.revoke(remembered.token);
+    req.session.delete();
+    clearRememberCookie(reply, cookieSecure);
+    return { ok: false, error: user ? 'invalidated' : 'missing-user' };
+  }
+
+  establishSession(req, user);
+  const secondsRemaining = Math.max(
+    1,
+    Math.floor((new Date(remembered.expiresAt).getTime() - Date.now()) / 1000),
+  );
+  setRememberCookie(reply, remembered.token, cookieSecure, secondsRemaining);
+  return { ok: true, user };
+}
+
 export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
-  const { userRepo, registrationKey } = opts;
+  const { userRepo, rememberTokenStore, registrationKey, cookieSecure } = opts;
+
+  app.addHook('onSend', async (_req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+  });
 
   // POST /api/auth/login
   app.post('/api/auth/login', {
@@ -126,8 +212,18 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       reply.status(401);
       return { ok: false, error: '用户名或密码错误' };
     }
-    req.session.userId = user!.id;
-    req.session.sessionVersion = user!.sessionVersion;
+    const existingRememberToken = req.cookies[REMEMBER_COOKIE];
+    if (existingRememberToken) await rememberTokenStore.revoke(existingRememberToken);
+    establishSession(req, user!);
+    if (body.remember === true) {
+      setRememberCookie(
+        reply,
+        await rememberTokenStore.issue(user!.id, user!.sessionVersion),
+        cookieSecure,
+      );
+    } else {
+      clearRememberCookie(reply, cookieSecure);
+    }
     return { ok: true, username: user!.username };
   });
 
@@ -182,15 +278,20 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       reply.status(409);
       return { ok: false, error: '用户名已存在' };
     }
-    req.session.userId = id;
-    req.session.sessionVersion = 0;
+    const createdUser = await userRepo.findById(id);
+    if (!createdUser) throw new Error('newly registered user missing');
+    establishSession(req, createdUser);
+    if (body.remember === true) {
+      setRememberCookie(reply, await rememberTokenStore.issue(id, 0), cookieSecure);
+    }
     return { ok: true, username };
   });
 
   app.post('/api/auth/change-password', {
     config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
   }, async (req: FastifyRequest, reply: FastifyReply) => {
-    const session = await validateSessionUser(req, userRepo);
+    const hadRememberToken = Boolean(req.cookies[REMEMBER_COOKIE]);
+    const session = await authenticateBrowser(req, reply, userRepo, rememberTokenStore, cookieSecure);
     if (!session.ok) {
       reply.status(401);
       if (session.error !== 'unauthenticated') reply.header('X-Session-Expired', '1');
@@ -236,21 +337,32 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       await hashPassword(newPassword),
       nextSessionVersion,
     );
-    req.session.userId = session.user.id;
-    req.session.sessionVersion = nextSessionVersion;
+    await rememberTokenStore.revokeUser(session.user.id);
+    establishSession(req, { ...session.user, sessionVersion: nextSessionVersion });
+    if (hadRememberToken) {
+      setRememberCookie(
+        reply,
+        await rememberTokenStore.issue(session.user.id, nextSessionVersion),
+        cookieSecure,
+      );
+    } else {
+      clearRememberCookie(reply, cookieSecure);
+    }
     return { ok: true };
   });
 
   // POST /api/auth/logout
-  app.post('/api/auth/logout', async (req: FastifyRequest) => {
-    req.session.userId = '';
-    req.session.sessionVersion = undefined;
+  app.post('/api/auth/logout', async (req: FastifyRequest, reply: FastifyReply) => {
+    const rawToken = req.cookies[REMEMBER_COOKIE];
+    if (rawToken) await rememberTokenStore.revoke(rawToken);
+    req.session.delete();
+    clearRememberCookie(reply, cookieSecure);
     return { ok: true };
   });
 
   // GET /api/auth/me
-  app.get('/api/auth/me', async (req: FastifyRequest) => {
-    const session = await validateSessionUser(req, userRepo);
+  app.get('/api/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
+    const session = await authenticateBrowser(req, reply, userRepo, rememberTokenStore, cookieSecure);
     if (!session.ok) return { ok: false };
     return { ok: true, id: session.user.id, username: session.user.username };
   });
@@ -318,7 +430,12 @@ async function resolveUserId(
  *  禁止直接访问全量 REST API，防止 AI 绕过 MCP 的保护层
  *  （布局计算、碰撞检测、自动备份）。
  */
-export function authHook(userRepo: UserRepository, keyStore: McpKeyStore | null = null) {
+export function authHook(
+  userRepo: UserRepository,
+  keyStore: McpKeyStore | null,
+  rememberTokenStore: RememberTokenRepository,
+  cookieSecure = false,
+) {
   return async function (req: FastifyRequest, reply: FastifyReply) {
     if (req.url.startsWith('/api/auth/')) return;
     if (!req.url.startsWith('/api/')) return;
@@ -335,11 +452,16 @@ export function authHook(userRepo: UserRepository, keyStore: McpKeyStore | null 
     }
 
     // 回退到 session 认证（浏览器用户，无限制）
-    const session = await validateSessionUser(req, userRepo);
+    const session = await authenticateBrowser(
+      req,
+      reply,
+      userRepo,
+      rememberTokenStore,
+      cookieSecure,
+    );
     if (!session.ok) {
-      if (session.error === 'invalidated' || session.error === 'missing-user') {
-        req.session.userId = '';
-        req.session.sessionVersion = undefined;
+      if (session.error !== 'unauthenticated') {
+        req.session.delete();
       }
       return reply.status(401).send({
         ok: false,

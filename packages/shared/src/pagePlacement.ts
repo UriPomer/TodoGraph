@@ -8,6 +8,7 @@ import {
   GROUP_PADDING_Y,
   type CollisionRect,
   computeGroupSize,
+  capGroupSize,
   rectsOverlap,
 } from './graphGeometry.js';
 
@@ -63,7 +64,7 @@ export function computeNodeSizeMap(nodes: Task[]): Map<string, { w: number; h: n
       visiting.delete(id);
       return leaf;
     }
-    const size = computeGroupSize(
+    const size = capGroupSize(computeGroupSize(
       childIds.map((childId) => {
         const child = byId.get(childId)!;
         const childSize = visit(childId);
@@ -74,7 +75,7 @@ export function computeNodeSizeMap(nodes: Task[]): Map<string, { w: number; h: n
           h: childSize.h,
         };
       }),
-    );
+    ));
     visiting.delete(id);
     memo.set(id, size);
     return size;

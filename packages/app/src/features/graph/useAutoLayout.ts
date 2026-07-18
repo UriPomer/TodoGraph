@@ -1,6 +1,78 @@
 import dagre from 'dagre';
 import type { Edge as RFEdge, Node as RFNode } from '@xyflow/react';
-import { CHILD_DEFAULT_W, CHILD_DEFAULT_H } from '@todograph/shared';
+import {
+  CHILD_DEFAULT_W,
+  CHILD_DEFAULT_H,
+  GROUP_PADDING_X,
+  GROUP_PADDING_Y,
+  capGroupSize,
+  computeGroupSize,
+} from '@todograph/shared';
+
+const GROUP_CHILD_GAP_X = 24;
+const GROUP_CHILD_GAP_Y = 16;
+
+export function layoutChildrenInTwoColumns<NodeData extends Record<string, unknown>>(
+  children: RFNode<NodeData>[],
+  sizeOf: (node: RFNode<NodeData>) => { width: number; height: number },
+): { positions: Map<string, { x: number; y: number }>; size: { w: number; h: number } } {
+  const ordered = [...children].sort(
+    (left, right) => left.position.y - right.position.y || left.position.x - right.position.x,
+  );
+  const sizes = ordered.map(sizeOf);
+  const firstColumnWidth = Math.max(
+    0,
+    ...sizes.filter((_, index) => index % 2 === 0).map((size) => size.width),
+  );
+  const positions = new Map<string, { x: number; y: number }>();
+  const rects: Array<{ x: number; y: number; w: number; h: number }> = [];
+  let y = GROUP_PADDING_Y;
+
+  for (let row = 0; row * 2 < ordered.length; row++) {
+    const firstIndex = row * 2;
+    const rowIndexes = [firstIndex, firstIndex + 1].filter((index) => index < ordered.length);
+    const rowHeight = Math.max(...rowIndexes.map((index) => sizes[index]!.height));
+    for (const index of rowIndexes) {
+      const node = ordered[index]!;
+      const size = sizes[index]!;
+      const x = index % 2 === 0
+        ? GROUP_PADDING_X
+        : GROUP_PADDING_X + firstColumnWidth + GROUP_CHILD_GAP_X;
+      positions.set(node.id, { x, y });
+      rects.push({ x, y, w: size.width, h: size.height });
+    }
+    y += rowHeight + GROUP_CHILD_GAP_Y;
+  }
+
+  return { positions, size: computeGroupSize(rects) };
+}
+
+export function layoutNestedGroupChildren<NodeData extends Record<string, unknown>>(
+  nodes: RFNode<NodeData>[],
+  groupIdsDeepestFirst: string[],
+  childrenByParent: ReadonlyMap<string, string[]>,
+  sizeOf: (node: RFNode<NodeData>) => { width: number; height: number },
+): {
+  positions: Map<string, { x: number; y: number }>;
+  sizes: Map<string, { width: number; height: number }>;
+} {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const positions = new Map(nodes.map((node) => [node.id, node.position]));
+  const sizes = new Map(nodes.map((node) => [node.id, sizeOf(node)]));
+
+  for (const parentId of groupIdsDeepestFirst) {
+    const children = (childrenByParent.get(parentId) ?? [])
+      .map((id) => byId.get(id))
+      .filter((node): node is RFNode<NodeData> => Boolean(node))
+      .map((node) => ({ ...node, position: positions.get(node.id) ?? node.position }));
+    const layout = layoutChildrenInTwoColumns(children, (node) => sizes.get(node.id) ?? sizeOf(node));
+    for (const [id, position] of layout.positions) positions.set(id, position);
+    const displayedSize = capGroupSize(layout.size);
+    sizes.set(parentId, { width: displayedSize.w, height: displayedSize.h });
+  }
+
+  return { positions, sizes };
+}
 
 /**
  * 基于 dagre 的左→右层级布局。
