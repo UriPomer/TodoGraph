@@ -125,7 +125,10 @@ export function SecurityDialog({ open, onClose, embedded = false }: Props) {
     if (!selectedTrash || !window.confirm('恢复后页面会重新加入工作区。继续？')) return;
     await useTaskStore.getState().flush();
     const revision = useWorkspaceStore.getState().meta?.revision;
-    await api.restoreTrashedPage(selectedTrash, revision);
+    const restored = await api.restoreTrashedPage(selectedTrash, revision);
+    if (restored.cleanupWarning) {
+      window.alert(restored.cleanupWarning);
+    }
     window.location.reload();
   });
   const restoreDraft = () => void run('draft-restore', async () => {

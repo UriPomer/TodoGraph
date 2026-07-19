@@ -14,8 +14,17 @@ const MAX_NODES_PER_PAGE = 10_000;
 const MAX_EDGES_PER_PAGE = 50_000;
 const MAX_TASK_METADATA_BYTES = 64 * 1024;
 const MAX_TASK_METADATA_DEPTH = 10;
+export const MAX_PAGE_DATA_BYTES = 4 * 1024 * 1024;
+export const MAX_WORKSPACE_DATA_BYTES = 128 * 1024 * 1024;
+
+export function serializedJsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value, null, 2), 'utf-8');
+}
 
 export function assertPageCapacity(page: PageData, pageId: string): void {
+  if (serializedJsonBytes(page) > MAX_PAGE_DATA_BYTES) {
+    throw new Error(`page exceeds ${MAX_PAGE_DATA_BYTES} serialized bytes: ${pageId}`);
+  }
   if (page.nodes.length > MAX_NODES_PER_PAGE) {
     throw new Error(`page exceeds ${MAX_NODES_PER_PAGE} tasks: ${pageId}`);
   }

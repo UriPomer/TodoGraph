@@ -16,7 +16,7 @@ import { FileRememberTokenRepository } from './repositories/FileRememberTokenRep
 import type { WorkspaceRepository } from './repositories/Repository.js';
 
 export interface AppOptions {
-  /** File repositories require one server process per dataDir. */
+  /** Local file repositories serialize writers per dataDir; network filesystems are unsupported. */
   dataDir: string;
   staticDir?: string;
   registrationKey: string;

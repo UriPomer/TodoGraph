@@ -53,7 +53,7 @@ UI command
   -> clear only the matching local draft
 ```
 
-Destructive operations must create a flushed recovery point before their commit point. Import aborts if the current workspace cannot be exported. Restore snapshots the live page first and checks the caller's expected page version. Delete writes a tombstone before removing page metadata. Multi-page writes use a recovery journal. Page backups, import snapshots, and deleted-page tombstones have bounded retention.
+Destructive operations must create a flushed recovery point before their commit point. Import aborts if the current workspace cannot be exported. Restore snapshots the live page first and checks the caller's expected page version. Delete writes a tombstone before removing page metadata. Multi-page writes use a recovery journal. Page backups, import snapshots, and deleted-page tombstones are bounded by both count and bytes while always retaining the newest recovery point.
 
 When a page version conflicts, the server version remains authoritative for the original page, while the client preserves local edits in a recovery page or, if that fails, a user-scoped device draft. The account/data panel can restore hidden conflict drafts as new pages and restore deleted pages from the recycle bin.
 
@@ -86,7 +86,8 @@ data/users/{userId}/
 - External page operations must reference a page present in `meta.pages`.
 - Only one local-filesystem writer may hold `.workspace.lock`; the atomic directory lock is refreshed while held. Network filesystems are outside this repository's supported consistency model.
 - Shared v2 migration data is claimed under a root-scoped lock so only one user can receive it.
-- UI-generated API keys default to read/write scope; delete, restore, and cross-page move require explicit destructive scope. Legacy environment keys remain full-access for compatibility.
+- UI-generated API keys default to read/write scope; delete, restore, cross-page move, and destructive commands sent through a generic write endpoint require explicit destructive scope. Legacy environment keys remain full-access for compatibility.
+- New pages are limited by serialized bytes as well as node, edge, metadata, and depth counts. The workspace byte quota is growth-aware so an oversized legacy workspace can still be reduced without first becoming unreadable.
 - Legacy migration sources remain available until the new metadata commit succeeds.
 - A successful save may clear only the exact draft it persisted; newer drafts remain recoverable.
 - Generated output (`dist/`, `Build/`, dependencies and runtime `data/`) is not authored source.

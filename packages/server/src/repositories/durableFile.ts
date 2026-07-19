@@ -4,14 +4,14 @@ import path from 'node:path';
 export async function atomicWriteText(target: string, text: string): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true });
   const tmp = `${target}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
-  await fs.writeFile(tmp, text, 'utf-8');
-  await syncFile(tmp);
   try {
+    await fs.writeFile(tmp, text, 'utf-8');
+    await syncFile(tmp);
     await fs.rename(tmp, target);
     await syncDirectory(path.dirname(target));
-  } catch (error) {
+  } finally {
+    // Covers write/fsync/rename failures; after a successful rename the temp path no longer exists.
     await fs.rm(tmp, { force: true }).catch(() => {});
-    throw error;
   }
 }
 

@@ -3,17 +3,11 @@ import {
   MAX_PAGE_TITLE_LENGTH,
   PageDataSchema,
   SYSTEM_HIERARCHY_PAGE_ID,
-  pageSupportsDependencyGraph,
-  placeMovedNodesOnTarget,
-  resolveNodeOverlaps,
   validateDependencyEdges,
   validateTaskHierarchy,
   type AllTasksItem,
   type AllTasksResponse,
   type Meta,
-  type MoveNodesResponse,
-  type PageData,
-  type Task,
 } from '@todograph/shared';
 import { isDAG, readyTasks } from '@todograph/core';
 import { z } from 'zod';
@@ -26,8 +20,9 @@ import {
   VersionConflictError,
 } from '../repositories/Repository.js';
 import { generateWorkspaceMarkdown } from '../markdown.js';
-import { getAuthenticatedUserId } from '../auth.js';
+import { getAuthenticatedUserId, hasAuthenticatedScope } from '../auth.js';
 import { executeTaskCommand } from '../application/taskCommands.js';
+import { moveNodesBetweenPages } from '../application/workspaceMoves.js';
 
 interface Opts {
   getRepo: (userId: string) => WorkspaceRepository;
@@ -333,6 +328,10 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       reply.status(400);
       return { ok: false, error: 'invalid payload', issues: parsed.error.issues };
     }
+    if (parsed.data.type === 'delete_tasks' && !hasAuthenticatedScope(req, 'destructive')) {
+      reply.status(403);
+      return { ok: false, error: '此 API key 没有 destructive 权限' };
+    }
     const repo = getRepo(getAuthenticatedUserId(req));
     try {
       const result = await executeTaskCommand(repo, req.params.id, parsed.data);
@@ -576,122 +575,3 @@ function cacheKeyFromMeta(meta: Meta): string {
   );
 }
 
-async function moveNodesBetweenPages(
-  repo: WorkspaceRepository,
-  sourceId: string,
-  targetId: string,
-  userSelected: string[],
-  expectedSourceVersion?: number,
-  expectedTargetVersion?: number,
-): Promise<MoveNodesResponse> {
-  const [meta, source, target] = await Promise.all([
-    repo.loadMeta(),
-    repo.loadPage(sourceId),
-    repo.loadPage(targetId),
-  ]);
-  const targetSupportsDependencies = pageSupportsDependencyGraph(
-    meta.pages.find((page) => page.id === targetId),
-  );
-
-  const byIdSrc = new Map(source.nodes.map((n) => [n.id, n]));
-  const childrenOf = new Map<string, string[]>();
-  for (const n of source.nodes) {
-    if (n.parentId) {
-      const arr = childrenOf.get(n.parentId);
-      if (arr) arr.push(n.id);
-      else childrenOf.set(n.parentId, [n.id]);
-    }
-  }
-  const toMove = new Set<string>();
-  const userSet = new Set<string>();
-  for (const id of userSelected) {
-    if (!byIdSrc.has(id)) continue;
-    userSet.add(id);
-    collectSubtree(id, childrenOf, toMove);
-  }
-  if (toMove.size === 0) {
-    throw new Error('no valid nodes to move');
-  }
-  const autoIncludedChildren = toMove.size - userSet.size;
-
-  let droppedParentLinks = 0;
-  const movedNodes: Task[] = [];
-  for (const id of toMove) {
-    const n = byIdSrc.get(id)!;
-    if (n.parentId && !toMove.has(n.parentId)) {
-      let wx = n.x ?? 0;
-      let wy = n.y ?? 0;
-      let ancestorId: string | undefined = n.parentId;
-      const seen = new Set<string>([n.id]);
-      while (ancestorId && !seen.has(ancestorId)) {
-        seen.add(ancestorId);
-        const ancestor = byIdSrc.get(ancestorId);
-        if (!ancestor) break;
-        wx += ancestor.x ?? 0;
-        wy += ancestor.y ?? 0;
-        if (!ancestor.parentId || toMove.has(ancestor.parentId)) break;
-        ancestorId = ancestor.parentId;
-      }
-      const copy: Task = {
-        ...n,
-        x: wx,
-        y: wy,
-      };
-      delete copy.parentId;
-      droppedParentLinks++;
-      movedNodes.push(copy);
-    } else {
-      movedNodes.push(n);
-    }
-  }
-
-  const internalMovedEdges = source.edges.filter((e) => toMove.has(e.from) && toMove.has(e.to));
-  const movedEdges = targetSupportsDependencies ? internalMovedEdges : [];
-  const lostEdges = source.edges.filter(
-    (e) =>
-      (toMove.has(e.from) && !toMove.has(e.to)) || (!toMove.has(e.from) && toMove.has(e.to)),
-  ).length + (targetSupportsDependencies ? 0 : internalMovedEdges.length);
-
-  const targetIds = new Set(target.nodes.map((n) => n.id));
-  for (const n of movedNodes) {
-    if (targetIds.has(n.id)) {
-      throw new Error(`node id conflict: ${n.id} already exists on target page`);
-    }
-  }
-
-  const newSource: PageData = {
-    nodes: resolveNodeOverlaps(source.nodes.filter((n) => !toMove.has(n.id))).nodes,
-    edges: source.edges.filter((e) => !toMove.has(e.from) && !toMove.has(e.to)),
-  };
-  const safeTargetNodes = resolveNodeOverlaps(target.nodes).nodes;
-  const placedMovedNodes = placeMovedNodesOnTarget(safeTargetNodes, movedNodes);
-  const newTarget: PageData = {
-    nodes: [...safeTargetNodes, ...placedMovedNodes],
-    edges: [...target.edges, ...movedEdges],
-  };
-
-  if (!isDAG(newSource) || !isDAG(newTarget)) {
-    throw new Error('resulting page would contain a cycle');
-  }
-
-  await repo.savePages([
-    { pageId: sourceId, data: newSource, expectedVersion: expectedSourceVersion ?? source.version },
-    { pageId: targetId, data: newTarget, expectedVersion: expectedTargetVersion ?? target.version },
-  ]);
-
-  return {
-    movedNodes: toMove.size,
-    movedEdges: movedEdges.length,
-    autoIncludedChildren,
-    lostEdges,
-    droppedParentLinks,
-  };
-}
-
-function collectSubtree(rootId: string, childrenOf: Map<string, string[]>, out: Set<string>): void {
-  if (out.has(rootId)) return;
-  out.add(rootId);
-  for (const child of childrenOf.get(rootId) ?? []) {
-    collectSubtree(child, childrenOf, out);
-  }
-}

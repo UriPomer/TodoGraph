@@ -112,7 +112,7 @@ export function registerPageTools(server: McpServer, c: typeof ClientType) {
     {
       title: 'Merge two pages',
       description:
-        '合并两个页面：将源页的所有任务迁移到目标页，然后删除源页。内部调用 move-nodes + delete API。至少保留一个页面。注意：跨页依赖边会丢失，子节点自动跟随父节点迁移。',
+        '合并两个页面：服务端在一个带恢复点的事务式操作中迁移源页任务并删除源页。至少保留一个页面。注意：跨页依赖边会丢失，子节点自动跟随父节点迁移。',
       inputSchema: {
         source_page_id: z.string().min(1).describe('要合并的源页面 ID（此页将被删除）'),
         target_page_id: z.string().min(1).describe('目标页面 ID（任务迁入此页）'),

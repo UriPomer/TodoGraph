@@ -319,11 +319,11 @@ export const api = {
   async restoreTrashedPage(
     name: string,
     expectedRevision?: number,
-  ): Promise<{ meta: Meta; page: PageInfo; data: PageData }> {
+  ): Promise<{ meta: Meta; page: PageInfo; data: PageData; cleanupWarning?: string }> {
     const res = await request(`/api/trash/pages/${encodeURIComponent(name)}/restore`, 'POST', {
       expectedRevision,
     });
-    const body = await json<{ meta: Meta; page: PageInfo; data: unknown }>(res);
+    const body = await json<{ meta: Meta; page: PageInfo; data: unknown; cleanupWarning?: string }>(res);
     return { ...body, data: PageDataSchema.parse(body.data) };
   },
   async loadAllTasks(): Promise<AllTasksResponse> {

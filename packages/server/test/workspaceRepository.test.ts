@@ -106,6 +106,29 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     await expect(repo.listTrashedPages()).resolves.toEqual([]);
   });
 
+  it('reports a warning when restored data is committed but trash cleanup fails', async () => {
+    const created = await repo.createPage('清理失败仍可恢复');
+    const deletedMeta = await repo.deletePage(created.page.id, created.meta.revision);
+    const trash = await repo.listTrashedPages();
+    const trashPath = path.resolve(userDir, 'trash', 'pages', trash[0]!.name);
+    const realUnlink = fs.unlink.bind(fs);
+    const unlinkSpy = vi.spyOn(fs, 'unlink').mockImplementation(async (target) => {
+      if (path.resolve(String(target)) === trashPath) {
+        throw Object.assign(new Error('simulated cleanup failure'), { code: 'EACCES' });
+      }
+      return realUnlink(target);
+    });
+
+    try {
+      const restored = await repo.restoreTrashedPage(trash[0]!.name, deletedMeta.revision);
+      expect(restored.cleanupWarning).toContain('旧回收站文件清理失败');
+      await expect(repo.loadPage(created.page.id)).resolves.toEqual(restored.data);
+      await expect(fs.access(trashPath)).resolves.toBeUndefined();
+    } finally {
+      unlinkSpy.mockRestore();
+    }
+  });
+
   it('does not commit a v2 migration when a referenced page cannot be copied', async () => {
     const legacyMeta = {
       version: 2,
@@ -251,6 +274,21 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     await expect(repo.loadPage(meta.activePageId)).resolves.toEqual(page);
   });
 
+  it('rejects oversized serialized pages without changing the live page', async () => {
+    const meta = await repo.loadMeta();
+    const page = await repo.loadPage(meta.activePageId);
+    const nodes = Array.from({ length: 100 }, (_, index) => ({
+      id: `large-${index}`,
+      title: `Large ${index}`,
+      status: 'todo' as const,
+      metadata: { payload: 'x'.repeat(48 * 1024) },
+    }));
+
+    await expect(repo.savePage(meta.activePageId, { nodes, edges: [] }, page.version))
+      .rejects.toThrow('page exceeds 4194304 serialized bytes');
+    await expect(repo.loadPage(meta.activePageId)).resolves.toEqual(page);
+  });
+
   it('reads legacy long titles but rejects them on new writes', async () => {
     const meta = await repo.loadMeta();
     const pageId = meta.activePageId;
@@ -366,6 +404,19 @@ describe('FileWorkspaceRepository concurrency guards', () => {
 
     expect(sourceAfter.nodes.map((node) => node.id)).toEqual(source.nodes.map((node) => node.id));
     expect(targetAfter.nodes.map((node) => node.id)).toEqual(['t1']);
+  });
+
+  it('rejects duplicate page ids in a multi-page transaction', async () => {
+    const meta = await repo.loadMeta();
+    const page = await repo.loadPage(meta.activePageId);
+    const entry = {
+      pageId: meta.activePageId,
+      data: { nodes: [], edges: [] },
+      expectedVersion: page.version,
+    };
+
+    await expect(repo.savePages([entry, entry])).rejects.toThrow('duplicate page ids');
+    await expect(repo.loadPage(meta.activePageId)).resolves.toEqual(page);
   });
 
   it('savePages aborts all writes when any page contains overlap', async () => {

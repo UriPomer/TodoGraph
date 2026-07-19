@@ -35,7 +35,9 @@ import {
   assertPageTitleLength,
   collectLegacyLongTaskTitles,
   isSafePageId,
+  MAX_WORKSPACE_DATA_BYTES,
   parseValidPageData,
+  serializedJsonBytes,
 } from './workspaceValidation.js';
 import { SEED_GRAPH } from './FileRepository.js';
 
@@ -76,6 +78,9 @@ const MAX_WORKSPACE_PAGES = 500;
 const MAX_PAGE_BACKUPS = 50;
 const MAX_IMPORT_BACKUPS = 20;
 const MAX_TRASHED_PAGES = 100;
+const MAX_PAGE_BACKUP_BYTES = 16 * 1024 * 1024;
+const MAX_IMPORT_BACKUP_BYTES = 64 * 1024 * 1024;
+const MAX_TRASH_BYTES = 64 * 1024 * 1024;
 
 async function withWorkspaceLock<T>(key: string, task: () => Promise<T>): Promise<T> {
   const state = workspaceLocks.get(key) ?? { tail: Promise.resolve(), active: 0 };
@@ -147,6 +152,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       const meta = await this.loadMetaUnlocked();
       this.assertKnownPage(meta, pageId);
       this.assertPageAllowsDependencies(meta, pageId, data);
+      await this.assertWorkspaceGrowthAllowed(meta, new Map([[pageId, data]]));
       return this.savePageUnlocked(pageId, data, expectedVersion);
     });
   }
@@ -156,10 +162,17 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   ): Promise<number[]> {
     return this.runLocked(async () => {
       const meta = await this.loadMetaUnlocked();
+      if (new Set(entries.map((entry) => entry.pageId)).size !== entries.length) {
+        throw new Error('savePages contains duplicate page ids');
+      }
       for (const entry of entries) {
         this.assertKnownPage(meta, entry.pageId);
         this.assertPageAllowsDependencies(meta, entry.pageId, entry.data);
       }
+      await this.assertWorkspaceGrowthAllowed(
+        meta,
+        new Map(entries.map((entry) => [entry.pageId, entry.data])),
+      );
       return this.savePagesUnlocked(entries);
     });
   }
@@ -181,6 +194,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         order: maxOrder + 1,
         createdAt: new Date().toISOString(),
       };
+      await this.assertWorkspaceGrowthAllowed(meta, new Map([[id, { nodes: [], edges: [] }]]));
       // Page first, then meta: committed metadata must never reference a missing page file.
       await this.savePageUnlocked(id, { nodes: [], edges: [] });
       const nextMeta = this.bumpMeta({ ...meta, pages: [...meta.pages, info] });
@@ -222,7 +236,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
           data: JSON.parse(pageRaw),
         }, null, 2),
       );
-      await this.pruneJsonFiles(trashDir, MAX_TRASHED_PAGES);
+      await this.pruneJsonFiles(trashDir, MAX_TRASHED_PAGES, MAX_TRASH_BYTES);
       await atomicWriteJson(this.metaPath, nextMeta);
       try {
         await fs.unlink(this.pageFilePath(pageId));
@@ -300,7 +314,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         path.join(importBackupDir, name),
         JSON.stringify(snapshot, null, 2),
       );
-      await this.pruneJsonFiles(importBackupDir, MAX_IMPORT_BACKUPS);
+      await this.pruneJsonFiles(importBackupDir, MAX_IMPORT_BACKUPS, MAX_IMPORT_BACKUP_BYTES);
       const meta = { ...validated.meta, revision: Math.max(validated.meta.revision, snapshot.meta.revision) + 1 };
       const pages = Object.fromEntries(Object.entries(validated.pages).map(([pageId, page]) =>
         [pageId, {
@@ -403,20 +417,22 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     this.assertSafePageId(pageId);
     this.assertSafeBackupName(backupName);
     return this.runLocked(async () => {
-      this.assertKnownPage(await this.loadMetaUnlocked(), pageId);
-      return this.restoreBackupUnlocked(pageId, backupName, expectedVersion);
+      const meta = await this.loadMetaUnlocked();
+      this.assertKnownPage(meta, pageId);
+      return this.restoreBackupUnlocked(meta, pageId, backupName, expectedVersion);
     });
   }
 
   async restoreLatestBackup(pageId: string, expectedVersion?: number): Promise<PageData> {
     this.assertSafePageId(pageId);
     return this.runLocked(async () => {
-      this.assertKnownPage(await this.loadMetaUnlocked(), pageId);
+      const meta = await this.loadMetaUnlocked();
+      this.assertKnownPage(meta, pageId);
       const backups = await this.listBackupsUnlocked(pageId);
       if (backups.length === 0) {
         throw new Error(`no backup found for page ${pageId}`);
       }
-      return this.restoreBackupUnlocked(pageId, backups[0]!.name, expectedVersion);
+      return this.restoreBackupUnlocked(meta, pageId, backups[0]!.name, expectedVersion);
     });
   }
 
@@ -446,6 +462,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   }
 
   private async restoreBackupUnlocked(
+    meta: Meta,
     pageId: string,
     backupName: string,
     expectedVersion?: number,
@@ -461,6 +478,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       nodes: resolveNodeOverlaps(restored.nodes).nodes,
       version: Math.max(restored.version ?? 0, current.version ?? 0) + 1,
     };
+    await this.assertWorkspaceGrowthAllowed(meta, new Map([[pageId, next]]));
     // Restores are reversible: snapshot the live page before overwriting it.
     await this.createBackupUnlocked(pageId);
     await atomicWriteJson(this.pageFilePath(pageId), next);
@@ -515,14 +533,25 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         ...originalPage,
         order: meta.pages.reduce((max, candidate) => Math.max(max, candidate.order), -1) + 1,
       };
+      await this.assertWorkspaceGrowthAllowed(meta, new Map([[page.id, restored]]));
       await this.savePageUnlocked(page.id, restored);
       const nextMeta = this.bumpMeta({ ...meta, pages: pinSystemPageFirst([...meta.pages, page]) });
       await atomicWriteJson(this.metaPath, nextMeta);
-      await fs.unlink(trashPath).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') return;
-      });
-      await syncDirectory(path.dirname(trashPath));
-      return { meta: nextMeta, page, data: await this.loadPageUnlocked(page.id) };
+      let cleanupWarning: string | undefined;
+      try {
+        await fs.unlink(trashPath);
+        await syncDirectory(path.dirname(trashPath));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          cleanupWarning = '页面已恢复，但旧回收站文件清理失败';
+        }
+      }
+      return {
+        meta: nextMeta,
+        page,
+        data: await this.loadPageUnlocked(page.id),
+        ...(cleanupWarning ? { cleanupWarning } : {}),
+      };
     });
   }
 
@@ -538,7 +567,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       timestamp += 1;
     } while (await this.pathExists(destination));
     await copyFileDurable(src, destination);
-    await this.pruneJsonFiles(backupDir, MAX_PAGE_BACKUPS);
+    await this.pruneJsonFiles(backupDir, MAX_PAGE_BACKUPS, MAX_PAGE_BACKUP_BYTES);
   }
 
   private assertSafeBackupName(backupName: string): void {
@@ -565,17 +594,81 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     }
   }
 
-  private async pruneJsonFiles(directory: string, limit: number): Promise<void> {
-    const jsonFiles = (await fs.readdir(directory)).filter((file) => file.endsWith('.json')).sort();
+  private async pruneJsonFiles(directory: string, limit: number, maxBytes: number): Promise<void> {
+    const candidates = await Promise.all(
+      (await fs.readdir(directory))
+        .filter((file) => file.endsWith('.json'))
+        .sort()
+        .map(async (name) => {
+          try {
+            return { name, size: (await fs.stat(path.join(directory, name))).size };
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+            throw error;
+          }
+        }),
+    );
+    const jsonFiles = candidates.filter((file): file is { name: string; size: number } => file !== null);
+    let totalBytes = jsonFiles.reduce((sum, file) => sum + file.size, 0);
     let changed = false;
-    while (jsonFiles.length > limit) {
+    // Always retain the newest recovery point, even when one legacy file alone exceeds the byte budget.
+    while (jsonFiles.length > 1 && (jsonFiles.length > limit || totalBytes > maxBytes)) {
       const oldest = jsonFiles.shift()!;
-      await fs.unlink(path.join(directory, oldest)).catch((error: NodeJS.ErrnoException) => {
+      await fs.unlink(path.join(directory, oldest.name)).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
       });
+      totalBytes -= oldest.size;
       changed = true;
     }
     if (changed) await syncDirectory(directory);
+  }
+
+  private async assertWorkspaceGrowthAllowed(
+    meta: Meta,
+    replacements: ReadonlyMap<string, PageData>,
+  ): Promise<void> {
+    const livePageIds = new Set(meta.pages.map((page) => page.id));
+    let currentBytes = 0;
+    let nextBytes = 0;
+
+    for (const page of meta.pages) {
+      const replacement = replacements.get(page.id);
+      const pagePath = this.pageFilePath(page.id);
+      if (!replacement) {
+        let currentSize = 0;
+        try {
+          currentSize = (await fs.stat(pagePath)).size;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        currentBytes += currentSize;
+        nextBytes += currentSize;
+        continue;
+      }
+
+      let raw: string | null = null;
+      try {
+        raw = await fs.readFile(pagePath, 'utf-8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      const currentSize = raw === null ? 0 : Buffer.byteLength(raw, 'utf-8');
+      currentBytes += currentSize;
+      const parsed = raw === null ? undefined : JSON.parse(raw) as { version?: unknown };
+      const currentVersion = typeof parsed?.version === 'number' ? parsed.version : 0;
+      nextBytes += serializedJsonBytes({ ...replacement, version: currentVersion + 1 });
+    }
+
+    for (const [pageId, replacement] of replacements) {
+      if (!livePageIds.has(pageId)) {
+        nextBytes += serializedJsonBytes({ ...replacement, version: 1 });
+      }
+    }
+
+    // Existing oversized workspaces remain editable when an operation reduces or preserves their footprint.
+    if (nextBytes > MAX_WORKSPACE_DATA_BYTES && nextBytes > currentBytes) {
+      throw new Error(`workspace exceeds ${MAX_WORKSPACE_DATA_BYTES} serialized bytes`);
+    }
   }
 
   private assertMetaRevision(meta: Meta, expectedRevision?: number): void {
@@ -735,9 +828,10 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
 
     const newVersion = currentVersion + 1;
     const valid = parseValidPageData(data, pageId, legacyLongTitles);
-    assertPageCapacity(valid, pageId);
+    const next = { ...valid, version: newVersion };
+    assertPageCapacity(next, pageId);
     assertNoNodeOverlaps(valid, pageId);
-    await atomicWriteJson(filePath, { ...valid, version: newVersion });
+    await atomicWriteJson(filePath, next);
     return newVersion;
   }
 
@@ -778,7 +872,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     }
     const checked = checkedBase.map((entry, index) => {
       const valid = parseValidPageData(entries[index]!.data, entry.pageId, entry.legacyLongTitles);
-      assertPageCapacity(valid, entry.pageId);
+      assertPageCapacity({ ...valid, version: entry.currentVersion + 1 }, entry.pageId);
       assertNoNodeOverlaps(valid, entry.pageId);
       return { ...entry, valid };
     });
@@ -1074,6 +1168,14 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       assertPageCapacity(pageData, pageId);
       this.assertPageAllowsDependencies(meta, pageId, pageData);
       pages[pageId] = pageData;
+    }
+
+    const totalBytes = Object.values(pages).reduce(
+      (sum, page) => sum + serializedJsonBytes(page),
+      0,
+    );
+    if (totalBytes > MAX_WORKSPACE_DATA_BYTES) {
+      throw new Error(`workspace exceeds ${MAX_WORKSPACE_DATA_BYTES} serialized bytes`);
     }
 
     return { meta, pages };

@@ -106,7 +106,7 @@ export interface WorkspaceRepository {
   restoreTrashedPage(
     name: string,
     expectedRevision?: number,
-  ): Promise<{ meta: Meta; page: PageInfo; data: PageData }>;
+  ): Promise<{ meta: Meta; page: PageInfo; data: PageData; cleanupWarning?: string }>;
   /** 列出所有 page 的文件路径与 mtime —— 用于 /api/all-tasks 的缓存失效判断。 */
   listPageMtimes(): Promise<Array<{ pageId: string; mtimeMs: number | null }>>;
 }

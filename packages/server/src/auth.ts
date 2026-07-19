@@ -64,6 +64,7 @@ declare module '@fastify/secure-session' {
 declare module 'fastify' {
   interface FastifyRequest {
     authUserId?: string;
+    apiKeyScopes?: McpKeyScope[];
   }
 }
 
@@ -71,6 +72,11 @@ export function getAuthenticatedUserId(req: FastifyRequest): string {
   const userId = req.authUserId ?? req.session.userId;
   if (!userId) throw new Error('authenticated user id missing');
   return userId;
+}
+
+/** Browser sessions are unrestricted; API-key requests must carry the requested scope. */
+export function hasAuthenticatedScope(req: FastifyRequest, scope: McpKeyScope): boolean {
+  return req.apiKeyScopes === undefined || req.apiKeyScopes.includes(scope);
 }
 
 interface AuthRouteOpts {
@@ -451,6 +457,7 @@ export function authHook(
         return reply.status(403).send({ ok: false, error: 'API key 不能直接访问此端点，请通过 MCP 工具操作' });
       }
       req.authUserId = mcpPrincipal.userId;
+      req.apiKeyScopes = mcpPrincipal.scopes;
       return;
     }
 

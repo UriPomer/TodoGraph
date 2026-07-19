@@ -845,6 +845,14 @@ describe('auth routes', () => {
       payload: {},
     });
     expect(destructiveDenied.statusCode).toBe(403);
+
+    const taskDeleteDenied = await app.inject({
+      method: 'POST',
+      url: '/api/pages/unknown/commands',
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: { type: 'delete_tasks', taskIds: ['task-1'] },
+    });
+    expect(taskDeleteDenied.statusCode).toBe(403);
   });
 
   it('returns 400 for workspace imports whose activePageId is missing from meta.pages', async () => {

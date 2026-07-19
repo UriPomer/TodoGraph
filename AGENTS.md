@@ -37,7 +37,7 @@ This is a **pnpm monorepo** with six packages. See [`ARCHITECTURE.md`](./ARCHITE
 3. **Undo/redo**: `useHistoryStore` holds snapshots. Every mutation in `useTaskStore` calls `pushPre()` before modifying state.
 4. **Save path**: `useTaskStore.scheduleSave()` → 250ms debounce → `api.savePage()` → `PUT /api/pages/:id` → server validates capacity, dependency DAG and task hierarchy → `FileWorkspaceRepository.savePage()` (fsync + atomic rename).
 5. **Session lifecycle**: `WorkspaceStore.resetSession()` owns logout/account-switch cleanup for task state, history, pending saves, and polling. Protected API 401 responses invalidate auth globally.
-6. **Recovery path**: every mutation is mirrored to a user-scoped local draft; destructive repository operations create a flushed backup, tombstone, or journal before their commit point. The account/data panel exposes draft, backup, and deleted-page restoration.
+6. **Recovery path**: every mutation is mirrored to a user-scoped local draft; destructive repository operations create a flushed backup, tombstone, or journal before their commit point. Recovery files are bounded by count and bytes while retaining the newest point. The account/data panel exposes draft, backup, and deleted-page restoration.
 
 ## Key architectural decisions
 
