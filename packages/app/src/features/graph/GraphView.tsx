@@ -47,7 +47,6 @@ import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useDerived } from '@/hooks/useRecommendation';
 import { TaskNode, type TaskNodeData } from './TaskNode';
 import { GroupNode, type GroupNodeData } from './GroupNode';
-import { MergeGhostNode, type MergeGhostData } from './MergeGhostNode';
 import { SelectionMenu, type SelectionMenuAction } from './SelectionMenu';
 import { dialog } from '@/components/ui/dialog-store';
 import { InlineCreateInput } from './InlineCreateInput';
@@ -64,22 +63,14 @@ import { buildGraphNodeProjection } from './graphNodeProjection';
 const nodeTypes: NodeTypes = {
   task: TaskNode,
   group: GroupNode,
-  mergeGhost: MergeGhostNode,
 };
-/** hover 进入目标后多久才显示 ghost 合并预览（ms） */
-const MERGE_HOVER_DEFAULT_MS = 700;
-/** 子节点中心离开父框后多久才真正 ungroup（ms）—— 期间父框显示红色抖动警告 */
-const UNGROUP_CONFIRM_DEFAULT_MS = 600;
 /** 认定为「明显离开父框」所需的最小像素 —— 轻微拖动不触发 ungroup 提示 */
 const UNGROUP_ESCAPE_PX = 12;
-/** ghost overlay 的固定 id —— 用于在命中检测里排除自己 */
-const GHOST_ID = '__merge_ghost__';
 const DESKTOP_MIN_ZOOM = 0.5;
 const MOBILE_MIN_ZOOM = 0.1;
 const MOBILE_FIT_MIN_ZOOM = 0.35;
-const MOBILE_DRAG_ANALYSIS_INTERVAL_MS = 32;
 const MINI_MAP_STYLE = { width: 160, height: 110 } as const;
-interface RFTaskNode extends RFNode<TaskNodeData | GroupNodeData | MergeGhostData> {}
+interface RFTaskNode extends RFNode<TaskNodeData | GroupNodeData> {}
 
 function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile' }) {
   const nodes = useTaskStore((s) => s.nodes);
@@ -90,6 +81,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
   const removeEdge = useTaskStore((s) => s.removeEdge);
   const insertBetween = useTaskStore((s) => s.insertBetween);
   const updateTasksBulk = useTaskStore((s) => s.updateTasksBulk);
+  const syncMeasuredSizes = useTaskStore((s) => s.syncMeasuredSizes);
   const deleteTask = useTaskStore((s) => s.deleteTask);
   const deleteTasks = useTaskStore((s) => s.deleteTasks);
   const detachTasks = useTaskStore((s) => s.detachTasks);
@@ -108,10 +100,6 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     width: containerRef.current?.clientWidth ?? 0,
     height: containerRef.current?.clientHeight ?? 0,
   }), []);
-  const mergeHoverMs = workspaceMeta?.settings?.mergeHoverMs ?? MERGE_HOVER_DEFAULT_MS;
-  const ungroupConfirmMs =
-    workspaceMeta?.settings?.ungroupConfirmMs ?? UNGROUP_CONFIRM_DEFAULT_MS;
-
   const lastMousePosRef = useRef({ x: 0, y: 0 });
   const handleContainerMouseMove = useCallback((e: React.MouseEvent) => {
     lastMousePosRef.current = { x: e.clientX, y: e.clientY };
@@ -163,43 +151,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     [rf, nodes, rfNodes],
   );
   const draggingRef = useRef(false);
-  interface DragState {
-    dragId: string;
-    /** 悬停在候选上、timer 仍在计时期间 —— 候选节点打"待确认"虚线外框。 */
-    mergeCandidatePending: string | null;
-    /** timer 触发 / 松手时锁定的合并目标 —— 显示 ghost overlay。 */
-    mergeTarget: string | null;
-    ungroupFrom: string | null;
-  }
-  const [dragState, setDragState] = useState<DragState | null>(null);
-  const dragStateRef = useRef<DragState | null>(null);
-  useEffect(() => {
-    dragStateRef.current = dragState;
-  }, [dragState]);
-  const mergeTimerRef = useRef<number | null>(null);
-  const mergeCandidateRef = useRef<string | null>(null);
-  const ungroupTimerRef = useRef<number | null>(null);
-  const ungroupCandidateRef = useRef<string | null>(null);
-  const clearMergeTimer = useCallback(() => {
-    if (mergeTimerRef.current !== null) {
-      window.clearTimeout(mergeTimerRef.current);
-      mergeTimerRef.current = null;
-    }
-    mergeCandidateRef.current = null;
-  }, []);
-  const clearUngroupTimer = useCallback(() => {
-    if (ungroupTimerRef.current !== null) {
-      window.clearTimeout(ungroupTimerRef.current);
-      ungroupTimerRef.current = null;
-    }
-    ungroupCandidateRef.current = null;
-  }, []);
-  useEffect(() => {
-    return () => {
-      if (mergeTimerRef.current !== null) window.clearTimeout(mergeTimerRef.current);
-      if (ungroupTimerRef.current !== null) window.clearTimeout(ungroupTimerRef.current);
-    };
-  }, []);
+  const [isNodeDragging, setIsNodeDragging] = useState(false);
   /**
    * 是否处于"多选拖动"—— 多选时禁用合并/ungroup 判定，drag stop 时批量 flush
    * 所有被选节点的新位置。否则 bug1：多选拖动末态错乱 + 误形成父子。
@@ -207,7 +159,6 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
   const isMultiDragRef = useRef(false);
   const multiDragSessionRef = useRef(new MultiDragSession());
   const dragDescendantIdsRef = useRef(new Set<string>());
-  const lastDragAnalysisAtRef = useRef(Number.NEGATIVE_INFINITY);
   const hierarchyMetrics = useMemo(() => buildHierarchyMetrics(nodes), [nodes]);
   const parentMap = hierarchyMetrics.childIdsByParentId;
   const byId = hierarchyMetrics.byId;
@@ -251,50 +202,6 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     });
     return () => cancelAnimationFrame(frame);
   }, [parentMap, resizedGroupIds, updateNodeInternals]);
-  /**
-   * 合成送给 React Flow 的最终节点数组。两种效果：
-   *   1. 把 dragState 的 mergeTarget / ungroupFrom 标记写到对应节点的 data 上（不污染源数据）。
-   *   2. mergeTarget 存在时追加一个 ghost overlay 节点。
-   * sync effect 被 draggingRef 守卫挡住 —— 所以拖拽期间的视觉反馈只能在这里做。
-   */
-  const renderNodes: RFTaskNode[] = useMemo(() => {
-    if (!dragState) return rfNodes;
-    const { mergeCandidatePending, mergeTarget, ungroupFrom, dragId } = dragState;
-    const flagged = (mergeTarget || ungroupFrom || mergeCandidatePending)
-      ? rfNodes.map((n) => {
-          if (n.id !== mergeTarget && n.id !== ungroupFrom && n.id !== mergeCandidatePending) return n;
-          let extra: Record<string, boolean>;
-          if (n.id === mergeTarget) extra = { isMergeTarget: true };
-          else if (n.id === ungroupFrom) extra = { isUngroupWarn: true };
-          else extra = { isMergePending: true };
-          return { ...n, data: { ...n.data, ...extra } };
-        })
-      : rfNodes;
-    if (!mergeTarget) return flagged;
-    const target = flagged.find((n) => n.id === mergeTarget);
-    const dragNode = flagged.find((n) => n.id === dragId);
-    if (!target || !dragNode) return flagged;
-    const targetW = target.width ?? (target.type === 'group' ? GROUP_MIN_W : CHILD_DEFAULT_W);
-    const targetH = target.height ?? (target.type === 'group' ? GROUP_MIN_H : CHILD_DEFAULT_H);
-    const ghost: RFTaskNode = {
-      id: GHOST_ID,
-      type: 'mergeGhost',
-      position: { x: target.position.x, y: target.position.y },
-      data: {
-        dragTitle: (dragNode.data as { title?: string }).title ?? '',
-        targetTitle: (target.data as { title?: string }).title ?? '',
-        targetIsGroup: target.type === 'group',
-      } as MergeGhostData,
-      ...(target.parentId ? { parentId: target.parentId } : {}),
-      style: { width: targetW, height: targetH, zIndex: 1000 },
-      width: targetW,
-      height: targetH,
-      selectable: false,
-      draggable: false,
-      focusable: false,
-    };
-    return [...flagged, ghost];
-  }, [rfNodes, dragState]);
   const nodeStatusById = useMemo(() => {
     const m = new Map<string, string>();
     for (const n of nodes) m.set(n.id, n.status);
@@ -321,22 +228,30 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     return 'hsl(var(--muted-foreground) / 0.35)';
   }, []);
 
-  /**
-   * 只做 applyNodeChanges + remove dispatch + draggingRef 维护。
-   * 合并 / ungroup 业务在 onNodeDrag* 钩子里做 —— 避免上帝函数。
-   */
+  /** 拖动帧只更新位置；尺寸变化同步到布局几何；碰撞统一在 drag stop 处理。 */
   const onNodesChange = useCallback(
     (changes: NodeChange<RFTaskNode>[]) => {
       setRfNodes((prev) => applyNodeChanges(changes, prev));
+      const measurements: Array<{ id: string; width: number; height: number }> = [];
       for (const c of changes) {
         if (c.type === 'position') {
           if (c.dragging) draggingRef.current = true;
           else draggingRef.current = false;
         }
-        if (c.type === 'remove' && c.id) deleteTask(c.id);
+        if (c.type === 'dimensions' && c.dimensions && !parentMap.has(c.id)) {
+          measurements.push({
+            id: c.id,
+            width: c.dimensions.width,
+            height: c.dimensions.height,
+          });
+        }
+        if (c.type === 'remove' && c.id) {
+          deleteTask(c.id);
+        }
       }
+      syncMeasuredSizes(measurements);
     },
-    [deleteTask],
+    [deleteTask, parentMap, syncMeasuredSizes],
   );
   const resolveDropPushAway = useCallback(
     (draggedNode: RFNode): Array<{ id: string; x: number; y: number }> => {
@@ -346,11 +261,15 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
         x: draggedNode.position.x,
         y: draggedNode.position.y,
         w:
+          draggedNode.measured?.width ??
           draggedNode.width ??
+          draggedLocal?.measured?.width ??
           draggedLocal?.width ??
           (draggedNode.type === 'group' ? GROUP_MIN_W : CHILD_DEFAULT_W),
         h:
+          draggedNode.measured?.height ??
           draggedNode.height ??
+          draggedLocal?.measured?.height ??
           draggedLocal?.height ??
           (draggedNode.type === 'group' ? GROUP_MIN_H : CHILD_DEFAULT_H),
       };
@@ -358,129 +277,24 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
         .filter(
           (n) =>
             n.id !== draggedNode.id &&
-            n.parentId === draggedNode.parentId &&
-            n.id !== GHOST_ID,
+            n.parentId === draggedNode.parentId,
         )
         .map((n) => ({
           id: n.id,
           x: n.position.x,
           y: n.position.y,
-          w: n.width ?? (n.type === 'group' ? GROUP_MIN_W : CHILD_DEFAULT_W),
-          h: n.height ?? (n.type === 'group' ? GROUP_MIN_H : CHILD_DEFAULT_H),
+          w: n.measured?.width ?? n.width ?? (n.type === 'group' ? GROUP_MIN_W : CHILD_DEFAULT_W),
+          h: n.measured?.height ?? n.height ?? (n.type === 'group' ? GROUP_MIN_H : CHILD_DEFAULT_H),
         }));
       return resolvePinnedDropPushAway({ pinned, occupied });
     },
     [rfNodes],
   );
-  /**
-   * 拖拽过程中：使用 React Flow 的 getIntersectingNodes 做命中检测。
-   * 官方 API 已经内置了绝对坐标 + bounding box 计算，不需要手写 computeAbs。
-   */
-  const onNodeDrag = useCallback(
-    (_evt: React.MouseEvent, draggedNode: RFNode) => {
-      if (isMultiDragRef.current) return;
-      const dragId = draggedNode.id;
-      const shouldAnalyzeMerge =
-        viewportScope !== 'mobile' ||
-        _evt.timeStamp - lastDragAnalysisAtRef.current >= MOBILE_DRAG_ANALYSIS_INTERVAL_MS;
-      if (shouldAnalyzeMerge) {
-        lastDragAnalysisAtRef.current = _evt.timeStamp;
-        const draggedHeight = subtreeHeightById.get(dragId) ?? 0;
-        let mergeCandidate: RFNode | null = null;
-        const intersecting = rf.getIntersectingNodes(draggedNode);
-        for (const n of intersecting) {
-          if (n.id === dragId) continue;
-          if (n.id === GHOST_ID || n.type === 'mergeGhost') continue;
-          if (dragDescendantIdsRef.current.has(n.id)) continue;
-          if (draggedNode.parentId === n.id) continue;
-          const candDepth = depthById.get(n.id) ?? 0;
-          if (candDepth + 1 + draggedHeight + 1 > MAX_HIERARCHY_DEPTH) continue;
-          if (n.type === 'group') {
-            mergeCandidate = n;
-            break;
-          }
-          if (!mergeCandidate) mergeCandidate = n;
-        }
-
-        const candidateId = mergeCandidate?.id ?? null;
-        if (candidateId !== mergeCandidateRef.current) {
-          clearMergeTimer();
-          mergeCandidateRef.current = candidateId;
-          if (candidateId) {
-            setDragState((s) =>
-              s && s.dragId === dragId
-                ? { ...s, mergeCandidatePending: candidateId, mergeTarget: null }
-                : s,
-            );
-            mergeTimerRef.current = window.setTimeout(() => {
-              setDragState((s) =>
-                s && s.dragId === dragId
-                  ? { ...s, mergeCandidatePending: null, mergeTarget: candidateId }
-                  : s,
-              );
-            }, mergeHoverMs);
-          } else {
-            setDragState((s) =>
-              s && (s.mergeTarget || s.mergeCandidatePending)
-                ? { ...s, mergeTarget: null, mergeCandidatePending: null }
-                : s,
-            );
-          }
-        }
-      }
-
-      if (draggedNode.parentId) {
-        const parentRfNode = rf.getNode(draggedNode.parentId);
-        const pw = parentRfNode?.measured?.width ?? parentRfNode?.width ?? GROUP_MIN_W;
-        const ph = parentRfNode?.measured?.height ?? parentRfNode?.height ?? GROUP_MIN_H;
-        const draggedW = draggedNode.width ?? CHILD_DEFAULT_W;
-        const draggedH = draggedNode.height ?? CHILD_DEFAULT_H;
-        const cx = draggedNode.position.x + draggedW / 2;
-        const cy = draggedNode.position.y + draggedH / 2;
-        const escaped =
-          cx < -UNGROUP_ESCAPE_PX ||
-          cy < -UNGROUP_ESCAPE_PX ||
-          cx > pw + UNGROUP_ESCAPE_PX ||
-          cy > ph + UNGROUP_ESCAPE_PX;
-        const parentId = draggedNode.parentId;
-        if (escaped) {
-          if (ungroupCandidateRef.current !== parentId) {
-            clearUngroupTimer();
-            ungroupCandidateRef.current = parentId;
-            ungroupTimerRef.current = window.setTimeout(() => {
-              setDragState((s) =>
-                s && s.dragId === dragId
-                  ? { ...s, ungroupFrom: parentId }
-                  : s,
-              );
-            }, ungroupConfirmMs);
-          }
-        } else {
-          if (ungroupCandidateRef.current) {
-            clearUngroupTimer();
-            setDragState((s) =>
-              s && s.ungroupFrom ? { ...s, ungroupFrom: null } : s,
-            );
-          }
-        }
-      }
-    },
-    [
-      rf,
-      clearMergeTimer,
-      clearUngroupTimer,
-      mergeHoverMs,
-      ungroupConfirmMs,
-      depthById,
-      subtreeHeightById,
-      viewportScope,
-    ],
-  );
   const onNodeDragStart = useCallback(
     (_evt: React.MouseEvent, node: RFNode) => {
       const startsNewGesture = !draggingRef.current;
       draggingRef.current = true;
-      lastDragAnalysisAtRef.current = Number.NEGATIVE_INFINITY;
+      setIsNodeDragging(true);
       if (startsNewGesture) {
         multiDragSessionRef.current.start(selectedIdsRef.current);
       }
@@ -499,31 +313,19 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
         }
       }
       dragDescendantIdsRef.current = descSet;
-      setDragState({ dragId: node.id, mergeCandidatePending: null, mergeTarget: null, ungroupFrom: null });
     },
     [parentMap],
   );
   const onNodeDragStop = useCallback(
     (_evt: React.MouseEvent, draggedNode: RFNode) => {
       const dragId = draggedNode.id;
-      const state = dragStateRef.current;
-      let mergeTarget = state?.mergeTarget ?? null;
-      if (
-        mergeTarget &&
-        !rf.getIntersectingNodes(draggedNode).some((node) => node.id === mergeTarget)
-      ) {
-        mergeTarget = null;
-      }
-      const ungroupFrom = state?.ungroupFrom ?? null;
-      setDragState(null);
-      clearMergeTimer();
-      clearUngroupTimer();
       draggingRef.current = false;
+      setIsNodeDragging(false);
       const multiStopAction = multiDragSessionRef.current.stop(dragId);
       if (multiStopAction === 'ignore') return;
       if (multiStopAction === 'commit') {
         isMultiDragRef.current = false;
-        const selected = rfNodes.filter((n) => n.selected && n.id !== GHOST_ID);
+        const selected = rfNodes.filter((n) => n.selected);
         const selectedIds = new Set(selected.map((n) => n.id));
         const translationById = new Map<string, { dx: number; dy: number }>();
         const selectedByParent = new Map<string, RFTaskNode[]>();
@@ -539,13 +341,12 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
             id: node.id,
             x: node.position.x,
             y: node.position.y,
-            w: node.width ?? (node.type === 'group' ? GROUP_MIN_W : CHILD_DEFAULT_W),
-            h: node.height ?? (node.type === 'group' ? GROUP_MIN_H : CHILD_DEFAULT_H),
+            w: node.measured?.width ?? node.width ?? (node.type === 'group' ? GROUP_MIN_W : CHILD_DEFAULT_W),
+            h: node.measured?.height ?? node.height ?? (node.type === 'group' ? GROUP_MIN_H : CHILD_DEFAULT_H),
           });
           const occupied = rfNodes
             .filter(
               (node) =>
-                node.id !== GHOST_ID &&
                 !selectedIds.has(node.id) &&
                 (node.parentId ?? '') === (parentId ?? ''),
             )
@@ -595,9 +396,43 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
         return;
       }
 
+      let ungroupFrom: string | null = null;
+      if (draggedNode.parentId) {
+        const parentNode = rf.getNode(draggedNode.parentId);
+        const parentWidth = parentNode?.measured?.width ?? parentNode?.width ?? GROUP_MIN_W;
+        const parentHeight = parentNode?.measured?.height ?? parentNode?.height ?? GROUP_MIN_H;
+        const draggedWidth = draggedNode.measured?.width ?? draggedNode.width ?? CHILD_DEFAULT_W;
+        const draggedHeight = draggedNode.measured?.height ?? draggedNode.height ?? CHILD_DEFAULT_H;
+        const centerX = draggedNode.position.x + draggedWidth / 2;
+        const centerY = draggedNode.position.y + draggedHeight / 2;
+        if (
+          centerX < -UNGROUP_ESCAPE_PX ||
+          centerY < -UNGROUP_ESCAPE_PX ||
+          centerX > parentWidth + UNGROUP_ESCAPE_PX ||
+          centerY > parentHeight + UNGROUP_ESCAPE_PX
+        ) {
+          ungroupFrom = draggedNode.parentId;
+        }
+      }
+
       if (ungroupFrom && draggedNode.parentId === ungroupFrom) {
         ascendOneLevel(dragId);
         return;
+      }
+
+      const draggedSubtreeHeight = subtreeHeightById.get(dragId) ?? 0;
+      let mergeTarget: string | null = null;
+      for (const candidate of rf.getIntersectingNodes(draggedNode)) {
+        if (candidate.id === dragId) continue;
+        if (dragDescendantIdsRef.current.has(candidate.id)) continue;
+        if (draggedNode.parentId === candidate.id) continue;
+        const candidateDepth = depthById.get(candidate.id) ?? 0;
+        if (candidateDepth + draggedSubtreeHeight + 2 > MAX_HIERARCHY_DEPTH) continue;
+        if (candidate.type === 'group') {
+          mergeTarget = candidate.id;
+          break;
+        }
+        if (!mergeTarget) mergeTarget = candidate.id;
       }
 
       if (mergeTarget) {
@@ -608,7 +443,10 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
           for (const cid of childIds) {
             if (cid === dragId) continue;
             const c = rf.getNode(cid);
-            if (c) offsetY = Math.max(offsetY, c.position.y + CHILD_DEFAULT_H + 12);
+            if (c) {
+              const childHeight = c.measured?.height ?? c.height ?? CHILD_DEFAULT_H;
+              offsetY = Math.max(offsetY, c.position.y + childHeight + 12);
+            }
           }
           setParent(dragId, mergeTarget, { x: GROUP_PADDING_X, y: offsetY });
           return;
@@ -645,7 +483,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
         }
       }
     },
-    [rf, parentMap, setParent, ascendOneLevel, updateTasksBulk, normalizeGroupBounds, rfNodes, clearMergeTimer, clearUngroupTimer, resolveDropPushAway],
+    [rf, parentMap, setParent, ascendOneLevel, updateTasksBulk, normalizeGroupBounds, rfNodes, resolveDropPushAway, depthById, subtreeHeightById],
   );
   const isValidConnection = useCallback(
     (c: Connection | RFEdge) => {
@@ -756,10 +594,15 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     const groupIds = [...parentMap.keys()].sort(
       (left, right) => (depthById.get(right) ?? 0) - (depthById.get(left) ?? 0),
     );
-    const groupLayout = layoutNestedGroupChildren(rfNodes, groupIds, parentMap, (node) => ({
-      width: typeof node.width === 'number' ? node.width : CHILD_DEFAULT_W,
-      height: typeof node.height === 'number' ? node.height : CHILD_DEFAULT_H,
-    }));
+    const groupLayout = layoutNestedGroupChildren(rfNodes, groupIds, parentMap, (node) => {
+      const geometry = nodeGeometryById.get(node.id);
+      return geometry
+        ? { width: geometry.displayedSize.w, height: geometry.displayedSize.h }
+        : {
+            width: typeof node.width === 'number' ? node.width : CHILD_DEFAULT_W,
+            height: typeof node.height === 'number' ? node.height : CHILD_DEFAULT_H,
+          };
+    });
     const workingNodes = rfNodes.map((node) => ({
       ...node,
       position: groupLayout.positions.get(node.id)!,
@@ -783,15 +626,19 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
       return { id: node.id, patch: { x: position.x, y: position.y } };
     });
     updateTasksBulk(patches);
-  }, [rfNodes, rfEdges, updateTasksBulk, parentMap, depthById]);
+  }, [rfNodes, rfEdges, updateTasksBulk, parentMap, depthById, nodeGeometryById]);
   const autoLayoutCheckedPagesRef = useRef(new Set<string>());
   useEffect(() => {
-    if (!activePageId || !claimPageForAutoLayout(
-      autoLayoutCheckedPagesRef.current,
-      activePageId,
-      nodes.map((node) => node.id),
-      rfNodes.map((node) => node.id),
-    )) return;
+    const nodeIds = nodes.map((node) => node.id);
+    if (
+      !activePageId ||
+      !claimPageForAutoLayout(
+        autoLayoutCheckedPagesRef.current,
+        activePageId,
+        nodeIds,
+        rfNodes,
+      )
+    ) return;
     const allAtOrigin = nodes.length > 0 && nodes.every((n) => !n.x && !n.y);
     if (allAtOrigin) applyAutoLayout();
   }, [activePageId, applyAutoLayout, nodes, rfNodes]);
@@ -825,10 +672,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     };
   }, [updateViewportCenter, setViewportCenter]);
   const viewportNodeIds = useMemo(() => nodes.map((node) => node.id), [nodes]);
-  const viewportRenderedNodes = useMemo(
-    () => rfNodes.filter((node) => node.id !== GHOST_ID),
-    [rfNodes],
-  );
+  const viewportRenderedNodes = rfNodes;
   const minZoom = viewportScope === 'mobile' ? MOBILE_MIN_ZOOM : DESKTOP_MIN_ZOOM;
   const fitMinZoom = viewportScope === 'mobile' ? MOBILE_FIT_MIN_ZOOM : DESKTOP_MIN_ZOOM;
   const {
@@ -1003,7 +847,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     ];
   }, [selectionMenu, nodes, groupTasks, setParent, detachTasks, updateTasksBulk, deleteTasks, promptMoveSelectionToPage, insertBetween]);
   return (
-    <div ref={containerRef} className={`graph-surface relative h-full w-full${isViewportMoving ? ' graph-viewport-moving' : ''}${dragState ? ' graph-node-dragging' : ''}${isViewportRestoring ? ' graph-viewport-restoring' : ''}`} style={{ touchAction: 'none', WebkitTouchCallout: 'none' }} onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
+    <div ref={containerRef} className={`graph-surface relative h-full w-full${isViewportMoving ? ' graph-viewport-moving' : ''}${isNodeDragging ? ' graph-node-dragging' : ''}${isViewportRestoring ? ' graph-viewport-restoring' : ''}`} style={{ touchAction: 'none', WebkitTouchCallout: 'none' }} onMouseMove={handleContainerMouseMove} onKeyDown={handleKeyDown} tabIndex={0}>
       <div className="graph-toolbar absolute left-3 right-3 top-3 z-10 flex items-center justify-center gap-2 rounded-xl border border-border bg-card/90 p-2 backdrop-blur lg:right-auto lg:justify-start lg:rounded-lg">
         <span className="text-xs text-muted-foreground hidden lg:inline">
           拖 <b>●</b> 连边；拖到空白处创建新节点；<kbd className="text-[10px]">Shift</kbd>+左键框选
@@ -1037,12 +881,11 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
       </div>
 
       <ReactFlow
-        nodes={renderNodes}
+        nodes={rfNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onNodeDragStart={onNodeDragStart}
-        onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}
         onConnectStart={onConnectStart}

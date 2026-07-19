@@ -5,7 +5,6 @@ const { api, toast, session } = vi.hoisted(() => ({
   session: { generation: 0 },
   api: {
     loadMeta: vi.fn(),
-    updateSettings: vi.fn(),
     loadPage: vi.fn(),
     savePage: vi.fn(),
     createPage: vi.fn(),
@@ -51,10 +50,6 @@ function makeMeta(revision: number, activePageId: string, pages: PageInfo[]): Me
     revision,
     activePageId,
     pages,
-    settings: {
-      mergeHoverMs: 600,
-      ungroupConfirmMs: 1200,
-    },
   };
 }
 

@@ -12,6 +12,7 @@ export const TaskSchema = z.object({
   x: z.number().optional(),
   y: z.number().optional(),
   width: z.number().optional(),
+  height: z.number().optional(),
   /**
    * 父任务 id（分组/compound node 用）。
    * - 当一个任务有 parentId 时，它在图中被渲染到父节点的容器内，
@@ -66,13 +67,6 @@ export const PageInfoSchema = z.object({
 });
 
 /** 全局工作区设置 —— 目前只放拖拽时长，未来可扩。 */
-export const WorkspaceSettingsSchema = z
-  .object({
-    mergeHoverMs: z.number().int().min(0).max(5000).optional(),
-    ungroupConfirmMs: z.number().int().min(0).max(5000).optional(),
-  })
-  .optional();
-
 /**
  * 工作区元信息（`data/meta.json`）。
  * `version` 字段是迁移判据 —— 老数据若检测到此文件存在，就认为已经是 v2。
@@ -82,7 +76,6 @@ export const MetaSchema = z.object({
   revision: z.number().int().min(0).default(0),
   activePageId: z.string().min(1),
   pages: z.array(PageInfoSchema),
-  settings: WorkspaceSettingsSchema,
 });
 
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
@@ -91,7 +84,6 @@ export type Edge = z.infer<typeof EdgeSchema>;
 export type Graph = z.infer<typeof GraphSchema>;
 export type PageData = z.infer<typeof PageDataSchema>;
 export type PageInfo = z.infer<typeof PageInfoSchema>;
-export type WorkspaceSettings = NonNullable<z.infer<typeof WorkspaceSettingsSchema>>;
 export type Meta = z.infer<typeof MetaSchema>;
 
 /** 聚合 `/api/all-tasks` 的返回体。附上页面冗余信息方便左侧列表直接渲染。 */

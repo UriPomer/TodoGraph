@@ -1,12 +1,13 @@
 import { memo, useState, useRef, useEffect } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Check, Trash2, Pencil } from 'lucide-react';
+import { Trash2, Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { dialog } from '@/components/ui/dialog-store';
 import { MAX_TITLE_LENGTH } from '@/lib/measureText';
 import type { TaskStatus } from '@todograph/shared';
+import { TaskStatusButton } from './TaskStatusButton';
 
 export interface TaskNodeData extends Record<string, unknown> {
   title: string;
@@ -14,8 +15,6 @@ export interface TaskNodeData extends Record<string, unknown> {
   ready?: boolean;
   recommended?: boolean;
   description?: string;
-  isMergeTarget?: boolean;
-  isMergePending?: boolean;
   nodeWidth?: number;
 }
 
@@ -56,41 +55,19 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
         d.ready && d.status !== 'done' && 'border-[hsl(var(--success))]',
         d.recommended && 'border-[hsl(var(--success))] shadow-[0_0_10px_hsl(var(--success)/0.4)]',
         selected && 'ring-2 ring-[hsl(var(--ring))]',
-        d.isMergeTarget && 'opacity-70',
-        d.isMergePending && 'outline outline-2 outline-dashed outline-[hsl(var(--primary))] outline-offset-2',
       )}
       style={{ width: d.nodeWidth ?? 180 }}
     >
       <Handle type="target" position={Position.Left} />
 
-      <button
-        className={cn(
-          'relative flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full',
-          'transition-[transform] duration-150 ease-out',
-          'hover:scale-110 active:scale-90',
-        )}
+      <TaskStatusButton
+        status={d.status}
         onClick={(e) => {
           if (e.shiftKey) return;
           e.stopPropagation();
           toggleStatus(id);
         }}
-        title="切换状态"
-      >
-        <span
-          className={cn(
-            'absolute inset-0 rounded-full border',
-            d.status === 'todo' && 'border-muted-foreground/60',
-            d.status === 'doing' && 'border-[hsl(var(--primary))]',
-            d.status === 'done' && 'border-transparent bg-muted-foreground/70',
-          )}
-        />
-        {d.status === 'doing' && (
-          <span className="relative h-[5px] w-[5px] rounded-full bg-[hsl(var(--primary))]" />
-        )}
-        {d.status === 'done' && (
-          <Check className="relative h-3 w-3 text-[hsl(var(--card))]" strokeWidth={3} />
-        )}
-      </button>
+      />
 
       {editing ? (
         <input
@@ -124,7 +101,7 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
           )}
           title="双击编辑标题"
         >
-          <LinkifiedText text={d.title} className="whitespace-normal break-words" />
+          <LinkifiedText text={d.title} className="whitespace-normal break-words" compactUrls />
         </div>
       )}
 

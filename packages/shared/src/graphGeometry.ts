@@ -80,9 +80,15 @@ export const CHILD_DEFAULT_H = 56;
 export const GROUP_MIN_W = 220;
 export const GROUP_MIN_H = 140;
 export const GROUP_COLLAPSED_MAX_H = 420;
+export const GROUP_COLLAPSE_CHILD_THRESHOLD = 10;
 
-export function capGroupSize(size: { w: number; h: number }): { w: number; h: number } {
-  return { w: size.w, h: Math.min(size.h, GROUP_COLLAPSED_MAX_H) };
+export function capGroupSize(
+  size: { w: number; h: number },
+  childCount: number,
+): { w: number; h: number } {
+  return childCount > GROUP_COLLAPSE_CHILD_THRESHOLD
+    ? { w: size.w, h: Math.min(size.h, GROUP_COLLAPSED_MAX_H) }
+    : size;
 }
 
 export function computeGroupSize(

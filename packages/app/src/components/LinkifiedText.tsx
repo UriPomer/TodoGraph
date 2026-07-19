@@ -1,11 +1,12 @@
-import { parseLinks } from '@/lib/linkify';
+import { compactUrlLabel, parseLinks } from '@/lib/linkify';
 
 interface Props {
   text: string;
   className?: string;
+  compactUrls?: boolean;
 }
 
-export function LinkifiedText({ text, className }: Props) {
+export function LinkifiedText({ text, className, compactUrls = false }: Props) {
   const segments = parseLinks(text);
   if (segments.length === 0) return null;
   if (segments.length === 1 && !segments[0]!.isUrl) {
@@ -17,7 +18,7 @@ export function LinkifiedText({ text, className }: Props) {
         seg.isUrl ? (
           <span
             key={i}
-            className="text-[hsl(var(--link))] underline cursor-pointer"
+            className={`text-[hsl(var(--link))] underline cursor-pointer${compactUrls ? ' whitespace-nowrap' : ''}`}
             onMouseDown={(e) => {
               if (e.metaKey || e.ctrlKey) {
                 e.stopPropagation();
@@ -31,7 +32,7 @@ export function LinkifiedText({ text, className }: Props) {
               }
             }}
           >
-            {seg.text}
+            {compactUrls ? compactUrlLabel(seg.text) : seg.text}
           </span>
         ) : (
           <span key={i}>{seg.text}</span>

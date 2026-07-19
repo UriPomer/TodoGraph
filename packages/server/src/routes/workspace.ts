@@ -102,12 +102,6 @@ const RestoreBackupBodySchema = z.object({
     .optional(),
 });
 
-const UpdateSettingsBodySchema = z.object({
-  mergeHoverMs: z.number().int().min(0).max(5000).optional(),
-  ungroupConfirmMs: z.number().int().min(0).max(5000).optional(),
-  expectedRevision: z.number().int().min(0).optional(),
-});
-
 const WorkspaceImportSchema = z.object({
   exportedAt: z.string(),
   meta: MetaSchema,
@@ -143,31 +137,6 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   app.get('/api/meta', async (req) => {
     const repo = getRepo(getAuthenticatedUserId(req));
     return repo.loadMeta();
-  });
-
-  app.patch('/api/meta/settings', async (req, reply) => {
-    const repo = getRepo(getAuthenticatedUserId(req));
-    const parsed = UpdateSettingsBodySchema.safeParse(req.body);
-    if (!parsed.success) {
-      reply.status(400);
-      return { ok: false, error: 'invalid payload', issues: parsed.error.issues };
-    }
-    try {
-      const nextMeta = await repo.updateSettings(
-        {
-          mergeHoverMs: parsed.data.mergeHoverMs,
-          ungroupConfirmMs: parsed.data.ungroupConfirmMs,
-        },
-        parsed.data.expectedRevision,
-      );
-      return { ok: true, meta: nextMeta };
-    } catch (err) {
-      if (err instanceof MetaVersionConflictError) {
-        reply.status(409);
-        return { ok: false, error: err.message, serverRevision: err.serverRevision };
-      }
-      throw err;
-    }
   });
 
   app.get<{ Params: { id: string } }>('/api/pages/:id', async (req, reply) => {

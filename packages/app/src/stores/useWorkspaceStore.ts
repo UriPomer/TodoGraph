@@ -3,7 +3,6 @@ import type {
   AllTasksItem,
   Meta,
   PageInfo,
-  WorkspaceSettings,
 } from '@todograph/shared';
 import { api, getApiSessionGeneration, resetApiSession } from '@/api/client';
 import { toast } from '@/components/ui/toaster-store';
@@ -35,9 +34,6 @@ interface WorkspaceStore {
     nodeIds: string[],
     target: { pageId?: string; newPageTitle?: string },
   ) => Promise<string | null>;
-
-  // ---- settings ----
-  updateSettings: (settings: WorkspaceSettings) => Promise<void>;
 
   // ---- aggregation ----
   refreshAllTasks: () => Promise<void>;
@@ -415,18 +411,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         }
         toast.error('移动节点失败', String((err as Error).message));
         return null;
-      }
-    },
-
-    updateSettings: async (settings) => {
-      const generation = getApiSessionGeneration();
-      const meta = get().meta;
-      try {
-        const nextMeta = await api.updateSettings(settings, meta?.revision);
-        if (!isCurrentSession(generation)) return;
-        set({ meta: nextMeta });
-      } catch (err) {
-        await handleWorkspaceError(generation, '保存设置失败', err);
       }
     },
 

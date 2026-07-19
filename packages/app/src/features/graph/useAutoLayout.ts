@@ -19,23 +19,27 @@ export function layoutChildrenInTwoColumns<NodeData extends Record<string, unkno
   const ordered = [...children].sort(
     (left, right) => left.position.y - right.position.y || left.position.x - right.position.x,
   );
+  const columnCount = ordered.length > 6 ? 2 : 1;
   const sizes = ordered.map(sizeOf);
   const firstColumnWidth = Math.max(
     0,
-    ...sizes.filter((_, index) => index % 2 === 0).map((size) => size.width),
+    ...sizes.filter((_, index) => index % columnCount === 0).map((size) => size.width),
   );
   const positions = new Map<string, { x: number; y: number }>();
   const rects: Array<{ x: number; y: number; w: number; h: number }> = [];
   let y = GROUP_PADDING_Y;
 
-  for (let row = 0; row * 2 < ordered.length; row++) {
-    const firstIndex = row * 2;
-    const rowIndexes = [firstIndex, firstIndex + 1].filter((index) => index < ordered.length);
+  for (let row = 0; row * columnCount < ordered.length; row++) {
+    const firstIndex = row * columnCount;
+    const rowIndexes = Array.from(
+      { length: columnCount },
+      (_, offset) => firstIndex + offset,
+    ).filter((index) => index < ordered.length);
     const rowHeight = Math.max(...rowIndexes.map((index) => sizes[index]!.height));
     for (const index of rowIndexes) {
       const node = ordered[index]!;
       const size = sizes[index]!;
-      const x = index % 2 === 0
+      const x = index % columnCount === 0
         ? GROUP_PADDING_X
         : GROUP_PADDING_X + firstColumnWidth + GROUP_CHILD_GAP_X;
       positions.set(node.id, { x, y });
@@ -69,7 +73,7 @@ export function layoutNestedGroupChildren<NodeData extends Record<string, unknow
       });
     const layout = layoutChildrenInTwoColumns(children, (node) => sizes.get(node.id)!);
     for (const [id, position] of layout.positions) positions.set(id, position);
-    const displayedSize = capGroupSize(layout.size);
+    const displayedSize = capGroupSize(layout.size, children.length);
     sizes.set(parentId, { width: displayedSize.w, height: displayedSize.h });
   }
 

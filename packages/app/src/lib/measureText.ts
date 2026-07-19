@@ -1,4 +1,5 @@
 import { MAX_TASK_TITLE_LENGTH } from '@todograph/shared';
+import { compactLinksForDisplay } from './linkify';
 
 const canvas = typeof document !== 'undefined'
   ? document.createElement('canvas')
@@ -15,7 +16,7 @@ export const MAX_TITLE_LENGTH = MAX_TASK_TITLE_LENGTH;
 export function measureTextWidth(text: string): number {
   if (!ctx) return MIN_LEAF_WIDTH;
   ctx.font = FONT;
-  const measured = ctx.measureText(text).width;
+  const measured = ctx.measureText(compactLinksForDisplay(text)).width;
   // Padding for: px-3(24) + gap-2×3(24) + status dot(14) + pencil(12) + delete(14) = 88, round to 90 for safety
   const padding = 90;
   const total = Math.ceil(measured + padding);

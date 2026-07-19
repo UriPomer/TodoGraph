@@ -349,36 +349,12 @@ body {
 
 /* ===== 拖拽动画 ===== */
 
-@keyframes mergeGhostExpand {
-  0% { transform: scale(0.55); opacity: 0; }
-  60% { transform: scale(1.06); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
-}
-@keyframes mergeGhostBreath {
-  0%, 100% { box-shadow: 0 0 20px hsl(var(--primary) / 0.25); }
-  50% { box-shadow: 0 0 32px hsl(var(--primary) / 0.5); }
-}
-.merge-ghost {
-  transform-origin: 50% 50%;
-  animation: mergeGhostExpand 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both,
-             mergeGhostBreath 1.6s ease-in-out 220ms infinite;
-}
-
 @keyframes childSettleIn {
   from { transform: scale(0.9); opacity: 0.4; }
   to { transform: scale(1); opacity: 1; }
 }
 .react-flow__node.settling {
   animation: childSettleIn 180ms ease-out;
-}
-
-@keyframes ungroupWarn {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-2px); }
-  75% { transform: translateX(2px); }
-}
-.group-ungroup-warn {
-  animation: ungroupWarn 180ms ease-in-out infinite;
 }
 
 @keyframes unparentPulse {

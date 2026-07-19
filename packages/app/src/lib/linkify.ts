@@ -1,4 +1,5 @@
 const URL_RE = /https?:\/\/\S+/gi;
+const COMPACT_URL_CHARS = 12;
 
 export interface TextSegment {
   text: string;
@@ -22,4 +23,18 @@ export function parseLinks(text: string): TextSegment[] {
     segments.push({ text: text.slice(lastIndex), isUrl: false });
   }
   return segments;
+}
+
+export function compactUrlLabel(url: string): string {
+  const schemeEnd = url.indexOf('://');
+  const content = schemeEnd >= 0 ? url.slice(schemeEnd + 3) : url;
+  const preview = content.slice(0, COMPACT_URL_CHARS).replace(/[./]+$/, '');
+  return `${preview}...`;
+}
+
+/** The exact text shown by compact graph nodes. */
+export function compactLinksForDisplay(text: string): string {
+  return parseLinks(text)
+    .map((segment) => segment.isUrl ? compactUrlLabel(segment.text) : segment.text)
+    .join('');
 }

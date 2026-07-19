@@ -64,4 +64,27 @@ describe('task list model', () => {
     const model = buildTaskListModel(nodes, { nodes, edges: [] }, new Set(['ready']), undefined, {});
     expect(model.done.map(({ task: item }) => item.id)).toEqual(['first', 'second']);
   });
+
+  it('moves completed children of an unfinished parent into the done section', () => {
+    const parent = task('parent');
+    const doneChild = { ...task('done-child', parent.id), status: 'done' as const };
+    const todoChild = task('todo-child', parent.id);
+    const nodes = [parent, doneChild, todoChild];
+
+    const model = buildTaskListModel(
+      nodes,
+      { nodes, edges: [] },
+      new Set(nodes.map(({ id }) => id)),
+      undefined,
+      {},
+    );
+
+    expect(model.ready.map(({ task: item, depth }) => [item.id, depth])).toEqual([
+      ['parent', 0],
+      ['todo-child', 1],
+    ]);
+    expect(model.done.map(({ task: item, depth }) => [item.id, depth])).toEqual([
+      ['done-child', 0],
+    ]);
+  });
 });

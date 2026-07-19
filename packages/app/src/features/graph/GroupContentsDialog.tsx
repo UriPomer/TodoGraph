@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import type { TaskStatus } from '@todograph/shared';
 import { cn } from '@/lib/utils';
+import { TaskStatusButton } from './TaskStatusButton';
 
 export interface GroupDescendant {
   id: string;
@@ -113,25 +114,15 @@ export function GroupContentsDialog({ title, descendants, returnFocus, onToggleS
                 className="rounded-xl border border-border bg-background/60 p-3"
               >
                 <div className="flex items-start gap-2.5">
-                  <button
-                    type="button"
+                  <TaskStatusButton
+                    status={child.status}
+                    touchTarget
                     aria-label={`推进 ${child.title} 状态`}
-                    title="切换状态"
-                    className={cn(
-                      'relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl active:bg-foreground/10 sm:h-8 sm:w-8',
-                    )}
                     onClick={(event) => {
                       event.stopPropagation();
                       onToggleStatus(child.id);
                     }}
-                  >
-                    <span className={cn(
-                      'h-3 w-3 rounded-full',
-                      child.status === 'todo' && 'border border-muted-foreground/70',
-                      child.status === 'doing' && 'bg-[hsl(var(--primary))]',
-                      child.status === 'done' && 'bg-muted-foreground/60',
-                    )} />
-                  </button>
+                  />
                   <div className="min-w-0 flex-1">
                     <h3
                       className={cn(

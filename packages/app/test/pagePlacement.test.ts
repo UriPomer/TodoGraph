@@ -23,11 +23,21 @@ const task = (id: string, x: number, y: number, parentId?: string, title = id): 
 });
 
 describe('pagePlacement', () => {
-  it('uses the folded group height for shared collision geometry', () => {
+  it('keeps ten children expanded and folds the eleventh', () => {
+    const tenChildren = Array.from({ length: 10 }, (_, index) =>
+      task(`child-${index}`, 24, 60 + index * 100, 'group'),
+    );
+    const expandedGeometry = computeNodeGeometryMap([
+      task('group', 0, 0),
+      ...tenChildren,
+    ]).get('group')!;
+    expect(expandedGeometry.displayedSize).toEqual(expandedGeometry.fullSize);
+    expect(expandedGeometry.collapsed).toBe(false);
+
     const nodes = [
       task('group', 0, 0),
-      task('top', 24, 60, 'group'),
-      task('far', 24, 1_000, 'group'),
+      ...tenChildren,
+      task('child-10', 24, 1_060, 'group'),
     ];
     const sizes = computeNodeSizeMap(nodes);
     const geometry = computeNodeGeometryMap(nodes).get('group')!;
@@ -42,6 +52,14 @@ describe('pagePlacement', () => {
       displayedSize: { w: 180, h: 56 },
       collapsed: false,
     });
+  });
+
+  it('uses measured leaf height when sizing its parent group', () => {
+    const longLink = { ...task('long-link', 24, 60, 'group'), height: 240 };
+    const geometry = computeNodeGeometryMap([task('group', 0, 0), longLink]);
+
+    expect(geometry.get('long-link')?.displayedSize.h).toBe(240);
+    expect(geometry.get('group')?.displayedSize.h).toBe(360);
   });
 
   it('rejects a parent cycle instead of inventing fallback geometry', () => {

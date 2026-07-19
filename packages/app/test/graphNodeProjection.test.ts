@@ -34,4 +34,22 @@ describe('graph node projection', () => {
     expect(second.dataById.get('child')).toBe(first.dataById.get('child'));
     expect(second.nodes.find((node) => node.id === 'child')?.position.x).toBe(120);
   });
+
+  it('derives leaf width from the compact URL label instead of stale persisted width', () => {
+    const urlTask: Task = {
+      id: 'link',
+      title: 'https://www.example.com/a/very/long/path',
+      status: 'todo',
+      width: 400,
+    };
+    const projection = buildGraphNodeProjection({
+      nodes: [urlTask],
+      hierarchy: buildHierarchyMetrics([urlTask]),
+      geometryById: computeNodeGeometryMap([urlTask]),
+      readySet: new Set(),
+    });
+    const node = projection.nodes[0]!;
+    expect(node.data.nodeWidth).toBe(180);
+    expect(node.style).toMatchObject({ width: 180 });
+  });
 });

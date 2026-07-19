@@ -1,7 +1,7 @@
 import { memo, useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react';
-import { Check, ChevronDown, ChevronUp, GripVertical } from 'lucide-react';
+import { ChevronDown, ChevronUp, GripVertical } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { useTaskStore } from '@/stores/useTaskStore';
@@ -9,6 +9,7 @@ import { dialog } from '@/components/ui/dialog-store';
 import type { TaskStatus } from '@todograph/shared';
 import { GroupContentsDialog, type GroupDescendant } from './GroupContentsDialog';
 import { centeredDropPosition, isOutsideRect } from './collapsedGroupDrag';
+import { TaskStatusButton } from './TaskStatusButton';
 
 export interface GroupNodeData extends Record<string, unknown> {
   title: string;
@@ -18,12 +19,6 @@ export interface GroupNodeData extends Record<string, unknown> {
   description?: string;
   /** 子节点个数，用于标题徽标显示。 */
   childrenCount: number;
-  /** 是否是拖拽合并的目标节点（ghost overlay 覆盖中） */
-  isMergeTarget?: boolean;
-  /** 合并候选（timer 计时中）：虚线外框预警 */
-  isMergePending?: boolean;
-  /** 子节点拖离父框超过阈值 —— 即将 ungroup 的警告态 */
-  isUngroupWarn?: boolean;
   isHeightCollapsed?: boolean;
   descendants?: GroupDescendant[];
 }
@@ -150,12 +145,6 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
         d.status === 'done' && 'opacity-60',
         d.recommended && 'shadow-[0_0_12px_hsl(var(--success)/0.3)]',
         selected && 'ring-2 ring-[hsl(var(--ring))]',
-        // 合并目标：ghost overlay 负责发光，自己只需略降亮度
-        d.isMergeTarget && 'opacity-70',
-        // 合并候选（timer 运行中）：虚线外框预警
-        d.isMergePending && 'outline outline-2 outline-dashed outline-[hsl(var(--primary))] outline-offset-2',
-        // ungroup 警告：红色边框 + 抖动（class 在 globals.css）
-        d.isUngroupWarn && 'border-[hsl(var(--destructive))] group-ungroup-warn',
       )}
       title={d.description || undefined}
       onDoubleClick={async (e) => {
@@ -184,33 +173,14 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
       >
-        <button
-          type="button"
-          className={cn(
-            'nodrag nopan relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl lg:h-[18px] lg:w-[18px] lg:rounded-full',
-            'transition-transform duration-150 hover:scale-110 active:scale-90',
-          )}
+        <TaskStatusButton
+          status={d.status}
+          className="nodrag nopan"
           onClick={(e) => {
             e.stopPropagation();
             toggleStatus(id);
           }}
-          title="切换状态"
-        >
-          <span
-            className={cn(
-              'absolute inset-0 rounded-full border',
-              d.status === 'todo' && 'border-muted-foreground/60',
-              d.status === 'doing' && 'border-[hsl(var(--primary))]',
-              d.status === 'done' && 'border-transparent bg-muted-foreground/70',
-            )}
-          />
-          {d.status === 'doing' && (
-            <span className="relative h-[7px] w-[7px] rounded-full bg-[hsl(var(--primary))]" />
-          )}
-          {d.status === 'done' && (
-            <Check className="relative h-3 w-3 text-[hsl(var(--card))]" strokeWidth={3} />
-          )}
-        </button>
+        />
 
         <span
           className={cn(
@@ -224,7 +194,7 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
           }}
           title="双击编辑标题"
         >
-          <LinkifiedText text={d.title} className="truncate" />
+          <LinkifiedText text={d.title} className="truncate" compactUrls />
         </span>
 
         <span className="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground/80">
@@ -245,24 +215,17 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
                   onDoubleClick={(event) => event.stopPropagation()}
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <button
-                      type="button"
-                      className="nodrag nopan nowheel flex h-11 w-11 shrink-0 items-center justify-center rounded-lg active:bg-foreground/10 lg:h-8 lg:w-8"
+                    <TaskStatusButton
+                      status={child.status}
+                      touchTarget
+                      className="nodrag nopan nowheel"
                       aria-label={`推进 ${child.title} 状态`}
-                      title="切换状态"
                       onClick={(event) => {
                         event.stopPropagation();
                         toggleStatus(child.id);
                       }}
                       onDoubleClick={(event) => event.stopPropagation()}
-                    >
-                      <span className={cn(
-                        'h-3 w-3 rounded-full',
-                        child.status === 'todo' && 'border border-muted-foreground/70',
-                        child.status === 'doing' && 'bg-[hsl(var(--primary))]',
-                        child.status === 'done' && 'bg-muted-foreground/60',
-                      )} />
-                    </button>
+                    />
                     <span className={cn('truncate text-xs', child.status === 'done' && 'line-through text-muted-foreground')}>
                       {child.depth > 1 ? `${'·'.repeat(child.depth - 1)} ` : ''}{child.title}
                     </span>

@@ -9,7 +9,6 @@ import {
   type MoveNodesResponse,
   type PageData,
   type PageInfo,
-  type WorkspaceSettings,
 } from '@todograph/shared';
 export interface McpKeyInfo {
   id: string;
@@ -215,12 +214,6 @@ export const api = {
     const res = await apiFetch(`${getApiBase()}/api/meta`);
     const data = await json<unknown>(res);
     return MetaSchema.parse(data);
-  },
-  async updateSettings(settings: WorkspaceSettings, expectedRevision?: number): Promise<Meta> {
-    return mutateMeta('/api/meta/settings', 'PATCH', {
-      ...settings,
-      expectedRevision,
-    });
   },
   // ---- pages ----
   async loadPage(pageId: string): Promise<PageData> {

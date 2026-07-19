@@ -7,15 +7,31 @@ describe('page auto-layout gate', () => {
   it('waits for the current page node set before claiming it', () => {
     const checked = new Set<string>();
     expect(claimPageForAutoLayout(checked, 'a', ['1', '2'], [])).toBe(false);
-    expect(claimPageForAutoLayout(checked, 'a', ['1', '2'], ['1', 'old'])).toBe(false);
-    expect(claimPageForAutoLayout(checked, 'a', ['1', '2'], ['2', '1'])).toBe(true);
+    expect(claimPageForAutoLayout(checked, 'a', ['1', '2'], [
+      { id: '1', measured: { width: 180, height: 56 } },
+      { id: 'old', measured: { width: 180, height: 56 } },
+    ])).toBe(false);
+    expect(claimPageForAutoLayout(checked, 'a', ['1', '2'], [
+      { id: '2', measured: { width: 180, height: 56 } },
+      { id: '1', measured: { width: 180, height: 144 } },
+    ])).toBe(true);
+  });
+
+  it('does not claim a page before visible nodes are measured', () => {
+    const checked = new Set<string>();
+    expect(claimPageForAutoLayout(checked, 'a', ['1'], [{ id: '1' }])).toBe(false);
+    expect(claimPageForAutoLayout(checked, 'a', ['1'], [
+      { id: '1', measured: { width: 180, height: 144 } },
+    ])).toBe(true);
   });
 
   it('claims each synchronized page only once', () => {
     const checked = new Set<string>();
-    expect(claimPageForAutoLayout(checked, 'a', ['1'], ['1'])).toBe(true);
-    expect(claimPageForAutoLayout(checked, 'a', ['1'], ['1'])).toBe(false);
-    expect(claimPageForAutoLayout(checked, 'b', ['2'], ['2'])).toBe(true);
+    const one = [{ id: '1', measured: { width: 180, height: 56 } }];
+    const two = [{ id: '2', measured: { width: 180, height: 56 } }];
+    expect(claimPageForAutoLayout(checked, 'a', ['1'], one)).toBe(true);
+    expect(claimPageForAutoLayout(checked, 'a', ['1'], one)).toBe(false);
+    expect(claimPageForAutoLayout(checked, 'b', ['2'], two)).toBe(true);
   });
 });
 

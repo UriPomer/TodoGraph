@@ -54,6 +54,8 @@ interface TaskStore {
   detachTasks: (ids: readonly string[]) => void;
   /** 批量更新坐标等，避免每次 set 都触发订阅者重渲染。 */
   updateTasksBulk: (patches: Array<{ id: string; patch: Partial<Omit<Task, 'id'>> }>) => void;
+  /** 同步浏览器实测尺寸；属于派生几何，不进入撤销历史。 */
+  syncMeasuredSizes: (measurements: Array<{ id: string; width: number; height: number }>) => void;
   toggleStatus: (id: string) => boolean;
   setStatus: (id: string, status: TaskStatus) => void;
   addEdge: (from: string, to: string) => boolean;
@@ -265,6 +267,7 @@ function patchAffectsGeometry(patch: Partial<Task>): boolean {
   return patch.x !== undefined ||
     patch.y !== undefined ||
     patch.width !== undefined ||
+    patch.height !== undefined ||
     patch.title !== undefined ||
     Object.prototype.hasOwnProperty.call(patch, 'parentId');
 }
@@ -469,6 +472,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
           if (patch.title !== undefined) {
             updated.title = patch.title.slice(0, MAX_TITLE_LENGTH);
             updated.width = measureTextWidth(updated.title);
+            updated.height = undefined;
           }
           return updated;
         });
@@ -508,6 +512,27 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         };
       });
       scheduleSave();
+    },
+    syncMeasuredSizes: (measurements) => {
+      if (measurements.length === 0) return;
+      const sizeById = new Map(measurements.map(({ id, width, height }) => [id, { width, height }]));
+      let changed = false;
+      set((state) => {
+        const changedIds: string[] = [];
+        const next = state.nodes.map((node) => {
+          const size = sizeById.get(node.id);
+          if (!size || (node.width === size.width && node.height === size.height)) return node;
+          changed = true;
+          changedIds.push(node.id);
+          return { ...node, ...size };
+        });
+        if (!changed) return state;
+        const allAtOrigin = next.length > 0 && next.every((node) => !node.x && !node.y);
+        return {
+          nodes: allAtOrigin ? next : repairGeometry(next, changedIds, changedIds),
+        };
+      });
+      if (changed) scheduleSave();
     },
     deleteTask: (id) => get().deleteTasks([id]),
     deleteTasks: (ids) => {

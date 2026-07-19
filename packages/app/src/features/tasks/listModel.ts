@@ -66,13 +66,22 @@ export function buildTaskListModel(
     visited.add(task.id);
     sections[section].push({ task, depth });
     if (!collapsed[task.id]) {
-      for (const child of children.get(task.id) ?? []) append(child, depth + 1, section);
+      for (const child of children.get(task.id) ?? []) {
+        const belongsInSection = section === 'done'
+          ? child.status === 'done'
+          : child.status !== 'done';
+        if (belongsInSection) append(child, depth + 1, section);
+      }
     }
   };
   const priority = (task: Task) =>
     (task.id === recommendedId ? 2 : 0) + (task.status === 'doing' ? 1 : 0);
   for (const section of ['ready', 'blocked', 'done'] as const) {
-    const sectionRoots = roots.filter((root) => sectionOf(root) === section);
+    const sectionRoots = section === 'done'
+      ? nodes.filter((node) =>
+          node.status === 'done' && byId.get(node.parentId ?? '')?.status !== 'done',
+        )
+      : roots.filter((root) => sectionOf(root) === section);
     if (section !== 'done') {
       sectionRoots.sort((a, b) =>
         priority(b) - priority(a) || originalOrder.get(b.id)! - originalOrder.get(a.id)!,

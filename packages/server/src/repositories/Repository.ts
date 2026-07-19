@@ -87,7 +87,6 @@ export interface WorkspaceRepository {
   renamePage(pageId: string, title: string, expectedRevision?: number): Promise<Meta>;
   reorderPages(ids: string[], expectedRevision?: number): Promise<Meta>;
   setActivePage(pageId: string, expectedRevision?: number): Promise<Meta>;
-  updateSettings(settings: NonNullable<Meta['settings']>, expectedRevision?: number): Promise<Meta>;
   exportWorkspace(): Promise<WorkspaceExport>;
   importWorkspace(data: WorkspaceExport): Promise<Meta>;
   /** 将当前页面文件拷贝到 backups/ 目录，保留最近 50 份，按时间戳命名。 */

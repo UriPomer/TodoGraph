@@ -15,7 +15,6 @@ import {
   type Meta,
   type PageData,
   type PageInfo,
-  type WorkspaceSettings,
 } from '@todograph/shared';
 import { isDAG } from '@todograph/core';
 import {
@@ -225,16 +224,6 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       }
       if (meta.activePageId === pageId) return meta;
       const nextMeta = this.bumpMeta({ ...meta, activePageId: pageId });
-      await this.atomicWriteJson(this.metaPath, nextMeta);
-      return nextMeta;
-    });
-  }
-
-  async updateSettings(settings: WorkspaceSettings, expectedRevision?: number): Promise<Meta> {
-    return this.runLocked(async () => {
-      const meta = await this.loadMetaUnlocked();
-      this.assertMetaRevision(meta, expectedRevision);
-      const nextMeta = this.bumpMeta({ ...meta, settings });
       await this.atomicWriteJson(this.metaPath, nextMeta);
       return nextMeta;
     });

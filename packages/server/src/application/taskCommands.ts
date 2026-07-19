@@ -60,14 +60,15 @@ function layoutNewNodes(
     if (seen.has(node.id)) continue;
     seen.add(node.id);
     const width = node.width ?? DEFAULT_WIDTH;
+    const height = node.height ?? DEFAULT_HEIGHT;
     if (newNodeIds.has(node.id)) {
-      graph.setNode(node.id, { width, height: DEFAULT_HEIGHT });
+      graph.setNode(node.id, { width, height });
     } else {
       graph.setNode(node.id, {
         width,
-        height: DEFAULT_HEIGHT,
+        height,
         x: (node.x ?? 0) + width / 2,
-        y: (node.y ?? 0) + DEFAULT_HEIGHT / 2,
+        y: (node.y ?? 0) + height / 2,
         fixed: true,
       });
     }
@@ -80,7 +81,7 @@ function layoutNewNodes(
     const position = graph.node(node.id);
     if (!position) continue;
     node.x = Math.round(position.x - (node.width ?? DEFAULT_WIDTH) / 2);
-    node.y = Math.round(position.y - DEFAULT_HEIGHT / 2);
+    node.y = Math.round(position.y - (node.height ?? DEFAULT_HEIGHT) / 2);
   }
 }
 

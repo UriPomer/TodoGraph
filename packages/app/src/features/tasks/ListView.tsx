@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, useCallback, useEffect } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { MAX_HIERARCHY_DEPTH, type Task } from '@todograph/shared';
 import { buildHierarchyMetrics, useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
@@ -42,6 +43,7 @@ export function ListView() {
     [allTasks, activePageId],
   );
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [doneSectionCollapsed, setDoneSectionCollapsed] = useState(true);
   const [drag, setDrag] = useState<DragState>(null);
   const dragRef = useRef<DragState>(null);
   const updateDrag = useCallback((next: DragState) => {
@@ -370,6 +372,8 @@ export function ListView() {
             dropTargetId={drag?.active ? drag.targetId ?? null : null}
             onDragStart={handleDragStart}
             onAddChild={handleAddChild}
+            sectionCollapsed={doneSectionCollapsed}
+            onToggleSection={() => setDoneSectionCollapsed((value) => !value)}
           />
         </div>
       </div>
@@ -469,29 +473,49 @@ interface SectionProps {
   onDragStart: (e: React.MouseEvent, task: Task) => void;
   onAddChild?: (parentId: string) => void;
   empty?: string;
+  sectionCollapsed?: boolean;
+  onToggleSection?: () => void;
 }
 
-function Section({ title, mobileKey, hint, items, recommendedId, depInfo, childMap, collapsed, onToggleCollapse, dragTaskId, dropTargetId, onDragStart, onAddChild, empty }: SectionProps) {
+function Section({ title, mobileKey, hint, items, recommendedId, depInfo, childMap, collapsed, onToggleCollapse, dragTaskId, dropTargetId, onDragStart, onAddChild, empty, sectionCollapsed = false, onToggleSection }: SectionProps) {
+  const visibleIds = new Set(items.map(({ task }) => task.id));
+  const heading = (
+    <>
+      <span>{title}</span>
+      <span className="inline-flex px-1 text-[10px] font-medium leading-none text-[#70e3d1] lg:hidden">
+        {items.length}
+      </span>
+      {hint && <span className="text-[10px] normal-case tracking-normal opacity-70 max-lg:ml-auto max-lg:text-[#8f8796]">{hint}</span>}
+    </>
+  );
   return (
     <section
       data-mobile-task-section={mobileKey}
       className="mt-5 first:mt-6 max-lg:border-t max-lg:border-[#34303a]/70 max-lg:pt-3"
     >
       <h3 className="mb-1 flex items-baseline gap-2 px-3 text-xs font-medium uppercase tracking-wider text-muted-foreground/70 max-lg:mb-1 max-lg:h-7 max-lg:items-center max-lg:px-1 max-lg:text-[#b7b0be] max-lg:tracking-[0.08em]">
-        <span className="hidden lg:inline">{title}</span>
-        <span className="lg:hidden">{title}</span>
-        <span className="inline-flex px-1 text-[10px] font-medium leading-none text-[#70e3d1] lg:hidden">
-          {items.length}
-        </span>
-        {hint && <span className="text-[10px] normal-case tracking-normal opacity-70 max-lg:ml-auto max-lg:text-[#8f8796]">{hint}</span>}
+        {onToggleSection ? (
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 text-left"
+            aria-expanded={!sectionCollapsed}
+            aria-label={sectionCollapsed ? '展开已完成任务' : '折叠已完成任务'}
+            onClick={onToggleSection}
+          >
+            {sectionCollapsed
+              ? <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+              : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+            {heading}
+          </button>
+        ) : heading}
       </h3>
-      {items.length === 0 ? (
+      {!sectionCollapsed && (items.length === 0 ? (
         <p className="px-3 py-1.5 text-xs text-muted-foreground/50 italic max-lg:px-1 max-lg:py-1.5 max-lg:text-[#7d7784]">{empty ?? '空'}</p>
       ) : (
         <ul className="flex flex-col max-lg:divide-y max-lg:divide-[#2b2730]/70">
           {items.map(({ task, depth }) => {
             const children = childMap.get(task.id);
-            const hasChildren = children !== undefined && children.length > 0;
+            const hasChildren = children?.some((child) => visibleIds.has(child.id)) ?? false;
             const isCollapsed = collapsed[task.id];
             return (
               <TaskItem
@@ -511,7 +535,7 @@ function Section({ title, mobileKey, hint, items, recommendedId, depInfo, childM
             );
           })}
         </ul>
-      )}
+      ))}
     </section>
   );
 }

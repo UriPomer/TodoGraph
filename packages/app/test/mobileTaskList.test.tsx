@@ -86,4 +86,28 @@ describe('mobile task list', () => {
 
     act(() => renderer.unmount());
   });
+
+  it('collapses the done section by default and expands it from the heading', () => {
+    useTaskStore.setState({
+      activePageId: 'p-1',
+      loaded: true,
+      nodes: [{ id: 'done-1', title: '已完成任务', status: 'done' }],
+    });
+
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(<ListView />);
+    });
+
+    const toggle = renderer.root.findByProps({ 'aria-label': '展开已完成任务' });
+    expect(toggle.props['aria-expanded']).toBe(false);
+    expect(renderer.root.findAllByProps({ 'data-task-id': 'done-1' })).toHaveLength(0);
+
+    act(() => toggle.props.onClick());
+
+    expect(renderer.root.findByProps({ 'aria-label': '折叠已完成任务' }).props['aria-expanded']).toBe(true);
+    expect(renderer.root.findAllByProps({ 'data-task-id': 'done-1' })).toHaveLength(1);
+
+    act(() => renderer.unmount());
+  });
 });

@@ -6,6 +6,7 @@ import {
   CollisionRectIndex,
   GROUP_PADDING_X,
   GROUP_PADDING_Y,
+  GROUP_COLLAPSE_CHILD_THRESHOLD,
   type CollisionRect,
   computeGroupSize,
   capGroupSize,
@@ -65,7 +66,10 @@ export function computeNodeGeometryMap(nodes: Task[]): Map<string, NodeGeometry>
     visiting.add(id);
     const childIds = childrenOf.get(id) ?? [];
     if (childIds.length === 0) {
-      const size = { w: node.width ?? CHILD_DEFAULT_W, h: CHILD_DEFAULT_H };
+      const size = {
+        w: node.width ?? CHILD_DEFAULT_W,
+        h: node.height ?? CHILD_DEFAULT_H,
+      };
       const leaf = { fullSize: size, displayedSize: size, collapsed: false };
       memo.set(id, leaf);
       visiting.delete(id);
@@ -83,8 +87,12 @@ export function computeNodeGeometryMap(nodes: Task[]): Map<string, NodeGeometry>
         };
       }),
     );
-    const displayedSize = capGroupSize(fullSize);
-    const geometry = { fullSize, displayedSize, collapsed: displayedSize.h < fullSize.h };
+    const displayedSize = capGroupSize(fullSize, childIds.length);
+    const geometry = {
+      fullSize,
+      displayedSize,
+      collapsed: childIds.length > GROUP_COLLAPSE_CHILD_THRESHOLD,
+    };
     visiting.delete(id);
     memo.set(id, geometry);
     return geometry;

@@ -5,6 +5,7 @@ import {
   type computeNodeGeometryMap,
 } from '@todograph/shared';
 import type { HierarchyMetrics } from '@/stores/useTaskStore';
+import { measureTextWidth } from '@/lib/measureText';
 import type { GroupNodeData } from './GroupNode';
 import type { TaskNodeData } from './TaskNode';
 
@@ -78,6 +79,7 @@ export function buildGraphNodeProjection(input: ProjectionInput): {
     .sort((a, b) => (depthById.get(a.id) ?? 0) - (depthById.get(b.id) ?? 0))
     .map((node): ProjectedGraphNode => {
       const isGroup = childIdsByParentId.has(node.id);
+      const leafWidth = isGroup ? undefined : measureTextWidth(node.title);
       const collapsed = collapsedGroupIds.has(node.id);
       const size = groupSizes.get(node.id);
       const candidate: TaskNodeData | GroupNodeData = isGroup
@@ -97,7 +99,7 @@ export function buildGraphNodeProjection(input: ProjectionInput): {
             ready: readySet.has(node.id),
             recommended: recommendedId === node.id,
             description: node.description,
-            nodeWidth: node.width,
+            nodeWidth: leafWidth,
           };
       const previous = input.previousData?.get(node.id);
       const data = previous && shallowEqualData(previous, candidate) ? previous : candidate;
@@ -114,7 +116,7 @@ export function buildGraphNodeProjection(input: ProjectionInput): {
         ...(isGroup && size
           ? { style: { width: size.w, height: size.h }, width: size.w, height: size.h }
           : {}),
-        ...(!isGroup ? { style: { width: node.width ?? CHILD_DEFAULT_W } } : {}),
+        ...(!isGroup ? { style: { width: leafWidth ?? CHILD_DEFAULT_W } } : {}),
       };
     });
   return { nodes: projected, dataById, groupSizes };

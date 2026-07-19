@@ -38,6 +38,33 @@ describe('atomic hierarchy commands', () => {
     return { x, y };
   };
 
+  it('stores measured sizes without adding an undo command', () => {
+    useTaskStore.setState({ nodes: [task('a', 0, 0), task('b', 240, 0)] });
+
+    useTaskStore.getState().syncMeasuredSizes([
+      { id: 'a', width: 220, height: 144 },
+      { id: 'b', width: 180, height: 56 },
+    ]);
+
+    expect(useTaskStore.getState().nodes.map(({ id, width, height }) => ({ id, width, height }))).toEqual([
+      { id: 'a', width: 220, height: 144 },
+      { id: 'b', width: 180, height: 56 },
+    ]);
+    expect(useHistoryStore.getState().undoStack).toHaveLength(0);
+  });
+
+  it('repairs sibling overlap caused by a measured height change', () => {
+    useTaskStore.setState({
+      nodes: [task('a', 0, 0), task('b', 0, 80)],
+    });
+
+    useTaskStore.getState().syncMeasuredSizes([{ id: 'a', width: 180, height: 120 }]);
+
+    const [a, b] = buildTopLevelCollisionRects(useTaskStore.getState().nodes);
+    expect(rectsOverlap(a!, b!, 12)).toBe(false);
+    expect(useHistoryStore.getState().undoStack).toHaveLength(0);
+  });
+
   it('keeps world position when a grandchild ascends one level', () => {
     useTaskStore.setState({
       nodes: [
