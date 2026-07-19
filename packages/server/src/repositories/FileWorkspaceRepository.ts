@@ -7,6 +7,9 @@ import {
   MAX_TASK_TITLE_LENGTH,
   MetaSchema,
   PageDataSchema,
+  SYSTEM_HIERARCHY_PAGE_ID,
+  SYSTEM_HIERARCHY_PAGE_TITLE,
+  pageSupportsDependencyGraph,
   resolveNodeOverlaps,
   validateDependencyEdges,
   validateNoSiblingOverlaps,
@@ -125,13 +128,23 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   }
 
   async savePage(pageId: string, data: PageData, expectedVersion?: number): Promise<number> {
-    return this.runLocked(() => this.savePageUnlocked(pageId, data, expectedVersion));
+    return this.runLocked(async () => {
+      const meta = await this.loadMetaUnlocked();
+      this.assertPageAllowsDependencies(meta, pageId, data);
+      return this.savePageUnlocked(pageId, data, expectedVersion);
+    });
   }
 
   async savePages(
     entries: Array<{ pageId: string; data: PageData; expectedVersion?: number }>,
   ): Promise<number[]> {
-    return this.runLocked(() => this.savePagesUnlocked(entries));
+    return this.runLocked(async () => {
+      const meta = await this.loadMetaUnlocked();
+      for (const entry of entries) {
+        this.assertPageAllowsDependencies(meta, entry.pageId, entry.data);
+      }
+      return this.savePagesUnlocked(entries);
+    });
   }
 
   async createPage(title: string, expectedRevision?: number): Promise<{ page: PageInfo; meta: Meta }> {
@@ -160,6 +173,9 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     return this.runLocked(async () => {
       const meta = await this.loadMetaUnlocked();
       this.assertMetaRevision(meta, expectedRevision);
+      if (pageId === SYSTEM_HIERARCHY_PAGE_ID) {
+        throw new Error('system page cannot be deleted');
+      }
       if (meta.pages.length <= 1) {
         throw new Error('last page cannot be deleted');
       }
@@ -168,7 +184,11 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         throw new Error(`page not found: ${pageId}`);
       }
       const nextActive =
-        meta.activePageId === pageId ? (nextPages[0]?.id ?? meta.activePageId) : meta.activePageId;
+        meta.activePageId === pageId
+          ? (nextPages.find((page) => page.id !== SYSTEM_HIERARCHY_PAGE_ID)?.id ??
+            nextPages[0]?.id ??
+            meta.activePageId)
+          : meta.activePageId;
       const nextMeta = this.bumpMeta({ ...meta, pages: nextPages, activePageId: nextActive });
       // Meta first, then unlink: a failed unlink leaves an invisible orphan, not a ghost page.
       await this.atomicWriteJson(this.metaPath, nextMeta);
@@ -208,7 +228,9 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       if (ids.length !== meta.pages.length || new Set(ids).size !== ids.length || ids.some((id) => !byId.has(id))) {
         throw new Error('reorder ids do not match existing pages');
       }
-      const nextPages: PageInfo[] = ids.map((id, i) => ({ ...byId.get(id)!, order: i }));
+      const nextPages = pinSystemPageFirst(
+        ids.map((id, order) => ({ ...byId.get(id)!, order })),
+      );
       const nextMeta = this.bumpMeta({ ...meta, pages: nextPages });
       await this.atomicWriteJson(this.metaPath, nextMeta);
       return nextMeta;
@@ -463,22 +485,71 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   }
 
   private async loadMetaUnlocked(): Promise<Meta> {
+    let meta: Meta;
     try {
       const raw = await fs.readFile(this.metaPath, 'utf-8');
       const parsed = JSON.parse(raw);
-      return MetaSchema.parse(parsed);
+      meta = MetaSchema.parse(parsed);
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== 'ENOENT') throw err;
       if (this.legacyV2Dir) {
         const legacyMetaPath = path.join(this.legacyV2Dir, 'meta.json');
+        let legacyMetaExists = false;
         try {
           await fs.access(legacyMetaPath);
-          return await this.migrateFromLegacyV2(legacyMetaPath);
-        } catch {
+          legacyMetaExists = true;
+        } catch (accessError) {
+          if ((accessError as NodeJS.ErrnoException).code !== 'ENOENT') throw accessError;
+        }
+        if (legacyMetaExists) {
+          meta = await this.migrateFromLegacyV2(legacyMetaPath);
+          return this.ensureSystemHierarchyPageUnlocked(meta);
         }
       }
-      return await this.migrateFromLegacyOrSeed();
+      meta = await this.migrateFromLegacyOrSeed();
+    }
+    return this.ensureSystemHierarchyPageUnlocked(meta);
+  }
+
+  private async ensureSystemHierarchyPageUnlocked(meta: Meta): Promise<Meta> {
+    const existingIndex = meta.pages.findIndex((page) => page.id === SYSTEM_HIERARCHY_PAGE_ID);
+    if (existingIndex >= 0) {
+      const pages = [...meta.pages];
+      pages[existingIndex] = { ...pages[existingIndex]!, kind: 'hierarchy' };
+      const orderedPages = pinSystemPageFirst(pages);
+      const unchanged = orderedPages.every((page, index) =>
+        page.id === meta.pages[index]?.id &&
+        page.order === meta.pages[index]?.order &&
+        page.kind === meta.pages[index]?.kind,
+      );
+      if (unchanged) return meta;
+      const nextMeta = this.bumpMeta({ ...meta, pages: orderedPages });
+      await this.atomicWriteJson(this.metaPath, nextMeta);
+      return nextMeta;
+    }
+
+    await this.savePageUnlocked(SYSTEM_HIERARCHY_PAGE_ID, { nodes: [], edges: [] });
+    const maxOrder = meta.pages.reduce((max, page) => Math.max(max, page.order), -1);
+    const systemPage: PageInfo = {
+      id: SYSTEM_HIERARCHY_PAGE_ID,
+      title: SYSTEM_HIERARCHY_PAGE_TITLE,
+      order: maxOrder + 1,
+      createdAt: new Date().toISOString(),
+      kind: 'hierarchy',
+    };
+    const nextMeta = this.bumpMeta({
+      ...meta,
+      pages: pinSystemPageFirst([...meta.pages, systemPage]),
+    });
+    await this.atomicWriteJson(this.metaPath, nextMeta);
+    return nextMeta;
+  }
+
+  private assertPageAllowsDependencies(meta: Meta, pageId: string, data: PageData): void {
+    const page = meta.pages.find((candidate) => candidate.id === pageId);
+    if (!pageSupportsDependencyGraph(page) && data.edges.length > 0) {
+      throw new Error(`page does not support dependency edges: ${pageId}`);
     }
   }
 
@@ -729,11 +800,13 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     }
 
     const pageId = makePageId('默认');
+    const systemPageCreatedAt = new Date().toISOString();
     const pageTitle = hasLegacy ? '默认' : '入门教程';
     await this.savePageUnlocked(pageId, {
       nodes: resolveNodeOverlaps(seedGraph.nodes).nodes,
       edges: seedGraph.edges,
     });
+    await this.savePageUnlocked(SYSTEM_HIERARCHY_PAGE_ID, { nodes: [], edges: [] });
 
     if (hasLegacy) {
       try {
@@ -754,7 +827,14 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       revision: 0,
       activePageId: pageId,
       pages: [
-        { id: pageId, title: pageTitle, order: 0, createdAt: new Date().toISOString() },
+        {
+          id: SYSTEM_HIERARCHY_PAGE_ID,
+          title: SYSTEM_HIERARCHY_PAGE_TITLE,
+          order: 0,
+          createdAt: systemPageCreatedAt,
+          kind: 'hierarchy',
+        },
+        { id: pageId, title: pageTitle, order: 1, createdAt: new Date().toISOString() },
       ],
     };
     await this.atomicWriteJson(this.metaPath, meta);
@@ -784,7 +864,28 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   private validateWorkspaceImport(
     data: WorkspaceExport,
   ): { meta: Meta; pages: Record<string, PageData> } {
-    const meta = MetaSchema.parse(data.meta);
+    let meta = MetaSchema.parse(data.meta);
+    const rawPages = { ...data.pages };
+    const systemPageIndex = meta.pages.findIndex((page) => page.id === SYSTEM_HIERARCHY_PAGE_ID);
+    if (systemPageIndex < 0) {
+      const maxOrder = meta.pages.reduce((max, page) => Math.max(max, page.order), -1);
+      meta = {
+        ...meta,
+        pages: [...meta.pages, {
+          id: SYSTEM_HIERARCHY_PAGE_ID,
+          title: SYSTEM_HIERARCHY_PAGE_TITLE,
+          order: maxOrder + 1,
+          createdAt: new Date().toISOString(),
+          kind: 'hierarchy',
+        }],
+      };
+      rawPages[SYSTEM_HIERARCHY_PAGE_ID] = { nodes: [], edges: [] };
+    } else if (meta.pages[systemPageIndex]!.kind !== 'hierarchy') {
+      const pages = [...meta.pages];
+      pages[systemPageIndex] = { ...pages[systemPageIndex]!, kind: 'hierarchy' };
+      meta = { ...meta, pages };
+    }
+    meta = { ...meta, pages: pinSystemPageFirst(meta.pages) };
     const metaPageIds = meta.pages.map((page) => page.id);
     const uniqueMetaPageIds = new Set(metaPageIds);
 
@@ -799,7 +900,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       this.assertSafePageId(pageId);
     }
 
-    const rawPageIds = Object.keys(data.pages);
+    const rawPageIds = Object.keys(rawPages);
     if (rawPageIds.length !== metaPageIds.length) {
       throw new Error('pages record must exactly match meta.pages');
     }
@@ -813,10 +914,11 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     }
 
     for (const pageId of metaPageIds) {
-      if (!Object.prototype.hasOwnProperty.call(data.pages, pageId)) {
+      if (!Object.prototype.hasOwnProperty.call(rawPages, pageId)) {
         throw new Error(`missing page data: ${pageId}`);
       }
-      const pageData = parseValidPageData(data.pages[pageId], pageId, undefined, false);
+      const pageData = parseValidPageData(rawPages[pageId], pageId, undefined, false);
+      this.assertPageAllowsDependencies(meta, pageId, pageData);
       pages[pageId] = pageData;
     }
 
@@ -937,6 +1039,15 @@ function makePageId(_hint: string): string {
   return (
     'p' + Date.now().toString(36) + Math.floor(Math.random() * 1e8).toString(36).padStart(5, '0')
   );
+}
+
+function pinSystemPageFirst(pages: PageInfo[]): PageInfo[] {
+  const ordered = [...pages].sort((a, b) => a.order - b.order);
+  const systemPage = ordered.find((page) => page.id === SYSTEM_HIERARCHY_PAGE_ID);
+  const result = systemPage
+    ? [systemPage, ...ordered.filter((page) => page.id !== SYSTEM_HIERARCHY_PAGE_ID)]
+    : ordered;
+  return result.map((page, order) => ({ ...page, order }));
 }
 
 function parseValidPageData(

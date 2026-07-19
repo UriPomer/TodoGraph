@@ -37,4 +37,19 @@ describe('responsive workspace content', () => {
     );
     expect(html).not.toContain('data-testid="graph"');
   });
+
+  it('renders only the task list when the active page has no dependency graph', () => {
+    const desktop = renderToStaticMarkup(
+      <WorkspaceContent isDesktop tab="graph" graphEnabled={false} onLogout={vi.fn()} />,
+    );
+    const mobile = renderToStaticMarkup(
+      <WorkspaceContent isDesktop={false} tab="graph" graphEnabled={false} onLogout={vi.fn()} />,
+    );
+
+    expect(desktop).toContain('data-testid="list"');
+    expect(desktop).not.toContain('data-testid="graph"');
+    expect(desktop).toContain('workspace-mode-enter');
+    expect(mobile).toContain('data-testid="list"');
+    expect(mobile).not.toContain('data-testid="graph"');
+  });
 });

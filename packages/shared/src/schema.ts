@@ -3,6 +3,8 @@ import { z } from 'zod';
 export const TaskStatusSchema = z.enum(['todo', 'doing', 'done']);
 export const MAX_TASK_TITLE_LENGTH = 200;
 export const MAX_PAGE_TITLE_LENGTH = 100;
+export const SYSTEM_HIERARCHY_PAGE_ID = 'system-hierarchy';
+export const SYSTEM_HIERARCHY_PAGE_TITLE = '清单';
 
 export const TaskSchema = z.object({
   id: z.string().min(1),
@@ -64,6 +66,8 @@ export const PageInfoSchema = z.object({
   order: z.number().int(),
   /** ISO-8601 创建时间，仅展示用。 */
   createdAt: z.string(),
+  /** hierarchy pages deliberately have no dependency graph or dependency edges. */
+  kind: z.enum(['graph', 'hierarchy']).optional(),
 });
 
 /** 全局工作区设置 —— 目前只放拖拽时长，未来可扩。 */
@@ -85,6 +89,10 @@ export type Graph = z.infer<typeof GraphSchema>;
 export type PageData = z.infer<typeof PageDataSchema>;
 export type PageInfo = z.infer<typeof PageInfoSchema>;
 export type Meta = z.infer<typeof MetaSchema>;
+
+export function pageSupportsDependencyGraph(page: Pick<PageInfo, 'kind'> | undefined): boolean {
+  return page?.kind !== 'hierarchy';
+}
 
 /** 聚合 `/api/all-tasks` 的返回体。附上页面冗余信息方便左侧列表直接渲染。 */
 export const AllTasksItemSchema = TaskSchema.extend({

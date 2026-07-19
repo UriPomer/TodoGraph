@@ -4,7 +4,10 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
 import { FileWorkspaceRepository } from '../src/repositories/FileWorkspaceRepository.js';
-import { validateNoSiblingOverlaps } from '@todograph/shared';
+import {
+  SYSTEM_HIERARCHY_PAGE_ID,
+  validateNoSiblingOverlaps,
+} from '@todograph/shared';
 import {
   MetaVersionConflictError,
   NodeOverlapError,
@@ -32,6 +35,55 @@ describe('FileWorkspaceRepository concurrency guards', () => {
   it('seeds meta revision as 0', async () => {
     const meta = await repo.loadMeta();
     expect(meta.revision).toBe(0);
+  });
+
+  it('provides a protected hierarchy-only system page', async () => {
+    const meta = await repo.loadMeta();
+    const systemPage = meta.pages.find((page) => page.id === SYSTEM_HIERARCHY_PAGE_ID);
+
+    expect(systemPage).toMatchObject({ title: '清单', kind: 'hierarchy', order: 0 });
+    await expect(repo.loadPage(SYSTEM_HIERARCHY_PAGE_ID)).resolves.toMatchObject({
+      nodes: [],
+      edges: [],
+    });
+    await expect(
+      repo.deletePage(SYSTEM_HIERARCHY_PAGE_ID, meta.revision),
+    ).rejects.toThrow('system page cannot be deleted');
+  });
+
+  it('adds the system hierarchy page to an existing workspace without changing its active page', async () => {
+    const original = await repo.loadMeta();
+    const legacyMeta = {
+      ...original,
+      pages: original.pages.filter((page) => page.id !== SYSTEM_HIERARCHY_PAGE_ID),
+    };
+    await fs.writeFile(path.join(userDir, 'meta.json'), JSON.stringify(legacyMeta));
+    await fs.unlink(path.join(userDir, 'pages', `${SYSTEM_HIERARCHY_PAGE_ID}.json`));
+
+    const migrated = await repo.loadMeta();
+
+    expect(migrated.activePageId).toBe(original.activePageId);
+    expect(migrated.revision).toBe(original.revision + 1);
+    expect(migrated.pages).toContainEqual(expect.objectContaining({
+      id: SYSTEM_HIERARCHY_PAGE_ID,
+      kind: 'hierarchy',
+      order: 0,
+    }));
+    expect(migrated.pages.find((page) => page.id === original.activePageId)?.order).toBe(1);
+  });
+
+  it('rejects dependency edges on the hierarchy-only system page', async () => {
+    const meta = await repo.loadMeta();
+    const page = await repo.loadPage(SYSTEM_HIERARCHY_PAGE_ID);
+
+    await expect(repo.savePage(SYSTEM_HIERARCHY_PAGE_ID, {
+      nodes: [
+        { id: 'a', title: 'a', status: 'todo', x: 0, y: 0 },
+        { id: 'b', title: 'b', status: 'todo', x: 500, y: 0 },
+      ],
+      edges: [{ from: 'a', to: 'b' }],
+    }, page.version)).rejects.toThrow('does not support dependency edges');
+    expect((await repo.loadMeta()).revision).toBe(meta.revision);
   });
 
   it('rejects invalid task hierarchies at the repository boundary', async () => {
@@ -88,7 +140,7 @@ describe('FileWorkspaceRepository concurrency guards', () => {
       }),
     );
 
-    expect((await repo.loadMeta()).pages[0]?.title).toBe(longPageTitle);
+    expect((await repo.loadMeta()).pages.find((page) => page.id === pageId)?.title).toBe(longPageTitle);
     expect((await repo.loadPage(pageId)).nodes[0]?.title).toBe(longTaskTitle);
     await expect(
       repo.savePage(pageId, {
@@ -133,7 +185,10 @@ describe('FileWorkspaceRepository concurrency guards', () => {
       await expect(repo.deletePage(deletedPageId, created.meta.revision)).resolves.toMatchObject({
         activePageId: created.page.id,
       });
-      expect((await repo.loadMeta()).pages.map((page) => page.id)).toEqual([created.page.id]);
+      expect((await repo.loadMeta()).pages.map((page) => page.id)).toEqual([
+        SYSTEM_HIERARCHY_PAGE_ID,
+        created.page.id,
+      ]);
       await expect(fs.access(deletedPagePath)).resolves.toBeUndefined();
     } finally {
       unlinkSpy.mockRestore();

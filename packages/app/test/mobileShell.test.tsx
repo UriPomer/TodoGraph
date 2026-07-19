@@ -23,6 +23,14 @@ describe('mobile shell', () => {
     expect(html).toContain('aria-label="更多"');
   });
 
+  it('disables the dependency graph tab for hierarchy-only pages', () => {
+    const html = renderToStaticMarkup(
+      <MobileBottomNav tab="list" graphEnabled={false} onTab={vi.fn()} />,
+    );
+
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-label="依赖图"/);
+  });
+
   it('puts account, data, and MCP controls directly on the more page', () => {
     const html = renderToStaticMarkup(
       <ThemeProvider><MobileMorePanel onLogout={vi.fn()} /></ThemeProvider>,

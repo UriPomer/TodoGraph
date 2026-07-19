@@ -892,7 +892,14 @@ describe('auth routes', () => {
     }));
     const res = await app.inject({
       method: 'POST', url: '/api/workspace/import', cookies,
-      payload: { exportedAt: new Date().toISOString(), meta, pages: { [meta.activePageId]: { nodes, edges: [] } } },
+      payload: {
+        exportedAt: new Date().toISOString(),
+        meta,
+        pages: Object.fromEntries(meta.pages.map((page) => [
+          page.id,
+          page.id === meta.activePageId ? { nodes, edges: [] } : { nodes: [], edges: [] },
+        ])),
+      },
     });
 
     expect(res.statusCode).toBe(200);

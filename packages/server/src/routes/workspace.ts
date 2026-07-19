@@ -2,6 +2,7 @@ import {
   MetaSchema,
   MAX_PAGE_TITLE_LENGTH,
   PageDataSchema,
+  pageSupportsDependencyGraph,
   placeMovedNodesOnTarget,
   resolveNodeOverlaps,
   validateDependencyEdges,
@@ -488,7 +489,7 @@ function cacheKeyFromMeta(meta: Meta): string {
     meta.activePageId +
     '|' +
     meta.pages
-      .map((p) => `${p.id}:${p.order}:${p.title}`)
+      .map((p) => `${p.id}:${p.order}:${p.title}:${p.kind ?? 'graph'}`)
       .sort()
       .join(',')
   );
@@ -502,7 +503,14 @@ async function moveNodesBetweenPages(
   expectedSourceVersion?: number,
   expectedTargetVersion?: number,
 ): Promise<MoveNodesResponse> {
-  const [source, target] = await Promise.all([repo.loadPage(sourceId), repo.loadPage(targetId)]);
+  const [meta, source, target] = await Promise.all([
+    repo.loadMeta(),
+    repo.loadPage(sourceId),
+    repo.loadPage(targetId),
+  ]);
+  const targetSupportsDependencies = pageSupportsDependencyGraph(
+    meta.pages.find((page) => page.id === targetId),
+  );
 
   const byIdSrc = new Map(source.nodes.map((n) => [n.id, n]));
   const childrenOf = new Map<string, string[]>();
@@ -556,11 +564,12 @@ async function moveNodesBetweenPages(
     }
   }
 
-  const movedEdges = source.edges.filter((e) => toMove.has(e.from) && toMove.has(e.to));
+  const internalMovedEdges = source.edges.filter((e) => toMove.has(e.from) && toMove.has(e.to));
+  const movedEdges = targetSupportsDependencies ? internalMovedEdges : [];
   const lostEdges = source.edges.filter(
     (e) =>
       (toMove.has(e.from) && !toMove.has(e.to)) || (!toMove.has(e.from) && toMove.has(e.to)),
-  ).length;
+  ).length + (targetSupportsDependencies ? 0 : internalMovedEdges.length);
 
   const targetIds = new Set(target.nodes.map((n) => n.id));
   for (const n of movedNodes) {
