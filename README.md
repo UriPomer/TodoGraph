@@ -75,7 +75,7 @@ Electron 开发模式：`pnpm dev:electron`
 
 ## AI 接入 (MCP)
 
-支持 [Model Context Protocol](https://modelcontextprotocol.io/)，让 Claude Desktop / VS Code / Cursor 直接管理任务。顶部栏点「AI 接入」生成配置，12 个 MCP 工具覆盖创建、更新、删除、推荐、自动布局、备份恢复。
+支持 [Model Context Protocol](https://modelcontextprotocol.io/)，让 Claude Desktop / VS Code / Cursor 直接管理任务。顶部栏点「AI 接入」生成配置，12 个 MCP 工具覆盖创建、更新、删除、推荐、自动布局、备份恢复。新 Key 默认只有读取与安全写入权限；删除、恢复和跨页面移动需要生成时显式启用破坏性权限。
 
 ---
 
@@ -113,10 +113,11 @@ packages/
 ├─ shared/      Zod schema（前后端共享，单一真源）
 ├─ server/      Fastify 5 后端 + 可替换的 Repository
 ├─ app/         React 18 前端 + Electron 壳
-└─ mcp/         独立发布的 MCP 服务与工具
+├─ desktop-host/ Electron 本地服务生命周期与会话密钥
+└─ mcp/          独立发布的 MCP 服务与工具
 ```
 
-前端只和 Zustand store 交互，store 250ms 防抖写后端，后端同时校验依赖 DAG 与父子层级后原子写 JSON。退出或切换账号时统一清理 store、历史记录和轮询。换存储只需实现 `WorkspaceRepository` 接口。所有颜色走 `hsl(var(--xxx))` CSS 变量，加主题等于加一段 CSS。
+前端只和 Zustand store 交互，修改先写本地恢复草稿，再由 store 250ms 防抖写后端；后端校验容量、依赖 DAG 与父子层级，并在恢复点之后原子写 JSON。完整数据流与安全不变量见 [ARCHITECTURE.md](./ARCHITECTURE.md)。退出或切换账号时统一清理 store、历史记录和轮询。换存储只需实现 `WorkspaceRepository` 接口。所有颜色走 `hsl(var(--xxx))` CSS 变量，加主题等于加一段 CSS。
 
 技术栈：TypeScript 5 · React 18 · Vite 6 · React Flow · Zustand · Fastify 5 · Tailwind CSS 3 · Electron 39 · pnpm workspace · Vitest 3
 

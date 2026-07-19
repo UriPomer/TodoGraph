@@ -1,6 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { withFilesystemLock } from './repositories/fileLock.js';
+import { atomicWriteJson } from './repositories/durableFile.js';
 
 export interface McpKeyEntry {
   id: string;
@@ -10,7 +12,11 @@ export interface McpKeyEntry {
   hash: string;
   createdAt: string;
   lastUsedAt?: string;
+  scopes: McpKeyScope[];
 }
+
+export type McpKeyScope = 'read' | 'write' | 'destructive';
+const ALL_SCOPES: McpKeyScope[] = ['read', 'write', 'destructive'];
 
 export interface PublicMcpKeyEntry {
   id: string;
@@ -18,6 +24,7 @@ export interface PublicMcpKeyEntry {
   label: string;
   createdAt: string;
   lastUsedAt?: string;
+  scopes: McpKeyScope[];
 }
 
 interface McpKeysFile {
@@ -45,6 +52,7 @@ function publicEntry(entry: McpKeyEntry): PublicMcpKeyEntry {
     label: entry.label,
     createdAt: entry.createdAt,
     ...(entry.lastUsedAt ? { lastUsedAt: entry.lastUsedAt } : {}),
+    scopes: entry.scopes,
   };
 }
 
@@ -65,6 +73,7 @@ function migrateLegacyEntry(rawKey: string, value: Partial<McpKeyEntry>): McpKey
     prefix: rawKey.slice(0, 16),
     hash,
     createdAt: value.createdAt,
+    scopes: normalizeScopes(value.scopes),
     ...(value.lastUsedAt ? { lastUsedAt: value.lastUsedAt } : {}),
   };
 }
@@ -81,6 +90,10 @@ export class McpKeyStore {
   }
 
   async findUserId(key: string): Promise<string | null> {
+    return (await this.findPrincipal(key))?.userId ?? null;
+  }
+
+  async findPrincipal(key: string): Promise<{ userId: string; scopes: McpKeyScope[] } | null> {
     const digest = hashKey(key);
     const keys = await this.readKeys();
     for (const entry of Object.values(keys.keys)) {
@@ -88,7 +101,7 @@ export class McpKeyStore {
         if (!entry.lastUsedAt || Date.now() - Date.parse(entry.lastUsedAt) >= 60_000) {
           await this.touchLastUsed(entry.id).catch(() => {});
         }
-        return entry.userId;
+        return { userId: entry.userId, scopes: entry.scopes };
       }
     }
     return null;
@@ -102,7 +115,11 @@ export class McpKeyStore {
       .map(publicEntry);
   }
 
-  async generate(userId: string, label: string): Promise<{ key: string; entry: PublicMcpKeyEntry }> {
+  async generate(
+    userId: string,
+    label: string,
+    scopes: McpKeyScope[] = ALL_SCOPES,
+  ): Promise<{ key: string; entry: PublicMcpKeyEntry }> {
     const key = generateKey();
     const id = makeKeyId();
     const entry: McpKeyEntry = {
@@ -112,6 +129,7 @@ export class McpKeyStore {
       prefix: key.slice(0, 16),
       hash: hashKey(key),
       createdAt: new Date().toISOString(),
+      scopes: normalizeScopes(scopes),
     };
     await this.withLock(async () => {
       const keys = await this.readKeys();
@@ -162,7 +180,7 @@ export class McpKeyStore {
           value.hash &&
           value.createdAt
         ) {
-          keys[id] = value as McpKeyEntry;
+          keys[id] = { ...value, scopes: normalizeScopes(value.scopes) } as McpKeyEntry;
           continue;
         }
 
@@ -190,15 +208,7 @@ export class McpKeyStore {
   }
 
   private async writeKeys(data: McpKeysFile): Promise<void> {
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tmp = `${this.filePath}.tmp.${randomBytes(6).toString('hex')}`;
-    await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf-8');
-    try {
-      await fs.rename(tmp, this.filePath);
-    } catch (error) {
-      await fs.rm(tmp, { force: true }).catch(() => {});
-      throw error;
-    }
+    await atomicWriteJson(this.filePath, data);
     this.cache = data;
     this.cacheTime = Date.now();
   }
@@ -209,9 +219,20 @@ export class McpKeyStore {
     this.writeLock = new Promise<void>((r) => (release = r));
     await prev;
     try {
-      return await fn();
+      return await withFilesystemLock(path.dirname(this.filePath), async () => {
+        this.cache = null;
+        return fn();
+      }, '.mcp-keys.lock');
     } finally {
       release();
     }
   }
+}
+
+function normalizeScopes(scopes: unknown): McpKeyScope[] {
+  if (!Array.isArray(scopes)) return [...ALL_SCOPES];
+  const allowed = new Set<McpKeyScope>(ALL_SCOPES);
+  const normalized = [...new Set(scopes.filter((scope): scope is McpKeyScope =>
+    typeof scope === 'string' && allowed.has(scope as McpKeyScope)))] as McpKeyScope[];
+  return normalized.includes('read') ? normalized : ['read', ...normalized];
 }

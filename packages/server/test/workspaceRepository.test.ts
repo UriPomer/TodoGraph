@@ -51,6 +51,123 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     ).rejects.toThrow('system page cannot be deleted');
   });
 
+  it('rejects writes to page ids that are not present in workspace metadata', async () => {
+    await repo.loadMeta();
+
+    await expect(repo.savePage('orphan', { nodes: [], edges: [] })).rejects.toThrow(
+      'page not found: orphan',
+    );
+    await expect(fs.access(path.join(userDir, 'pages', 'orphan.json'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+
+  it('marks missing page mtimes as unreadable so aggregate caches cannot reuse stale data', async () => {
+    const meta = await repo.loadMeta();
+    await fs.unlink(path.join(userDir, 'pages', `${meta.activePageId}.json`));
+
+    await expect(repo.listPageMtimes()).resolves.toContainEqual({
+      pageId: meta.activePageId,
+      mtimeMs: null,
+    });
+  });
+
+  it('keeps a recoverable tombstone before deleting a page', async () => {
+    const created = await repo.createPage('待删除');
+    await repo.savePage(created.page.id, {
+      nodes: [{ id: 'kept', title: '保留我', status: 'todo' }],
+      edges: [],
+    });
+
+    await repo.deletePage(created.page.id, created.meta.revision);
+
+    const trashDir = path.join(userDir, 'trash', 'pages');
+    const trashFiles = await fs.readdir(trashDir);
+    const tombstone = JSON.parse(await fs.readFile(path.join(trashDir, trashFiles[0]!), 'utf-8'));
+    expect(tombstone.page.id).toBe(created.page.id);
+    expect(tombstone.data.nodes[0].id).toBe('kept');
+  });
+
+  it('lists and restores a deleted page without overwriting live pages', async () => {
+    const created = await repo.createPage('可恢复页面');
+    await repo.savePage(created.page.id, {
+      nodes: [{ id: 'restored-task', title: '恢复内容', status: 'todo' }],
+      edges: [],
+    });
+    const deletedMeta = await repo.deletePage(created.page.id, created.meta.revision);
+
+    const trash = await repo.listTrashedPages();
+    expect(trash).toHaveLength(1);
+    expect(trash[0]?.page.id).toBe(created.page.id);
+
+    const restored = await repo.restoreTrashedPage(trash[0]!.name, deletedMeta.revision);
+    expect(restored.meta.pages.some((page) => page.id === created.page.id)).toBe(true);
+    expect(restored.data.nodes[0]?.id).toBe('restored-task');
+    await expect(repo.listTrashedPages()).resolves.toEqual([]);
+  });
+
+  it('does not commit a v2 migration when a referenced page cannot be copied', async () => {
+    const legacyMeta = {
+      version: 2,
+      revision: 0,
+      activePageId: 'missing',
+      pages: [{ id: 'missing', title: 'Missing', order: 0, createdAt: new Date().toISOString() }],
+    };
+    await fs.mkdir(rootDir, { recursive: true });
+    await fs.writeFile(path.join(rootDir, 'meta.json'), JSON.stringify(legacyMeta), 'utf-8');
+
+    await expect(repo.loadMeta()).rejects.toThrow();
+    await expect(fs.access(path.join(userDir, 'meta.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(fs.access(path.join(rootDir, 'meta.json'))).resolves.toBeUndefined();
+  });
+
+  it('allows only one user to claim a shared v2 workspace', async () => {
+    const createdAt = new Date().toISOString();
+    await fs.mkdir(path.join(rootDir, 'pages'), { recursive: true });
+    await fs.writeFile(path.join(rootDir, 'meta.json'), JSON.stringify({
+      version: 2,
+      revision: 0,
+      activePageId: 'legacy',
+      pages: [{ id: 'legacy', title: 'Legacy', order: 0, createdAt }],
+    }));
+    await fs.writeFile(path.join(rootDir, 'pages', 'legacy.json'), JSON.stringify({
+      version: 0,
+      nodes: [{ id: 'private', title: 'Private legacy task', status: 'todo' }],
+      edges: [],
+    }));
+    const secondUserDir = path.join(rootDir, 'users', 'u2');
+    const secondRepo = new FileWorkspaceRepository(secondUserDir, rootDir);
+
+    const [firstMeta, secondMeta] = await Promise.all([repo.loadMeta(), secondRepo.loadMeta()]);
+    const firstNodes = (await repo.loadPage(firstMeta.activePageId)).nodes;
+    const secondNodes = (await secondRepo.loadPage(secondMeta.activePageId)).nodes;
+
+    expect([firstNodes, secondNodes].filter((nodes) => nodes.some((node) => node.id === 'private')))
+      .toHaveLength(1);
+    await expect(fs.access(path.join(rootDir, 'meta.json.v2.bak'))).resolves.toBeUndefined();
+  });
+
+  it('keeps the v1 migration source until metadata is committed', async () => {
+    await fs.mkdir(userDir, { recursive: true });
+    await fs.writeFile(path.join(userDir, 'tasks.json'), JSON.stringify({
+      nodes: [{ id: 'legacy', title: 'Legacy', status: 'todo' }],
+      edges: [],
+    }), 'utf-8');
+    const rename = fs.rename.bind(fs);
+    const renameSpy = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (String(to) === path.join(userDir, 'meta.json')) throw new Error('simulated commit failure');
+      return rename(from, to);
+    });
+
+    await expect(repo.loadMeta()).rejects.toThrow('simulated commit failure');
+    renameSpy.mockRestore();
+    await expect(fs.access(path.join(userDir, 'tasks.json'))).resolves.toBeUndefined();
+
+    const recovered = new FileWorkspaceRepository(userDir, rootDir);
+    const meta = await recovered.loadMeta();
+    expect((await recovered.loadPage(meta.activePageId)).nodes[0]?.id).toBe('legacy');
+  });
+
   it('adds the system hierarchy page to an existing workspace without changing its active page', async () => {
     const original = await repo.loadMeta();
     const legacyMeta = {
@@ -115,6 +232,23 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     }, page.version)).rejects.toBeInstanceOf(NodeOverlapError);
 
     expect((await repo.loadPage(meta.activePageId)).version).toBe(page.version);
+  });
+
+  it('enforces metadata capacity on normal page saves', async () => {
+    const meta = await repo.loadMeta();
+    const page = await repo.loadPage(meta.activePageId);
+
+    await expect(repo.savePage(meta.activePageId, {
+      nodes: [{
+        id: 'too-large',
+        title: 'Too large',
+        status: 'todo',
+        metadata: { payload: 'x'.repeat(64 * 1024) },
+      }],
+      edges: [],
+    }, page.version)).rejects.toThrow('task metadata exceeds');
+
+    await expect(repo.loadPage(meta.activePageId)).resolves.toEqual(page);
   });
 
   it('reads legacy long titles but rejects them on new writes', async () => {
@@ -280,7 +414,7 @@ describe('FileWorkspaceRepository concurrency guards', () => {
       if (
         !failedTargetWrite &&
         typeof filePath === 'string' &&
-        filePath.endsWith(`${targetId}.json.tmp`)
+        filePath.includes(`${targetId}.json.tmp-`)
       ) {
         failedTargetWrite = true;
         throw new Error('simulated target write failure');
@@ -479,7 +613,7 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     expect(await repo.loadPage(pageId)).toEqual(restored);
   });
 
-  it('restores the latest backup while preserving newer un-backed changes', async () => {
+  it('restores the latest backup after snapshotting the current live page', async () => {
     const meta = await repo.loadMeta();
     const pageId = meta.pages[0]!.id;
     const original = await repo.loadPage(pageId);
@@ -501,12 +635,37 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     });
 
     const live = await repo.loadPage(pageId);
+    const backupsBeforeRestore = await repo.listBackups(pageId);
     const restored = await repo.restoreLatestBackup(pageId);
     expect(restored.nodes.map((n) => n.id)).toEqual(['backup-version']);
     expect(restored.version).toBeGreaterThan(live.version!);
 
     const current = await repo.loadPage(pageId);
     expect(current).toEqual(restored);
+    const backupsAfterRestore = await repo.listBackups(pageId);
+    expect(backupsAfterRestore).toHaveLength(backupsBeforeRestore.length + 1);
+    const preRestore = JSON.parse(await fs.readFile(
+      path.join(userDir, 'backups', pageId, backupsAfterRestore[0]!.name),
+      'utf-8',
+    ));
+    expect(preRestore.nodes.map((node: { id: string }) => node.id)).toEqual(['live-version']);
+  });
+
+  it('rejects restoring over a page version changed after the recovery dialog loaded', async () => {
+    const meta = await repo.loadMeta();
+    const pageId = meta.activePageId;
+    const before = await repo.loadPage(pageId);
+    await repo.createBackup(pageId);
+    const backup = (await repo.listBackups(pageId))[0]!;
+    await repo.savePage(pageId, {
+      nodes: [{ id: 'newer', title: 'newer', status: 'todo' }],
+      edges: [],
+    }, before.version);
+    const newer = await repo.loadPage(pageId);
+
+    await expect(repo.restoreBackup(pageId, backup.name, before.version))
+      .rejects.toBeInstanceOf(VersionConflictError);
+    await expect(repo.loadPage(pageId)).resolves.toEqual(newer);
   });
 
   it('exports and imports a complete workspace snapshot', async () => {
@@ -590,6 +749,18 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     await expect(repo.importWorkspace(malformed)).rejects.toThrow();
     await expect(repo.loadMeta()).resolves.toEqual(liveMeta);
     await expect(repo.loadPage(pageId)).resolves.toEqual(livePage);
+  });
+
+  it('aborts import when the current workspace cannot be snapshotted', async () => {
+    const incoming = await repo.exportWorkspace();
+    const pageId = incoming.meta.activePageId;
+    await fs.unlink(repoPagePath(userDir, pageId));
+
+    await expect(repo.importWorkspace(incoming)).rejects.toThrow();
+
+    const rawMeta = JSON.parse(await fs.readFile(path.join(userDir, 'meta.json'), 'utf-8'));
+    expect(rawMeta.activePageId).toBe(pageId);
+    await expect(fs.access(repoPagePath(userDir, pageId))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('advances imported page versions instead of reusing stale clocks', async () => {

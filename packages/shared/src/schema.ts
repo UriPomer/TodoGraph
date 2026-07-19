@@ -102,6 +102,7 @@ export const AllTasksItemSchema = TaskSchema.extend({
 });
 export const AllTasksResponseSchema = z.object({
   tasks: z.array(AllTasksItemSchema),
+  errors: z.array(z.object({ pageId: z.string(), message: z.string() })).optional(),
 });
 export type AllTasksItem = z.infer<typeof AllTasksItemSchema>;
 export type AllTasksResponse = z.infer<typeof AllTasksResponseSchema>;

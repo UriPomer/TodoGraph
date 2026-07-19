@@ -2,6 +2,7 @@ import {
   MetaSchema,
   MAX_PAGE_TITLE_LENGTH,
   PageDataSchema,
+  SYSTEM_HIERARCHY_PAGE_ID,
   pageSupportsDependencyGraph,
   placeMovedNodesOnTarget,
   resolveNodeOverlaps,
@@ -101,6 +102,15 @@ const RestoreBackupBodySchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.json$/, 'invalid backup name')
     .optional(),
+  expectedVersion: z.number().int().min(0).optional(),
+});
+
+const RestoreTrashBodySchema = z.object({
+  expectedRevision: z.number().int().min(0).optional(),
+});
+
+const MergePageBodySchema = z.object({
+  targetPageId: z.string().min(1),
 });
 
 const WorkspaceImportSchema = z.object({
@@ -365,13 +375,42 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
     try {
       const data = parsed.data.backupName
-        ? await repo.restoreBackup(req.params.id, parsed.data.backupName)
-        : await repo.restoreLatestBackup(req.params.id);
+        ? await repo.restoreBackup(req.params.id, parsed.data.backupName, parsed.data.expectedVersion)
+        : await repo.restoreLatestBackup(req.params.id, parsed.data.expectedVersion);
       return { ok: true, data };
     } catch (err) {
+      if (err instanceof VersionConflictError) {
+        reply.status(409);
+        return { ok: false, error: err.message, serverVersion: err.serverVersion };
+      }
       const e = err as NodeJS.ErrnoException;
       reply.status(e.code === 'ENOENT' ? 404 : 400);
       return { ok: false, error: (err as Error).message };
+    }
+  });
+
+  app.get('/api/trash/pages', async (req) => {
+    const repo = getRepo(getAuthenticatedUserId(req));
+    return { pages: await repo.listTrashedPages() };
+  });
+
+  app.post<{ Params: { name: string } }>('/api/trash/pages/:name/restore', async (req, reply) => {
+    const repo = getRepo(getAuthenticatedUserId(req));
+    const parsed = RestoreTrashBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      reply.status(400);
+      return { ok: false, error: 'invalid payload', issues: parsed.error.issues };
+    }
+    try {
+      return { ok: true, ...(await repo.restoreTrashedPage(req.params.name, parsed.data.expectedRevision)) };
+    } catch (error) {
+      if (error instanceof MetaVersionConflictError) {
+        reply.status(409);
+        return { ok: false, error: error.message, serverRevision: error.serverRevision };
+      }
+      const code = (error as NodeJS.ErrnoException).code;
+      reply.status(code === 'ENOENT' ? 404 : 400);
+      return { ok: false, error: (error as Error).message };
     }
   });
 
@@ -413,6 +452,44 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
   });
 
+  app.post<{ Params: { id: string } }>('/api/pages/:id/merge', async (req, reply) => {
+    const repo = getRepo(getAuthenticatedUserId(req));
+    const parsed = MergePageBodySchema.safeParse(req.body);
+    if (!parsed.success || parsed.data.targetPageId === req.params.id) {
+      reply.status(400);
+      return { ok: false, error: 'invalid merge target' };
+    }
+    try {
+      const initialMeta = await repo.loadMeta();
+      if (req.params.id === SYSTEM_HIERARCHY_PAGE_ID) throw new Error('system page cannot be merged');
+      if (!initialMeta.pages.some((page) => page.id === req.params.id)) throw new Error('source page not found');
+      if (!initialMeta.pages.some((page) => page.id === parsed.data.targetPageId)) throw new Error('target page not found');
+      if (initialMeta.pages.length <= 1) throw new Error('last page cannot be merged');
+      // Recovery points are server-side preconditions so a client disconnect cannot skip them.
+      await Promise.all([repo.createBackup(req.params.id), repo.createBackup(parsed.data.targetPageId)]);
+      const source = await repo.loadPage(req.params.id);
+      const nodeIds = source.nodes.map((node) => node.id);
+      const moved = nodeIds.length > 0
+        ? await moveNodesBetweenPages(repo, req.params.id, parsed.data.targetPageId, nodeIds)
+        : { movedNodes: 0, movedEdges: 0, autoIncludedChildren: 0, lostEdges: 0, droppedParentLinks: 0 };
+      const meta = await repo.loadMeta();
+      await repo.deletePage(req.params.id, meta.revision);
+      invalidateAll();
+      return moved;
+    } catch (error) {
+      if (error instanceof VersionConflictError) {
+        reply.status(409);
+        return { ok: false, error: error.message, pageId: error.pageId, serverVersion: error.serverVersion };
+      }
+      if (error instanceof MetaVersionConflictError) {
+        reply.status(409);
+        return { ok: false, error: error.message, serverRevision: error.serverRevision };
+      }
+      reply.status(400);
+      return { ok: false, error: (error as Error).message };
+    }
+  });
+
   app.get('/api/all-tasks', async (req): Promise<AllTasksResponse> => {
     const userId = getAuthenticatedUserId(req);
     const repo = getRepo(userId);
@@ -423,11 +500,12 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     if (
       cached &&
       cached.key === key &&
-      mtimes.every((m) => (cached.mtimes.get(m.pageId) ?? -1) >= m.mtimeMs)
+      mtimes.every((m) => m.mtimeMs !== null && (cached.mtimes.get(m.pageId) ?? -1) >= m.mtimeMs)
     ) {
       return cached.response;
     }
     const tasks: AllTasksItem[] = [];
+    const errors: NonNullable<AllTasksResponse['errors']> = [];
     for (const p of meta.pages) {
       try {
         const pd = await repo.loadPage(p.id);
@@ -437,12 +515,15 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         }
       } catch (err) {
         app.log.warn({ pageId: p.id, err }, 'skipping page in all-tasks aggregation');
+        errors.push({ pageId: p.id, message: (err as Error).message });
       }
     }
-    const response: AllTasksResponse = { tasks };
+    const response: AllTasksResponse = { tasks, ...(errors.length > 0 ? { errors } : {}) };
     const mtimesMap = new Map<string, number>();
-    for (const m of mtimes) mtimesMap.set(m.pageId, m.mtimeMs);
-    setCache(userId, { key, mtimes: mtimesMap, response });
+    for (const m of mtimes) {
+      if (m.mtimeMs !== null) mtimesMap.set(m.pageId, m.mtimeMs);
+    }
+    if (errors.length === 0) setCache(userId, { key, mtimes: mtimesMap, response });
     return response;
   });
 

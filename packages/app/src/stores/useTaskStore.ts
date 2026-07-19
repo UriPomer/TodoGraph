@@ -12,8 +12,14 @@ import {
   resolveNodeOverlaps,
 } from '@todograph/shared';
 import { useHistoryStore } from './useHistoryStore';
-import { emitAllTasksInvalidated } from './workspaceEvents';
+import { emitAllTasksInvalidated, emitWorkspaceMetaUpdated } from './workspaceEvents';
 import { createTaskPersistenceCoordinator } from './taskPersistenceCoordinator';
+import {
+  clearTaskDraft,
+  clearTaskDraftIfMatching,
+  loadTaskDraft,
+  saveTaskDraft,
+} from './taskDraftStorage';
 interface TaskStore {
   /** 当前页的 pageId —— 供 scheduleSave/flush 使用。null 表示未加载任何页。 */
   activePageId: string | null;
@@ -42,6 +48,7 @@ interface TaskStore {
   hasPendingSave: () => boolean;
   /** 退出登录或切换账号时停止后台任务并清空全部用户数据。 */
   resetSession: () => void;
+  setSessionUser: (userId: string) => void;
   addTask: (input: {
     title: string;
     x?: number;
@@ -283,6 +290,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let pollInFlight = false;
   let loadRequestId = 0;
+  let sessionUserId: string | null = null;
+  let draftStorageWarningShown = false;
   const stopPolling = () => {
     if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
   };
@@ -330,17 +339,33 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     const generation = getApiSessionGeneration();
     const { activePageId, nodes, edges, pageVersion } = get();
     if (activePageId !== pid) return;
+    const persistedDraft = sessionUserId
+      ? saveTaskDraft(sessionUserId, pid, pageVersion, nodes, edges)
+      : null;
     try {
       const { version: newVersion } = await api.savePage(pid, { nodes, edges }, pageVersion);
       if (generation !== getApiSessionGeneration()) return;
       set({ pageVersion: newVersion });
+      if (sessionUserId && persistedDraft) clearTaskDraftIfMatching(sessionUserId, persistedDraft);
       emitAllTasksInvalidated();
     } catch (err) {
       if (generation !== getApiSessionGeneration()) return;
       const e = err as Error & { conflict?: boolean; serverVersion?: number };
       if (e.conflict) {
-        const message = '页面已被其他设备修改，已重新加载最新数据，请重新执行刚才的操作';
-        toast.error('保存冲突', message);
+        let recoveryMessage = persistedDraft
+          ? '本地修改已保存在此设备的恢复草稿中'
+          : '无法创建恢复页，本地修改未能持久化';
+        try {
+          const recovery = await api.createPage(`冲突恢复 ${new Date().toLocaleString()}`);
+          const empty = await api.loadPage(recovery.page.id);
+          await api.savePage(recovery.page.id, { nodes, edges }, empty.version);
+          if (sessionUserId && persistedDraft) clearTaskDraftIfMatching(sessionUserId, persistedDraft);
+          emitWorkspaceMetaUpdated(recovery.meta);
+          recoveryMessage = `本地修改已另存为“${recovery.page.title}”`;
+        } catch {
+          // The durable local draft remains the last-resort recovery point.
+        }
+        toast.error('保存冲突', `${recoveryMessage}，当前页已加载服务器版本`);
         try {
           const g = await api.loadPage(pid);
           if (generation !== getApiSessionGeneration()) return;
@@ -356,7 +381,23 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     },
   });
   const hasPendingSave = () => persistence.hasPending();
-  const scheduleSave = () => persistence.schedule();
+  const scheduleSave = () => {
+    const state = get();
+    if (sessionUserId && state.activePageId) {
+      const stored = saveTaskDraft(
+        sessionUserId,
+        state.activePageId,
+        state.pageVersion,
+        state.nodes,
+        state.edges,
+      );
+      if (typeof localStorage !== 'undefined' && !stored && !draftStorageWarningShown) {
+        draftStorageWarningShown = true;
+        toast.error('本地草稿不可用', '浏览器存储空间不足，请先导出工作区');
+      }
+    }
+    persistence.schedule();
+  };
   const flush = () => persistence.flush();
   /**
    * 在 mutation 之前记录前态快照 —— undo 返回的就是这个前态。
@@ -368,12 +409,27 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     useHistoryStore.getState().push({ nodes, edges });
   };
   const applyPage = (pageId: string, data: PageData) => {
-    const repaired = repairGeometry(data.nodes);
+    const draft = sessionUserId ? loadTaskDraft(sessionUserId, pageId) : null;
+    const serverMatchesDraft = draft
+      ? JSON.stringify({ nodes: draft.nodes, edges: draft.edges }) ===
+        JSON.stringify({ nodes: data.nodes, edges: data.edges })
+      : false;
+    if (draft && serverMatchesDraft && sessionUserId) clearTaskDraft(sessionUserId, pageId);
+    const recoveredDraft = draft && !serverMatchesDraft && draft.baseVersion === (data.version ?? 0)
+      ? draft
+      : null;
+    if (draft && !serverMatchesDraft && !recoveredDraft) {
+      toast.error('发现冲突草稿', '服务器版本已变化，本地草稿仍保存在此设备中');
+    }
+    const effective = recoveredDraft
+      ? { ...data, nodes: recoveredDraft.nodes, edges: recoveredDraft.edges }
+      : data;
+    const repaired = repairGeometry(effective.nodes);
     set((state) => ({
       activePageId: pageId,
       pageVersion: data.version ?? 0,
       nodes: repaired,
-      edges: data.edges,
+      edges: effective.edges,
       loaded: true,
       viewportCenter: null,
       backupDirty: false,
@@ -381,7 +437,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       listRevision: state.listRevision + 1,
     }));
     useHistoryStore.getState().clear();
-    if (repaired !== data.nodes) scheduleSave();
+    if (recoveredDraft) toast.info('已恢复本地草稿', '正在重新保存关闭前的修改');
+    if (recoveredDraft || repaired !== effective.nodes) scheduleSave();
   };
   const cancelScheduledSave = () => {
     persistence.cancel();
@@ -390,6 +447,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     loadRequestId += 1;
     stopPolling();
     cancelScheduledSave();
+    sessionUserId = null;
+    draftStorageWarningShown = false;
     useHistoryStore.getState().clear();
     set({
       activePageId: null,
@@ -435,12 +494,17 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     replaceLoadedPage: (pageId, data) => {
       loadRequestId += 1;
       cancelScheduledSave();
+      if (sessionUserId) clearTaskDraft(sessionUserId, pageId);
       applyPage(pageId, data);
       startPolling(pageId);
     },
     flush,
     hasPendingSave,
     resetSession,
+    setSessionUser: (userId) => {
+      sessionUserId = userId;
+      draftStorageWarningShown = false;
+    },
     addTask: ({ title, x, y, parentId }) => {
       pushPre();
       const safeTitle = (title || '未命名').slice(0, MAX_TITLE_LENGTH);

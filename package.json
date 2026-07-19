@@ -12,7 +12,7 @@
     "build": "pnpm -r build",
     "pretest": "pnpm --filter @todograph/shared build && pnpm --filter @todograph/core build && pnpm --filter @todograph/server build",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r exec tsc --noEmit",
+    "typecheck": "pnpm -r --filter \"./packages/**\" exec tsc --noEmit",
     "start:web": "pnpm --filter @todograph/server start",
     "package": "pnpm --filter @todograph/app package"
   },

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import { GraphSchema, type Graph, type Task } from '@todograph/shared';
 import type { GraphRepository } from './Repository.js';
+import { atomicWriteJson } from './durableFile.js';
 
 /**
  * 入门教程种子数据，新用户首次启动时展示。
@@ -48,9 +48,6 @@ export class FileRepository implements GraphRepository {
 
   async save(graph: Graph): Promise<void> {
     const valid = GraphSchema.parse(graph);
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const temporary = `${this.filePath}.tmp`;
-    await fs.writeFile(temporary, JSON.stringify(valid, null, 2), 'utf-8');
-    await fs.rename(temporary, this.filePath);
+    await atomicWriteJson(this.filePath, valid);
   }
 }

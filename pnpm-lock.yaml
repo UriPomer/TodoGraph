@@ -232,6 +232,9 @@ importers:
       fastify-type-provider-zod:
         specifier: ^4.0.2
         version: 4.0.2(fastify@5.8.5)(zod@3.25.76)
+      proper-lockfile:
+        specifier: ^4.1.2
+        version: 4.1.2
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -242,6 +245,9 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.17
+      '@types/proper-lockfile':
+        specifier: ^4.1.4
+        version: 4.1.4
       tsx:
         specifier: ^4.19.2
         version: 4.21.0
@@ -1423,6 +1429,9 @@ packages:
   '@types/prop-types@15.7.15':
     resolution: {integrity: sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw==}
 
+  '@types/proper-lockfile@4.1.4':
+    resolution: {integrity: sha512-uo2ABllncSqg9F1D4nugVl9v93RmjxF6LJzQLMLDdPaXCUIDPeOJ21Gbqi43xNKzBi/WQ0Q0dICqufzQbMjipQ==}
+
   '@types/react-dom@18.3.7':
     resolution: {integrity: sha512-MEe3UeoENYVFXzoXEWsvcpg6ZvlrFNlOQ7EOsvhI3CfAXwzPfO8Qwuxd40nepsYKqyyVQnTdEfv68q91yLcKrQ==}
     peerDependencies:
@@ -1436,6 +1445,9 @@ packages:
 
   '@types/responselike@1.0.3':
     resolution: {integrity: sha512-H/+L+UkTV33uf49PH5pCAUBVPNj2nDBXTN+qS1dOwyyg24l3CcicicCA7ca+HMvJBZcFgl5r8e+RR6elsb4Lyw==}
+
+  '@types/retry@0.12.5':
+    resolution: {integrity: sha512-3xSjTp3v03X/lSQLkczaN9UIEwJMoMCA1+Nb5HfbJEQWogdeQIyVtTvxPXDQjZ5zws8rFQfVfRdz03ARihPJgw==}
 
   '@types/yauzl@2.10.3':
     resolution: {integrity: sha512-oJoftv0LSuaDZE3Le4DbKX+KS9G36NzOeSap90UIK0yMA/NhKJhqlSGtNDORNRaIbQfzjXDrQa0ytJ6mNRGz/Q==}
@@ -4719,6 +4731,10 @@ snapshots:
 
   '@types/prop-types@15.7.15': {}
 
+  '@types/proper-lockfile@4.1.4':
+    dependencies:
+      '@types/retry': 0.12.5
+
   '@types/react-dom@18.3.7(@types/react@18.3.28)':
     dependencies:
       '@types/react': 18.3.28
@@ -4735,6 +4751,8 @@ snapshots:
   '@types/responselike@1.0.3':
     dependencies:
       '@types/node': 22.19.17
+
+  '@types/retry@0.12.5': {}
 
   '@types/yauzl@2.10.3':
     dependencies:

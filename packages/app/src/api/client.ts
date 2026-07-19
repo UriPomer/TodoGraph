@@ -16,7 +16,9 @@ export interface McpKeyInfo {
   label: string;
   createdAt: string;
   lastUsedAt?: string;
+  scopes: McpKeyScope[];
 }
+export type McpKeyScope = 'read' | 'write' | 'destructive';
 
 export interface GeneratedMcpKey extends McpKeyInfo {
   key: string;
@@ -25,6 +27,13 @@ export interface GeneratedMcpKey extends McpKeyInfo {
 export interface BackupInfo {
   name: string;
   createdAt: string;
+  size: number;
+}
+
+export interface TrashedPageInfo {
+  name: string;
+  deletedAt: string;
+  page: PageInfo;
   size: number;
 }
 
@@ -293,14 +302,29 @@ export const api = {
     const data = await json<{ backups: BackupInfo[] }>(res);
     return data.backups;
   },
-  async restoreBackup(pageId: string, backupName?: string): Promise<PageData> {
+  async restoreBackup(pageId: string, backupName?: string, expectedVersion?: number): Promise<PageData> {
     const res = await request(
       `/api/pages/${encodeURIComponent(pageId)}/restore`,
       'POST',
-      backupName ? { backupName } : undefined,
+      { ...(backupName ? { backupName } : {}), expectedVersion },
     );
+    await rejectConflict(res, 'page', pageId);
     const body = await json<{ data?: unknown }>(res);
     return PageDataSchema.parse(body.data);
+  },
+  async listTrashedPages(): Promise<TrashedPageInfo[]> {
+    const res = await apiFetch(`${getApiBase()}/api/trash/pages`);
+    return (await json<{ pages: TrashedPageInfo[] }>(res)).pages;
+  },
+  async restoreTrashedPage(
+    name: string,
+    expectedRevision?: number,
+  ): Promise<{ meta: Meta; page: PageInfo; data: PageData }> {
+    const res = await request(`/api/trash/pages/${encodeURIComponent(name)}/restore`, 'POST', {
+      expectedRevision,
+    });
+    const body = await json<{ meta: Meta; page: PageInfo; data: unknown }>(res);
+    return { ...body, data: PageDataSchema.parse(body.data) };
   },
   async loadAllTasks(): Promise<AllTasksResponse> {
     const res = await apiFetch(`${getApiBase()}/api/all-tasks`);
@@ -333,8 +357,8 @@ export const api = {
     const data = await json<{ keys: McpKeyInfo[] }>(res);
     return data.keys;
   },
-  async generateMcpKey(label: string): Promise<GeneratedMcpKey> {
-    const res = await request('/api/mcp/keys', 'POST', { label });
+  async generateMcpKey(label: string, scopes: McpKeyScope[] = ['read', 'write']): Promise<GeneratedMcpKey> {
+    const res = await request('/api/mcp/keys', 'POST', { label, scopes });
     return json<GeneratedMcpKey>(res);
   },
   async revokeMcpKey(id: string): Promise<void> {

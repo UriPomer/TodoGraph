@@ -2,7 +2,7 @@ import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import '@fastify/secure-session';
 import type { StoredUser, UserRepository } from './repositories/UserRepository.js';
-import type { McpKeyStore } from './mcp-keys.js';
+import type { McpKeyScope, McpKeyStore } from './mcp-keys.js';
 import type { RememberTokenRepository } from './repositories/RememberTokenRepository.js';
 
 const SALT_LEN = 32;
@@ -397,7 +397,7 @@ function parseMCPKeys(): Map<string, string> {
 async function resolveUserId(
   authHeader: string | undefined,
   keyStore: McpKeyStore | null,
-): Promise<string | null> {
+): Promise<{ userId: string; scopes: McpKeyScope[] } | null> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
   const token = authHeader.slice(7);
 
@@ -406,18 +406,19 @@ async function resolveUserId(
   if (mcpKeys.size > 0) {
     // 拒绝短 key（env 配置中 key < 20 字符视为 misconfiguration）
     if (token.length < 20) return null;
-    return mcpKeys.get(token) ?? null;
+    const userId = mcpKeys.get(token);
+    return userId ? { userId, scopes: ['read', 'write', 'destructive'] } : null;
   }
 
   // 2. 单用户模式（env）：MCP_API_KEY + MCP_USER_ID
   if (MCP_API_KEY && MCP_USER_ID && secureStringEqual(token, MCP_API_KEY)) {
     if (MCP_API_KEY.length < 20) return null;
-    return MCP_USER_ID;
+    return { userId: MCP_USER_ID, scopes: ['read', 'write', 'destructive'] };
   }
 
   // 3. 动态 key（文件存储）：用户在 UI 里生成的 key
   if (keyStore) {
-    return keyStore.findUserId(token);
+    return keyStore.findPrincipal(token);
   }
 
   return null;
@@ -443,13 +444,13 @@ export function authHook(
     if (!req.url.startsWith('/api/')) return;
 
     // API key 优先：env 配置或动态 key 文件
-    const mcpUserId = await resolveUserId(req.headers.authorization, keyStore);
-    if (mcpUserId) {
+    const mcpPrincipal = await resolveUserId(req.headers.authorization, keyStore);
+    if (mcpPrincipal) {
       // 白名单：API key 只能访问 MCP 工具所需的端点
-      if (!isAPIKeyAllowed(req.method, req.url)) {
+      if (!isAPIKeyAllowed(req.method, req.url, mcpPrincipal.scopes)) {
         return reply.status(403).send({ ok: false, error: 'API key 不能直接访问此端点，请通过 MCP 工具操作' });
       }
-      req.authUserId = mcpUserId;
+      req.authUserId = mcpPrincipal.userId;
       return;
     }
 
@@ -475,27 +476,28 @@ export function authHook(
  * API key 端点白名单。
  * key: "METHOD:/api/path/pattern"  用 {id} 代表动态段。
  */
-const API_KEY_ALLOWLIST = new Set([
-  'GET:/api/meta',
-  'GET:/api/pages/{id}',
-  'GET:/api/pages/{id}/backups',
-  'GET:/api/all-tasks',
-  'POST:/api/pages',
-  'PUT:/api/pages/{id}',
-  'DELETE:/api/pages/{id}',
-  'POST:/api/pages/{id}/backup',
-  'POST:/api/pages/{id}/commands',
-  'POST:/api/pages/{id}/restore',
-  'POST:/api/pages/{id}/move-nodes',
+const API_KEY_ALLOWLIST = new Map<string, McpKeyScope>([
+  ['GET:/api/meta', 'read'],
+  ['GET:/api/pages/{id}', 'read'],
+  ['GET:/api/pages/{id}/backups', 'read'],
+  ['GET:/api/all-tasks', 'read'],
+  ['POST:/api/pages', 'write'],
+  ['PUT:/api/pages/{id}', 'write'],
+  ['POST:/api/pages/{id}/backup', 'write'],
+  ['POST:/api/pages/{id}/commands', 'write'],
+  ['DELETE:/api/pages/{id}', 'destructive'],
+  ['POST:/api/pages/{id}/restore', 'destructive'],
+  ['POST:/api/pages/{id}/move-nodes', 'destructive'],
+  ['POST:/api/pages/{id}/merge', 'destructive'],
 ]);
 
-function isAPIKeyAllowed(method: string, url: string): boolean {
+function isAPIKeyAllowed(method: string, url: string, scopes: McpKeyScope[]): boolean {
   // 去除 query string
   const path = url.split('?')[0]!;
-  for (const pattern of API_KEY_ALLOWLIST) {
+  for (const [pattern, requiredScope] of API_KEY_ALLOWLIST) {
     const [pm, pp] = pattern.split(':', 2);
     if (pm !== method) continue;
-    if (matchPath(pp!, path)) return true;
+    if (matchPath(pp!, path)) return scopes.includes(requiredScope);
   }
   return false;
 }

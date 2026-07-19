@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import path from 'node:path';
 import os from 'node:os';
 import { promises as fs } from 'node:fs';
+import { SYSTEM_HIERARCHY_PAGE_ID } from '@todograph/shared';
 import type { FastifyInstance } from 'fastify';
 
 import { handleListPages, handleGetPage, handleCreatePage, handleMergePages } from '../src/tools/pages.js';
@@ -88,6 +89,17 @@ describe('MCP tools integration', () => {
 
       const tgtPage = await handleGetPage(client, { page_id: tgt.page.id });
       expect(tgtPage.tasks.length).toBe(2);
+    });
+
+    it('merge_pages refuses to mutate the protected hierarchy page', async () => {
+      const target = await handleCreatePage(client, { title: '普通目标页' });
+      const before = await handleGetPage(client, { page_id: SYSTEM_HIERARCHY_PAGE_ID });
+
+      await expect(handleMergePages(client, {
+        source_page_id: SYSTEM_HIERARCHY_PAGE_ID,
+        target_page_id: target.page.id,
+      })).rejects.toThrow('system page cannot be merged');
+      await expect(handleGetPage(client, { page_id: SYSTEM_HIERARCHY_PAGE_ID })).resolves.toEqual(before);
     });
   });
 

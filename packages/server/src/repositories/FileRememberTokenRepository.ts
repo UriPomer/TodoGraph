@@ -1,6 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { withFilesystemLock } from './fileLock.js';
+import { atomicWriteJson } from './durableFile.js';
 import { z } from 'zod';
 import type {
   ConsumeRememberTokenResult,
@@ -167,10 +169,7 @@ export class FileRememberTokenRepository implements RememberTokenRepository {
   }
 
   private async writeTokens(tokens: RememberToken[]): Promise<void> {
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tmpPath = `${this.filePath}.tmp`;
-    await fs.writeFile(tmpPath, JSON.stringify(tokens, null, 2), 'utf8');
-    await fs.rename(tmpPath, this.filePath);
+    await atomicWriteJson(this.filePath, tokens);
   }
 
   private async withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -181,7 +180,7 @@ export class FileRememberTokenRepository implements RememberTokenRepository {
     });
     await previous;
     try {
-      return await operation();
+      return await withFilesystemLock(path.dirname(this.filePath), operation, '.identity.lock');
     } finally {
       release();
     }

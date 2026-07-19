@@ -19,7 +19,7 @@ pnpm package          # Build Windows portable EXE (electron-builder)
 
 ## Architecture
 
-This is a **pnpm monorepo** with five packages:
+This is a **pnpm monorepo** with six packages. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the canonical system and persistence flow.
 
 | Package | Role |
 |---|---|
@@ -28,14 +28,16 @@ This is a **pnpm monorepo** with five packages:
 | `@todograph/server` | Fastify 5 backend. Serves REST API and optionally static frontend files. |
 | `@todograph/app` | React 18 + Vite frontend + Electron shell. React Flow graph editor, Zustand stores, shadcn/ui components. |
 | `@todograph/mcp` | Independently published MCP server and TodoGraph tools. |
+| `@todograph/desktop-host` | Owns the loopback Fastify lifecycle and session secret used by Electron. |
 
 ## Data flow
 
 1. **TaskStore** (`useTaskStore`) is the single source of truth for the current page's nodes/edges. All writes go through it → 250ms debounced save to server → server validates DAG (cycle check) → writes JSON.
 2. **WorkspaceStore** (`useWorkspaceStore`) manages multi-page orchestration — meta, page CRUD, cross-page move, all-tasks aggregation.
 3. **Undo/redo**: `useHistoryStore` holds snapshots. Every mutation in `useTaskStore` calls `pushPre()` before modifying state.
-4. **Save path**: `useTaskStore.scheduleSave()` → 250ms debounce → `api.savePage()` → `PUT /api/pages/:id` → server validates dependency DAG and task hierarchy → `FileWorkspaceRepository.savePage()` (atomic tmp+rename).
+4. **Save path**: `useTaskStore.scheduleSave()` → 250ms debounce → `api.savePage()` → `PUT /api/pages/:id` → server validates capacity, dependency DAG and task hierarchy → `FileWorkspaceRepository.savePage()` (fsync + atomic rename).
 5. **Session lifecycle**: `WorkspaceStore.resetSession()` owns logout/account-switch cleanup for task state, history, pending saves, and polling. Protected API 401 responses invalidate auth globally.
+6. **Recovery path**: every mutation is mirrored to a user-scoped local draft; destructive repository operations create a flushed backup, tombstone, or journal before their commit point. The account/data panel exposes draft, backup, and deleted-page restoration.
 
 ## Key architectural decisions
 

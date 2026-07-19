@@ -60,41 +60,15 @@ export async function handleMergePages(
     throw new Error('source and target are the same page');
   }
 
-  // 备份两页
-  await Promise.allSettled([
-    c.post(`/api/pages/${encodeURIComponent(params.source_page_id)}/backup`),
-    c.post(`/api/pages/${encodeURIComponent(params.target_page_id)}/backup`),
-  ]);
-
-  const source = await c.get<{ nodes: Array<{ id: string }>; version?: number }>(
-    `/api/pages/${encodeURIComponent(params.source_page_id)}`,
-  );
-  const nodeIds = source.nodes.map((n) => n.id);
-
-  let moveResult: {
+  return c.post<{
     movedNodes: number;
     movedEdges: number;
     autoIncludedChildren: number;
     lostEdges: number;
     droppedParentLinks: number;
-  } = { movedNodes: 0, movedEdges: 0, autoIncludedChildren: 0, lostEdges: 0, droppedParentLinks: 0 };
-
-  if (nodeIds.length > 0) {
-    moveResult = await c.post<typeof moveResult>(
-      `/api/pages/${encodeURIComponent(params.source_page_id)}/move-nodes`,
-      {
-        targetPageId: params.target_page_id,
-        nodeIds,
-      },
-    );
-  }
-
-  const meta = await c.get<{ revision: number }>('/api/meta');
-  await c.delete(`/api/pages/${encodeURIComponent(params.source_page_id)}`, {
-    expectedRevision: meta.revision,
+  }>(`/api/pages/${encodeURIComponent(params.source_page_id)}/merge`, {
+    targetPageId: params.target_page_id,
   });
-
-  return moveResult;
 }
 
 // ── MCP Registration ──

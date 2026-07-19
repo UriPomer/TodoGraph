@@ -3,32 +3,40 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
   GraphSchema,
-  MAX_PAGE_TITLE_LENGTH,
-  MAX_TASK_TITLE_LENGTH,
   MetaSchema,
-  PageDataSchema,
+  PageInfoSchema,
   SYSTEM_HIERARCHY_PAGE_ID,
   SYSTEM_HIERARCHY_PAGE_TITLE,
   pageSupportsDependencyGraph,
   resolveNodeOverlaps,
-  validateDependencyEdges,
-  validateNoSiblingOverlaps,
-  validateTaskHierarchy,
   type Graph,
   type Meta,
   type PageData,
   type PageInfo,
 } from '@todograph/shared';
-import { isDAG } from '@todograph/core';
 import {
   type BackupInfo,
   MetaVersionConflictError,
-  NodeOverlapError,
-  TaskTitleTooLongError,
+  type TrashedPageInfo,
   type WorkspaceExport,
   type WorkspaceRepository,
   VersionConflictError,
 } from './Repository.js';
+import { withFilesystemLock } from './fileLock.js';
+import {
+  atomicWriteJson,
+  atomicWriteText,
+  copyFileDurable,
+  syncDirectory,
+} from './durableFile.js';
+import {
+  assertNoNodeOverlaps,
+  assertPageCapacity,
+  assertPageTitleLength,
+  collectLegacyLongTaskTitles,
+  isSafePageId,
+  parseValidPageData,
+} from './workspaceValidation.js';
 import { SEED_GRAPH } from './FileRepository.js';
 
 interface LockState {
@@ -64,6 +72,10 @@ interface WorkspaceImportJournal {
 }
 
 const workspaceLocks = new Map<string, LockState>();
+const MAX_WORKSPACE_PAGES = 500;
+const MAX_PAGE_BACKUPS = 50;
+const MAX_IMPORT_BACKUPS = 20;
+const MAX_TRASHED_PAGES = 100;
 
 async function withWorkspaceLock<T>(key: string, task: () => Promise<T>): Promise<T> {
   const state = workspaceLocks.get(key) ?? { tail: Promise.resolve(), active: 0 };
@@ -124,12 +136,16 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   }
 
   async loadPage(pageId: string): Promise<PageData> {
-    return this.runLocked(() => this.loadPageUnlocked(pageId));
+    return this.runLocked(async () => {
+      this.assertKnownPage(await this.loadMetaUnlocked(), pageId);
+      return this.loadPageUnlocked(pageId);
+    });
   }
 
   async savePage(pageId: string, data: PageData, expectedVersion?: number): Promise<number> {
     return this.runLocked(async () => {
       const meta = await this.loadMetaUnlocked();
+      this.assertKnownPage(meta, pageId);
       this.assertPageAllowsDependencies(meta, pageId, data);
       return this.savePageUnlocked(pageId, data, expectedVersion);
     });
@@ -141,6 +157,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     return this.runLocked(async () => {
       const meta = await this.loadMetaUnlocked();
       for (const entry of entries) {
+        this.assertKnownPage(meta, entry.pageId);
         this.assertPageAllowsDependencies(meta, entry.pageId, entry.data);
       }
       return this.savePagesUnlocked(entries);
@@ -151,6 +168,9 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     return this.runLocked(async () => {
       const meta = await this.loadMetaUnlocked();
       this.assertMetaRevision(meta, expectedRevision);
+      if (meta.pages.length >= MAX_WORKSPACE_PAGES) {
+        throw new Error(`workspace exceeds ${MAX_WORKSPACE_PAGES} pages`);
+      }
       const id = makePageId(title);
       const maxOrder = meta.pages.reduce((m, p) => Math.max(m, p.order), -1);
       const cleanedTitle = title.trim() || '新页面';
@@ -164,7 +184,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       // Page first, then meta: committed metadata must never reference a missing page file.
       await this.savePageUnlocked(id, { nodes: [], edges: [] });
       const nextMeta = this.bumpMeta({ ...meta, pages: [...meta.pages, info] });
-      await this.atomicWriteJson(this.metaPath, nextMeta);
+      await atomicWriteJson(this.metaPath, nextMeta);
       return { page: info, meta: nextMeta };
     });
   }
@@ -190,10 +210,23 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
             meta.activePageId)
           : meta.activePageId;
       const nextMeta = this.bumpMeta({ ...meta, pages: nextPages, activePageId: nextActive });
-      // Meta first, then unlink: a failed unlink leaves an invisible orphan, not a ghost page.
-      await this.atomicWriteJson(this.metaPath, nextMeta);
+      // Persist a tombstone before metadata makes the page unreachable.
+      const deletedAt = new Date().toISOString();
+      const pageRaw = await fs.readFile(this.pageFilePath(pageId), 'utf-8');
+      const trashDir = path.join(this.dataDir, 'trash', 'pages');
+      await atomicWriteText(
+        path.join(trashDir, `${deletedAt.replace(/[:.]/g, '-')}-${pageId}.json`),
+        JSON.stringify({
+          deletedAt,
+          page: meta.pages.find((page) => page.id === pageId),
+          data: JSON.parse(pageRaw),
+        }, null, 2),
+      );
+      await this.pruneJsonFiles(trashDir, MAX_TRASHED_PAGES);
+      await atomicWriteJson(this.metaPath, nextMeta);
       try {
         await fs.unlink(this.pageFilePath(pageId));
+        await syncDirectory(this.pagesDir);
       } catch (err) {
         const e = err as NodeJS.ErrnoException;
         // Meta is the commit point. A failed unlink leaves an unreachable orphan,
@@ -215,7 +248,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       const nextPages = [...meta.pages];
       nextPages[idx] = { ...nextPages[idx]!, title: cleaned };
       const nextMeta = this.bumpMeta({ ...meta, pages: nextPages });
-      await this.atomicWriteJson(this.metaPath, nextMeta);
+      await atomicWriteJson(this.metaPath, nextMeta);
       return nextMeta;
     });
   }
@@ -232,7 +265,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         ids.map((id, order) => ({ ...byId.get(id)!, order })),
       );
       const nextMeta = this.bumpMeta({ ...meta, pages: nextPages });
-      await this.atomicWriteJson(this.metaPath, nextMeta);
+      await atomicWriteJson(this.metaPath, nextMeta);
       return nextMeta;
     });
   }
@@ -246,7 +279,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       }
       if (meta.activePageId === pageId) return meta;
       const nextMeta = this.bumpMeta({ ...meta, activePageId: pageId });
-      await this.atomicWriteJson(this.metaPath, nextMeta);
+      await atomicWriteJson(this.metaPath, nextMeta);
       return nextMeta;
     });
   }
@@ -260,20 +293,20 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       const validated = this.validateWorkspaceImport(data);
       const importBackupDir = path.join(this.dataDir, 'backups', '_workspace-imports');
       await fs.mkdir(importBackupDir, { recursive: true });
-      const snapshot = await this.exportWorkspaceUnlocked().catch(() => null);
-      if (snapshot) {
-        const name = new Date().toISOString().replace(/[:.]/g, '-') + '.json';
-        await this.atomicWriteText(
-          path.join(importBackupDir, name),
-          JSON.stringify(snapshot, null, 2),
-        );
-      }
-      const meta = { ...validated.meta, revision: Math.max(validated.meta.revision, snapshot?.meta.revision ?? 0) + 1 };
+      // Import is destructive, so failure to snapshot the current workspace aborts it.
+      const snapshot = await this.exportWorkspaceUnlocked();
+      const name = new Date().toISOString().replace(/[:.]/g, '-') + '.json';
+      await atomicWriteText(
+        path.join(importBackupDir, name),
+        JSON.stringify(snapshot, null, 2),
+      );
+      await this.pruneJsonFiles(importBackupDir, MAX_IMPORT_BACKUPS);
+      const meta = { ...validated.meta, revision: Math.max(validated.meta.revision, snapshot.meta.revision) + 1 };
       const pages = Object.fromEntries(Object.entries(validated.pages).map(([pageId, page]) =>
         [pageId, {
           ...page,
           nodes: resolveNodeOverlaps(page.nodes).nodes,
-          version: Math.max(page.version ?? 0, snapshot?.pages[pageId]?.version ?? 0) + 1,
+          version: Math.max(page.version ?? 0, snapshot.pages[pageId]?.version ?? 0) + 1,
         }]));
 
       const stagingDirName = `.workspace-import-staging-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -282,9 +315,9 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       const stagedMetaPath = path.join(stagingDir, 'meta.json');
       await fs.mkdir(stagedPagesDir, { recursive: true });
       for (const [pageId, pageData] of Object.entries(pages)) {
-        await this.atomicWriteJson(path.join(stagedPagesDir, `${pageId}.json`), pageData);
+        await atomicWriteJson(path.join(stagedPagesDir, `${pageId}.json`), pageData);
       }
-      await this.atomicWriteJson(stagedMetaPath, meta);
+      await atomicWriteJson(stagedMetaPath, meta);
 
       const previousMetaRaw = await fs.readFile(this.metaPath, 'utf-8').catch((err: unknown) => {
         const e = err as NodeJS.ErrnoException;
@@ -304,25 +337,27 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
           Object.entries(pages).map(([pageId, pageData]) => [pageId, this.hashJson(pageData)]),
         ),
       };
-      await this.atomicWriteJson(this.workspaceImportJournalPath, journal);
+      await atomicWriteJson(this.workspaceImportJournalPath, journal);
 
       try {
         if (backupPagesDirName) {
           await fs.rename(this.pagesDir, path.join(this.dataDir, backupPagesDirName));
+          await syncDirectory(this.dataDir);
           journal.phase = 'live_pages_backed_up';
-          await this.atomicWriteJson(this.workspaceImportJournalPath, journal);
+          await atomicWriteJson(this.workspaceImportJournalPath, journal);
         }
 
         await fs.rename(stagedPagesDir, this.pagesDir);
+        await syncDirectory(this.dataDir);
         journal.phase = 'staged_pages_live';
-        await this.atomicWriteJson(this.workspaceImportJournalPath, journal);
+        await atomicWriteJson(this.workspaceImportJournalPath, journal);
 
         journal.phase = 'meta_commit_started';
-        await this.atomicWriteJson(this.workspaceImportJournalPath, journal);
+        await atomicWriteJson(this.workspaceImportJournalPath, journal);
 
-        await this.atomicWriteJson(this.metaPath, meta);
+        await atomicWriteJson(this.metaPath, meta);
         journal.phase = 'committed';
-        await this.atomicWriteJson(this.workspaceImportJournalPath, journal);
+        await atomicWriteJson(this.workspaceImportJournalPath, journal);
       } catch (err) {
         await this.restoreWorkspaceImportJournalUnlocked(journal);
         throw err;
@@ -333,16 +368,16 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     });
   }
 
-  async listPageMtimes(): Promise<Array<{ pageId: string; mtimeMs: number }>> {
+  async listPageMtimes(): Promise<Array<{ pageId: string; mtimeMs: number | null }>> {
     return this.runLocked(async () => {
       const meta = await this.loadMetaUnlocked();
-      const out: Array<{ pageId: string; mtimeMs: number }> = [];
+      const out: Array<{ pageId: string; mtimeMs: number | null }> = [];
       for (const p of meta.pages) {
         try {
           const st = await fs.stat(this.pageFilePath(p.id));
           out.push({ pageId: p.id, mtimeMs: st.mtimeMs });
         } catch {
-          out.push({ pageId: p.id, mtimeMs: 0 });
+          out.push({ pageId: p.id, mtimeMs: null });
         }
       }
       return out;
@@ -351,47 +386,37 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
 
   async createBackup(pageId: string): Promise<void> {
     return this.runLocked(async () => {
-      const src = this.pageFilePath(pageId);
-      const backupDir = path.join(this.dataDir, 'backups', pageId);
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      const dest = path.join(backupDir, `${ts}.json`);
-      await fs.mkdir(backupDir, { recursive: true });
-      await fs.copyFile(src, dest);
-
-      const entries = await fs.readdir(backupDir);
-      // Retention is bounded so automatic backups cannot grow without limit.
-      const jsonFiles = entries
-        .filter((f) => f.endsWith('.json'))
-        .sort();
-      while (jsonFiles.length > 50) {
-        const oldest = jsonFiles.shift()!;
-        try {
-          await fs.unlink(path.join(backupDir, oldest));
-        } catch {
-        }
-      }
+      this.assertKnownPage(await this.loadMetaUnlocked(), pageId);
+      await this.createBackupUnlocked(pageId);
     });
   }
 
   async listBackups(pageId: string): Promise<BackupInfo[]> {
     this.assertSafePageId(pageId);
-    return this.runLocked(() => this.listBackupsUnlocked(pageId));
+    return this.runLocked(async () => {
+      this.assertKnownPage(await this.loadMetaUnlocked(), pageId);
+      return this.listBackupsUnlocked(pageId);
+    });
   }
 
-  async restoreBackup(pageId: string, backupName: string): Promise<PageData> {
+  async restoreBackup(pageId: string, backupName: string, expectedVersion?: number): Promise<PageData> {
     this.assertSafePageId(pageId);
     this.assertSafeBackupName(backupName);
-    return this.runLocked(() => this.restoreBackupUnlocked(pageId, backupName));
+    return this.runLocked(async () => {
+      this.assertKnownPage(await this.loadMetaUnlocked(), pageId);
+      return this.restoreBackupUnlocked(pageId, backupName, expectedVersion);
+    });
   }
 
-  async restoreLatestBackup(pageId: string): Promise<PageData> {
+  async restoreLatestBackup(pageId: string, expectedVersion?: number): Promise<PageData> {
     this.assertSafePageId(pageId);
     return this.runLocked(async () => {
+      this.assertKnownPage(await this.loadMetaUnlocked(), pageId);
       const backups = await this.listBackupsUnlocked(pageId);
       if (backups.length === 0) {
         throw new Error(`no backup found for page ${pageId}`);
       }
-      return this.restoreBackupUnlocked(pageId, backups[0]!.name);
+      return this.restoreBackupUnlocked(pageId, backups[0]!.name, expectedVersion);
     });
   }
 
@@ -420,17 +445,100 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     }
   }
 
-  private async restoreBackupUnlocked(pageId: string, backupName: string): Promise<PageData> {
+  private async restoreBackupUnlocked(
+    pageId: string,
+    backupName: string,
+    expectedVersion?: number,
+  ): Promise<PageData> {
     const src = path.join(this.dataDir, 'backups', pageId, backupName);
     const restored = parseValidPageData(JSON.parse(await fs.readFile(src, 'utf-8')), pageId, undefined, false);
     const current = await this.loadPageUnlocked(pageId);
+    if (expectedVersion !== undefined && expectedVersion !== (current.version ?? 0)) {
+      throw new VersionConflictError(pageId, current.version ?? 0);
+    }
     const next = {
       ...restored,
       nodes: resolveNodeOverlaps(restored.nodes).nodes,
       version: Math.max(restored.version ?? 0, current.version ?? 0) + 1,
     };
-    await this.atomicWriteJson(this.pageFilePath(pageId), next);
+    // Restores are reversible: snapshot the live page before overwriting it.
+    await this.createBackupUnlocked(pageId);
+    await atomicWriteJson(this.pageFilePath(pageId), next);
     return next;
+  }
+
+  async listTrashedPages(): Promise<TrashedPageInfo[]> {
+    return this.runLocked(async () => {
+      const meta = await this.loadMetaUnlocked();
+      const liveIds = new Set(meta.pages.map((page) => page.id));
+      const trashDir = path.join(this.dataDir, 'trash', 'pages');
+      try {
+        const entries = (await fs.readdir(trashDir)).filter((name) => name.endsWith('.json'));
+        const items = await Promise.all(entries.map(async (name): Promise<TrashedPageInfo | null> => {
+          const fullPath = path.join(trashDir, name);
+          const raw = JSON.parse(await fs.readFile(fullPath, 'utf-8')) as Record<string, unknown>;
+          const page = PageInfoSchema.parse(raw.page);
+          if (liveIds.has(page.id)) return null;
+          const deletedAt = typeof raw.deletedAt === 'string' ? raw.deletedAt : '';
+          parseValidPageData(raw.data, page.id, undefined, false);
+          return { name, deletedAt, page, size: (await fs.stat(fullPath)).size };
+        }));
+        return items.filter((item): item is TrashedPageInfo => item !== null)
+          .sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+        throw error;
+      }
+    });
+  }
+
+  async restoreTrashedPage(
+    name: string,
+    expectedRevision?: number,
+  ): Promise<{ meta: Meta; page: PageInfo; data: PageData }> {
+    this.assertSafeTrashName(name);
+    return this.runLocked(async () => {
+      const meta = await this.loadMetaUnlocked();
+      this.assertMetaRevision(meta, expectedRevision);
+      if (meta.pages.length >= MAX_WORKSPACE_PAGES) {
+        throw new Error(`workspace exceeds ${MAX_WORKSPACE_PAGES} pages`);
+      }
+      const trashPath = path.join(this.dataDir, 'trash', 'pages', name);
+      const raw = JSON.parse(await fs.readFile(trashPath, 'utf-8')) as Record<string, unknown>;
+      const originalPage = PageInfoSchema.parse(raw.page);
+      if (meta.pages.some((page) => page.id === originalPage.id)) {
+        throw new Error(`page already exists: ${originalPage.id}`);
+      }
+      const restored = parseValidPageData(raw.data, originalPage.id, undefined, false);
+      assertPageCapacity(restored, originalPage.id);
+      const page: PageInfo = {
+        ...originalPage,
+        order: meta.pages.reduce((max, candidate) => Math.max(max, candidate.order), -1) + 1,
+      };
+      await this.savePageUnlocked(page.id, restored);
+      const nextMeta = this.bumpMeta({ ...meta, pages: pinSystemPageFirst([...meta.pages, page]) });
+      await atomicWriteJson(this.metaPath, nextMeta);
+      await fs.unlink(trashPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') return;
+      });
+      await syncDirectory(path.dirname(trashPath));
+      return { meta: nextMeta, page, data: await this.loadPageUnlocked(page.id) };
+    });
+  }
+
+  private async createBackupUnlocked(pageId: string): Promise<void> {
+    const src = this.pageFilePath(pageId);
+    const backupDir = path.join(this.dataDir, 'backups', pageId);
+    await fs.mkdir(backupDir, { recursive: true });
+    let timestamp = Date.now();
+    let destination: string;
+    do {
+      const name = new Date(timestamp).toISOString().replace(/[:.]/g, '-') + '.json';
+      destination = path.join(backupDir, name);
+      timestamp += 1;
+    } while (await this.pathExists(destination));
+    await copyFileDurable(src, destination);
+    await this.pruneJsonFiles(backupDir, MAX_PAGE_BACKUPS);
   }
 
   private assertSafeBackupName(backupName: string): void {
@@ -451,15 +559,23 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     }
   }
 
-  private async atomicWriteJson(target: string, data: unknown): Promise<void> {
-    await this.atomicWriteText(target, JSON.stringify(data, null, 2));
+  private assertSafeTrashName(name: string): void {
+    if (path.basename(name) !== name || !name.endsWith('.json') || name.length > 300) {
+      throw new Error('invalid trash entry name');
+    }
   }
 
-  private async atomicWriteText(target: string, text: string): Promise<void> {
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    const tmp = target + '.tmp';
-    await fs.writeFile(tmp, text, 'utf-8');
-    await fs.rename(tmp, target);
+  private async pruneJsonFiles(directory: string, limit: number): Promise<void> {
+    const jsonFiles = (await fs.readdir(directory)).filter((file) => file.endsWith('.json')).sort();
+    let changed = false;
+    while (jsonFiles.length > limit) {
+      const oldest = jsonFiles.shift()!;
+      await fs.unlink(path.join(directory, oldest)).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+      });
+      changed = true;
+    }
+    if (changed) await syncDirectory(directory);
   }
 
   private assertMetaRevision(meta: Meta, expectedRevision?: number): void {
@@ -477,11 +593,13 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   }
 
   private async runLocked<T>(task: () => Promise<T>): Promise<T> {
-    return withWorkspaceLock(this.workspaceLockKey(), async () => {
-      await this.recoverPendingWorkspaceImportUnlocked();
-      await this.recoverPendingSavePagesUnlocked();
-      return task();
-    });
+    return withWorkspaceLock(this.workspaceLockKey(), () =>
+      withFilesystemLock(this.dataDir, async () => {
+        await this.recoverPendingWorkspaceImportUnlocked();
+        await this.recoverPendingSavePagesUnlocked();
+        return task();
+      }),
+    );
   }
 
   private async loadMetaUnlocked(): Promise<Meta> {
@@ -490,26 +608,61 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       const raw = await fs.readFile(this.metaPath, 'utf-8');
       const parsed = JSON.parse(raw);
       meta = MetaSchema.parse(parsed);
+      await this.finalizeOwnedLegacyV2Claim();
     } catch (err: unknown) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== 'ENOENT') throw err;
-      if (this.legacyV2Dir) {
-        const legacyMetaPath = path.join(this.legacyV2Dir, 'meta.json');
-        let legacyMetaExists = false;
-        try {
-          await fs.access(legacyMetaPath);
-          legacyMetaExists = true;
-        } catch (accessError) {
-          if ((accessError as NodeJS.ErrnoException).code !== 'ENOENT') throw accessError;
-        }
-        if (legacyMetaExists) {
-          meta = await this.migrateFromLegacyV2(legacyMetaPath);
-          return this.ensureSystemHierarchyPageUnlocked(meta);
-        }
+      const migrated = await this.claimAndMigrateLegacyV2();
+      if (migrated) {
+        return this.ensureSystemHierarchyPageUnlocked(migrated);
       }
       meta = await this.migrateFromLegacyOrSeed();
     }
     return this.ensureSystemHierarchyPageUnlocked(meta);
+  }
+
+  private legacyV2ClaimPath(): string | null {
+    if (!this.legacyV2Dir) return null;
+    const owner = createHash('sha256').update(path.resolve(this.dataDir)).digest('hex').slice(0, 16);
+    return path.join(this.legacyV2Dir, `meta.json.v2.claimed-${owner}`);
+  }
+
+  private async claimAndMigrateLegacyV2(): Promise<Meta | null> {
+    if (!this.legacyV2Dir) return null;
+    return withFilesystemLock(this.legacyV2Dir, async () => {
+      const legacyMetaPath = path.join(this.legacyV2Dir!, 'meta.json');
+      const claimPath = this.legacyV2ClaimPath()!;
+      let source = claimPath;
+      if (!(await this.pathExists(claimPath))) {
+        if (!(await this.pathExists(legacyMetaPath))) return null;
+        await fs.rename(legacyMetaPath, claimPath);
+        await syncDirectory(this.legacyV2Dir!);
+      }
+      try {
+        const migrated = await this.migrateFromLegacyV2(source);
+        await fs.rename(source, path.join(this.legacyV2Dir!, 'meta.json.v2.bak'));
+        await syncDirectory(this.legacyV2Dir!);
+        return migrated;
+      } catch (error) {
+        if (await this.pathExists(source)) {
+          await fs.rename(source, legacyMetaPath).catch(() => {});
+          await syncDirectory(this.legacyV2Dir!);
+        }
+        throw error;
+      }
+    }, '.legacy-v2-migration.lock');
+  }
+
+  private async finalizeOwnedLegacyV2Claim(): Promise<void> {
+    if (!this.legacyV2Dir) return;
+    const claimPath = this.legacyV2ClaimPath()!;
+    if (!(await this.pathExists(claimPath))) return;
+    await withFilesystemLock(this.legacyV2Dir, async () => {
+      if (await this.pathExists(claimPath)) {
+        await fs.rename(claimPath, path.join(this.legacyV2Dir!, 'meta.json.v2.bak'));
+        await syncDirectory(this.legacyV2Dir!);
+      }
+    }, '.legacy-v2-migration.lock');
   }
 
   private async ensureSystemHierarchyPageUnlocked(meta: Meta): Promise<Meta> {
@@ -525,7 +678,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       );
       if (unchanged) return meta;
       const nextMeta = this.bumpMeta({ ...meta, pages: orderedPages });
-      await this.atomicWriteJson(this.metaPath, nextMeta);
+      await atomicWriteJson(this.metaPath, nextMeta);
       return nextMeta;
     }
 
@@ -542,14 +695,22 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       ...meta,
       pages: pinSystemPageFirst([...meta.pages, systemPage]),
     });
-    await this.atomicWriteJson(this.metaPath, nextMeta);
+    await atomicWriteJson(this.metaPath, nextMeta);
     return nextMeta;
   }
 
   private assertPageAllowsDependencies(meta: Meta, pageId: string, data: PageData): void {
     const page = meta.pages.find((candidate) => candidate.id === pageId);
+    if (!page) throw new Error(`page not found: ${pageId}`);
     if (!pageSupportsDependencyGraph(page) && data.edges.length > 0) {
       throw new Error(`page does not support dependency edges: ${pageId}`);
+    }
+  }
+
+  private assertKnownPage(meta: Meta, pageId: string): void {
+    this.assertSafePageId(pageId);
+    if (!meta.pages.some((page) => page.id === pageId)) {
+      throw new Error(`page not found: ${pageId}`);
     }
   }
 
@@ -574,8 +735,9 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
 
     const newVersion = currentVersion + 1;
     const valid = parseValidPageData(data, pageId, legacyLongTitles);
+    assertPageCapacity(valid, pageId);
     assertNoNodeOverlaps(valid, pageId);
-    await this.atomicWriteJson(filePath, { ...valid, version: newVersion });
+    await atomicWriteJson(filePath, { ...valid, version: newVersion });
     return newVersion;
   }
 
@@ -616,6 +778,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     }
     const checked = checkedBase.map((entry, index) => {
       const valid = parseValidPageData(entries[index]!.data, entry.pageId, entry.legacyLongTitles);
+      assertPageCapacity(valid, entry.pageId);
       assertNoNodeOverlaps(valid, entry.pageId);
       return { ...entry, valid };
     });
@@ -626,20 +789,21 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         previousRaw: entry.previousRaw,
       })),
     };
-    await this.atomicWriteJson(this.savePagesJournalPath, journal);
+    await atomicWriteJson(this.savePagesJournalPath, journal);
 
     const out: number[] = [];
     try {
       for (let i = 0; i < entries.length; i++) {
         const checkedEntry = checked[i]!;
         const newVersion = checkedEntry.currentVersion + 1;
-        await this.atomicWriteJson(checkedEntry.filePath, {
+        await atomicWriteJson(checkedEntry.filePath, {
           ...checkedEntry.valid,
           version: newVersion,
         });
         out.push(newVersion);
       }
       await fs.unlink(this.savePagesJournalPath);
+      await syncDirectory(this.dataDir);
       return out;
     } catch (err) {
       await this.restoreSavePagesJournalUnlocked(journal);
@@ -672,14 +836,16 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         }
         continue;
       }
-      await this.atomicWriteText(filePath, entry.previousRaw);
+      await atomicWriteText(filePath, entry.previousRaw);
     }
+    await syncDirectory(this.pagesDir);
     try {
       await fs.unlink(this.savePagesJournalPath);
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== 'ENOENT') throw err;
     }
+    await syncDirectory(this.dataDir);
   }
 
   private async recoverPendingWorkspaceImportUnlocked(): Promise<void> {
@@ -709,29 +875,32 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     if (this.workspaceImportJournalNeedsPageRollback(journal.phase)) {
       if (journal.phase !== 'rollback_started' && journal.phase !== 'rollback_pages_restored') {
         journal.phase = 'rollback_started';
-        await this.atomicWriteJson(this.workspaceImportJournalPath, journal);
+        await atomicWriteJson(this.workspaceImportJournalPath, journal);
       }
       if (journal.phase === 'rollback_started') {
         if (backupPagesDir && (await this.pathExists(backupPagesDir))) {
           await fs.rm(this.pagesDir, { recursive: true, force: true });
           await fs.rename(backupPagesDir, this.pagesDir);
+          await syncDirectory(this.dataDir);
         } else if (await this.livePagesMatchWorkspaceImportJournalUnlocked(journal.nextPageSha256ById)) {
           await fs.rm(this.pagesDir, { recursive: true, force: true });
+          await syncDirectory(this.dataDir);
         }
         journal.phase = 'rollback_pages_restored';
-        await this.atomicWriteJson(this.workspaceImportJournalPath, journal);
+        await atomicWriteJson(this.workspaceImportJournalPath, journal);
       }
     }
 
     if (journal.previousMetaRaw === null) {
       try {
         await fs.unlink(this.metaPath);
+        await syncDirectory(this.dataDir);
       } catch (err) {
         const e = err as NodeJS.ErrnoException;
         if (e.code !== 'ENOENT') throw err;
       }
     } else {
-      await this.atomicWriteText(this.metaPath, journal.previousMetaRaw);
+      await atomicWriteText(this.metaPath, journal.previousMetaRaw);
     }
 
     await this.finalizeWorkspaceImportJournalUnlocked(journal);
@@ -746,34 +915,19 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   private async migrateFromLegacyV2(legacyMetaPath: string): Promise<Meta> {
     const legacyDir = path.dirname(legacyMetaPath);
     const legacyPagesDir = path.join(legacyDir, 'pages');
-
-    // Copy all referenced data before committing the new meta migration marker.
-    await fs.mkdir(this.pagesDir, { recursive: true });
-    try {
-      const entries = await fs.readdir(legacyPagesDir);
-      for (const entry of entries) {
-        if (entry.endsWith('.json')) {
-          await fs.copyFile(
-            path.join(legacyPagesDir, entry),
-            path.join(this.pagesDir, entry),
-          );
-        }
-      }
-    } catch {
-    }
-
     const raw = await fs.readFile(legacyMetaPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    const meta = MetaSchema.parse(parsed);
+    const meta = MetaSchema.parse(JSON.parse(raw));
 
-    await this.atomicWriteJson(this.metaPath, meta);
-
-    // Retire the shared legacy marker so a second user cannot migrate the same workspace.
-    try {
-      await fs.rename(legacyMetaPath, legacyMetaPath + '.v2.bak');
-    } catch {
-      try { await fs.copyFile(legacyMetaPath, legacyMetaPath + '.v2.bak'); } catch { /* best effort */ }
+    // Validate and atomically copy every referenced page before committing metadata.
+    await fs.mkdir(this.pagesDir, { recursive: true });
+    for (const page of meta.pages) {
+      this.assertSafePageId(page.id);
+      const pageRaw = await fs.readFile(path.join(legacyPagesDir, `${page.id}.json`), 'utf-8');
+      parseValidPageData(JSON.parse(pageRaw), page.id, undefined, false);
+      await atomicWriteText(this.pageFilePath(page.id), pageRaw);
     }
+
+    await atomicWriteJson(this.metaPath, meta);
 
     return meta;
   }
@@ -782,9 +936,9 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
    * 首次启动迁移。顺序：
    *   1. 建 pages/ 目录
    *   2. 生成 default page 的 JSON（来自老数据或 SEED）
-   *   3. rename 老 tasks.json → tasks.json.v1.bak（仅当老文件存在）
-   *   4. 最后写 meta.json —— 它的存在就是"迁移已完成"的判据
-   * 中途任何一步挂了，下次启动还会重跑第 1-4 步（幂等）。
+   *   3. copy 老 tasks.json → tasks.json.v1.bak（仅当老文件存在）
+   *   4. 写 meta.json 作为提交点，再删除旧入口
+   * 提交点之前始终保留 tasks.json，因此崩溃重试不会回退到演示数据。
    */
   private async migrateFromLegacyOrSeed(): Promise<Meta> {
     let seedGraph: Graph = SEED_GRAPH;
@@ -809,17 +963,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     await this.savePageUnlocked(SYSTEM_HIERARCHY_PAGE_ID, { nodes: [], edges: [] });
 
     if (hasLegacy) {
-      try {
-        await fs.rename(this.legacyPath, this.legacyBackupPath);
-      } catch (err) {
-        const e = err as NodeJS.ErrnoException;
-        if (e.code === 'EXDEV') {
-          await fs.copyFile(this.legacyPath, this.legacyBackupPath);
-          await fs.unlink(this.legacyPath);
-        } else {
-          throw err;
-        }
-      }
+      await copyFileDurable(this.legacyPath, this.legacyBackupPath);
     }
 
     const meta: Meta = {
@@ -837,7 +981,13 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         { id: pageId, title: pageTitle, order: 1, createdAt: new Date().toISOString() },
       ],
     };
-    await this.atomicWriteJson(this.metaPath, meta);
+    await atomicWriteJson(this.metaPath, meta);
+    if (hasLegacy) {
+      await fs.unlink(this.legacyPath).catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== 'ENOENT') throw err;
+      });
+      await syncDirectory(this.dataDir);
+    }
     return meta;
   }
 
@@ -886,6 +1036,9 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       meta = { ...meta, pages };
     }
     meta = { ...meta, pages: pinSystemPageFirst(meta.pages) };
+    if (meta.pages.length > MAX_WORKSPACE_PAGES) {
+      throw new Error(`workspace exceeds ${MAX_WORKSPACE_PAGES} pages`);
+    }
     const metaPageIds = meta.pages.map((page) => page.id);
     const uniqueMetaPageIds = new Set(metaPageIds);
 
@@ -918,6 +1071,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         throw new Error(`missing page data: ${pageId}`);
       }
       const pageData = parseValidPageData(rawPages[pageId], pageId, undefined, false);
+      assertPageCapacity(pageData, pageId);
       this.assertPageAllowsDependencies(meta, pageId, pageData);
       pages[pageId] = pageData;
     }
@@ -1028,6 +1182,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== 'ENOENT') throw err;
     }
+    await syncDirectory(this.dataDir);
   }
 }
 
@@ -1048,77 +1203,6 @@ function pinSystemPageFirst(pages: PageInfo[]): PageInfo[] {
     ? [systemPage, ...ordered.filter((page) => page.id !== SYSTEM_HIERARCHY_PAGE_ID)]
     : ordered;
   return result.map((page, order) => ({ ...page, order }));
-}
-
-function parseValidPageData(
-  data: unknown,
-  pageId: string,
-  allowedLegacyTitles?: ReadonlyMap<string, string>,
-  enforceTitleLimit = true,
-): PageData {
-  let page = PageDataSchema.parse(data);
-  if (enforceTitleLimit) {
-    const oversized = page.nodes.find(
-      (node) =>
-        node.title.length > MAX_TASK_TITLE_LENGTH &&
-        allowedLegacyTitles?.get(node.id) !== node.title,
-    );
-    if (oversized) {
-      throw new TaskTitleTooLongError(oversized.id, MAX_TASK_TITLE_LENGTH);
-    }
-  }
-  if (enforceTitleLimit) {
-    const dependencies = validateDependencyEdges(page.nodes, page.edges);
-    if (!dependencies.valid) {
-      throw new Error(`page contains invalid dependency (${dependencies.reason}, edge ${dependencies.edgeIndex}): ${pageId}`);
-    }
-  } else {
-    const ids = new Set(page.nodes.map((node) => node.id));
-    const seen = new Set<string>();
-    page = {
-      ...page,
-      edges: page.edges.filter((edge) => {
-        const key = `${edge.from}\0${edge.to}`;
-        if (edge.from === edge.to || !ids.has(edge.from) || !ids.has(edge.to) || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      }),
-    };
-  }
-  if (!isDAG(page)) throw new Error(`page contains dependency cycle: ${pageId}`);
-  const hierarchy = validateTaskHierarchy(page.nodes);
-  if (!hierarchy.valid) {
-    throw new Error(
-      `page contains invalid hierarchy (${hierarchy.reason}, task ${hierarchy.taskId}): ${pageId}`,
-    );
-  }
-  return page;
-}
-
-function assertNoNodeOverlaps(page: PageData, pageId: string): void {
-  const overlap = validateNoSiblingOverlaps(page.nodes);
-  if (!overlap.valid) throw new NodeOverlapError(pageId, overlap.conflicts);
-}
-
-function collectLegacyLongTaskTitles(data: unknown): Map<string, string> {
-  const page = PageDataSchema.safeParse(data);
-  if (!page.success) return new Map();
-  return new Map(
-    page.data.nodes
-      .filter((node) => node.title.length > MAX_TASK_TITLE_LENGTH)
-      .map((node) => [node.id, node.title]),
-  );
-}
-
-function assertPageTitleLength(title: string): void {
-  if (title.length > MAX_PAGE_TITLE_LENGTH) {
-    throw new Error(`page title exceeds ${MAX_PAGE_TITLE_LENGTH} characters`);
-  }
-}
-
-/** 防止 pageId 逃逸目录：只允许字母、数字、下划线、短横线。 */
-function isSafePageId(id: string): boolean {
-  return /^[A-Za-z0-9_-]+$/.test(id) && id.length > 0 && id.length <= 64;
 }
 
 function backupNameToIso(name: string): string {

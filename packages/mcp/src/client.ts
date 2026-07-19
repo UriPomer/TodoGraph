@@ -1,5 +1,9 @@
 const API_BASE = process.env.TODOGRAPH_API_BASE ?? 'http://127.0.0.1:5173';
 const API_KEY = process.env.TODOGRAPH_API_KEY ?? '';
+const configuredTimeout = Number(process.env.TODOGRAPH_REQUEST_TIMEOUT_MS ?? 15_000);
+const REQUEST_TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout >= 100
+  ? configuredTimeout
+  : 15_000;
 
 function headers(hasBody: boolean): Record<string, string> {
   const h: Record<string, string> = {};
@@ -10,11 +14,20 @@ function headers(hasBody: boolean): Record<string, string> {
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const url = `${API_BASE}${path}`;
-  const res = await fetch(url, {
-    method,
-    headers: headers(!!body),
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: headers(!!body),
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if ((error as Error).name === 'TimeoutError') {
+      throw new Error(`TodoGraph request timed out after ${REQUEST_TIMEOUT_MS}ms: ${method} ${path}`);
+    }
+    throw error;
+  }
   const text = await res.text().catch(() => '');
   let data: unknown;
   try {

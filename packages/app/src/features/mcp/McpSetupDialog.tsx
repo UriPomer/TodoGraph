@@ -1,17 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bot, Check, Copy, Key, Plus, Trash2, X } from 'lucide-react';
-import { api, getApiBase } from '@/api/client';
+import { api, getApiBase, type McpKeyInfo } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toaster-store';
-
-interface McpKeyInfo {
-  id: string;
-  prefix: string;
-  label: string;
-  createdAt: string;
-  lastUsedAt?: string;
-}
 
 interface GeneratedKey extends McpKeyInfo { key: string }
 interface Props { open: boolean; onClose?: () => void; embedded?: boolean }
@@ -33,6 +25,7 @@ export function mcpConfig(apiKey: string): string {
 export function McpSetupDialog({ open, onClose, embedded = false }: Props) {
   const [keys, setKeys] = useState<McpKeyInfo[]>([]);
   const [label, setLabel] = useState('');
+  const [allowDestructive, setAllowDestructive] = useState(false);
   const [generated, setGenerated] = useState<GeneratedKey | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [copied, setCopied] = useState<'key' | 'config' | null>(null);
@@ -49,7 +42,10 @@ export function McpSetupDialog({ open, onClose, embedded = false }: Props) {
   const generate = async () => {
     setBusy('generate');
     try {
-      setGenerated(await api.generateMcpKey(label.trim() || '默认设备'));
+      setGenerated(await api.generateMcpKey(
+        label.trim() || '默认设备',
+        allowDestructive ? ['read', 'write', 'destructive'] : ['read', 'write'],
+      ));
       setLabel('');
       await loadKeys();
     } catch (error) { toast.error('生成 MCP Key 失败', String((error as Error).message ?? error)); }
@@ -88,6 +84,10 @@ export function McpSetupDialog({ open, onClose, embedded = false }: Props) {
             <input value={label} onChange={(event) => setLabel(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void generate(); }} placeholder="设备名称" className={`min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-xs ${embedded ? 'h-10' : 'h-8'}`} />
             <Button size="sm" className={embedded ? 'h-10 px-4' : undefined} onClick={() => void generate()} disabled={busy === 'generate'}>{busy === 'generate' ? '生成中...' : '生成'}</Button>
           </div>
+          <label className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" checked={allowDestructive} onChange={(event) => setAllowDestructive(event.target.checked)} className="mt-0.5" />
+            允许 AI 删除、恢复和跨页面移动数据
+          </label>
           {generated && (
             <div className="mt-3 space-y-3">
               <div className="rounded-lg border border-[hsl(var(--primary))/0.2] bg-[hsl(var(--primary))/0.08] p-3">
@@ -115,6 +115,7 @@ export function McpSetupDialog({ open, onClose, embedded = false }: Props) {
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium">{key.label}</p>
                     <p className="truncate font-mono text-[10px] text-muted-foreground">{key.prefix}... · {new Date(key.createdAt).toLocaleString()}</p>
+                    <p className="text-[10px] text-muted-foreground">{key.scopes.includes('destructive') ? '可执行破坏性操作' : '只读与安全写入'}</p>
                   </div>
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0 hover:text-destructive" disabled={busy === key.id} onClick={() => void revoke(key.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
                 </div>

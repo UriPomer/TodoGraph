@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
-import type { McpKeyStore } from '../mcp-keys.js';
+import type { McpKeyScope, McpKeyStore } from '../mcp-keys.js';
 import { getAuthenticatedUserId } from '../auth.js';
 
 const GenerateBody = z.object({
   label: z.string().min(1).max(50),
+  scopes: z.array(z.enum(['read', 'write', 'destructive'])).default(['read', 'write']),
 });
 
 interface Opts {
@@ -29,7 +30,7 @@ export const mcpRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       reply.status(400);
       return { ok: false, error: 'label is required (max 50 chars)' };
     }
-    const result = await keyStore.generate(userId, parsed.data.label);
+    const result = await keyStore.generate(userId, parsed.data.label, parsed.data.scopes as McpKeyScope[]);
     return { ok: true, key: result.key, ...result.entry };
   });
 

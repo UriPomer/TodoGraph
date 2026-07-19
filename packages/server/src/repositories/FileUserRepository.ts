@@ -1,5 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { withFilesystemLock } from './fileLock.js';
+import { atomicWriteJson } from './durableFile.js';
 import { z } from 'zod';
 import { StoredUserSchema, type StoredUser, type UserRepository } from './UserRepository.js';
 
@@ -58,10 +60,7 @@ export class FileUserRepository implements UserRepository {
   }
 
   private async writeUsers(users: StoredUser[]): Promise<void> {
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tmp = this.filePath + '.tmp';
-    await fs.writeFile(tmp, JSON.stringify(users, null, 2), 'utf-8');
-    await fs.rename(tmp, this.filePath);
+    await atomicWriteJson(this.filePath, users);
   }
 
   private async withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -70,7 +69,7 @@ export class FileUserRepository implements UserRepository {
     this.writeLock = new Promise<void>((resolve) => { release = resolve; });
     await previous;
     try {
-      return await fn();
+      return await withFilesystemLock(path.dirname(this.filePath), fn, '.identity.lock');
     } finally {
       release();
     }

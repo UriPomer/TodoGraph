@@ -52,6 +52,16 @@ describe('McpKeyStore', () => {
     await expect(store.findUserId('tdg-invalid')).resolves.toBeNull();
   });
 
+  it('returns the least-privilege scopes stored with a key', async () => {
+    const result = await store.generate('u1', 'safe-agent', ['read', 'write']);
+
+    await expect(store.findPrincipal(result.key)).resolves.toEqual({
+      userId: 'u1',
+      scopes: ['read', 'write'],
+    });
+    expect((await store.listByUser('u1'))[0]?.scopes).toEqual(['read', 'write']);
+  });
+
   it('throttles last-used persistence for repeated requests', async () => {
     const renameSpy = vi.spyOn(fs, 'rename');
     try {

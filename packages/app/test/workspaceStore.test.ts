@@ -469,7 +469,44 @@ describe('workspace/task store conflict handling', () => {
     expect(useTaskStore.getState().backupDirty).toBe(false);
     expect(toast.error).toHaveBeenCalledWith(
       '保存冲突',
-      '页面已被其他设备修改，已重新加载最新数据，请重新执行刚才的操作',
+      '无法创建恢复页，本地修改未能持久化，当前页已加载服务器版本',
+    );
+  });
+
+  it('copies local edits to a recovery page before applying a conflicting server version', async () => {
+    const source = makePage('p-1', 'Source', 0);
+    const recovery = makePage('recovery', '冲突恢复', 1);
+    const recoveredMeta = makeMeta(2, source.id, [source, recovery]);
+    api.savePage
+      .mockRejectedValueOnce(Object.assign(new Error('conflict'), { conflict: true, serverVersion: 7 }))
+      .mockResolvedValueOnce({ version: 2 });
+    api.createPage.mockResolvedValue({ page: recovery, meta: recoveredMeta });
+    api.loadPage
+      .mockResolvedValueOnce({ version: 1, nodes: [], edges: [] })
+      .mockResolvedValueOnce(makePageData(7));
+    useTaskStore.getState().setSessionUser('u1');
+    useWorkspaceStore.setState({ meta: makeMeta(1, source.id, [source]) });
+    useTaskStore.setState({
+      activePageId: source.id,
+      pageVersion: 1,
+      nodes: [],
+      edges: [],
+      loaded: true,
+    });
+    useTaskStore.getState().addTask({ title: 'local change' });
+
+    await expect(useTaskStore.getState().flush()).rejects.toMatchObject({ conflict: true });
+
+    expect(api.savePage).toHaveBeenNthCalledWith(
+      2,
+      recovery.id,
+      expect.objectContaining({ nodes: [expect.objectContaining({ title: 'local change' })] }),
+      1,
+    );
+    expect(useWorkspaceStore.getState().meta).toEqual(recoveredMeta);
+    expect(toast.error).toHaveBeenCalledWith(
+      '保存冲突',
+      '本地修改已另存为“冲突恢复”，当前页已加载服务器版本',
     );
   });
 

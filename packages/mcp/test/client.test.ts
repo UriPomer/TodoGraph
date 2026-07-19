@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { handleMergePages } from '../src/tools/pages.js';
 
 describe('HTTP client', () => {
   let client: typeof import('../src/client.js').client;
@@ -18,13 +19,14 @@ describe('HTTP client', () => {
 
     await client.get('/api/meta');
 
-    expect(mockFetch).toHaveBeenCalledWith('http://test:9999/api/meta', {
+    expect(mockFetch).toHaveBeenCalledWith('http://test:9999/api/meta', expect.objectContaining({
       method: 'GET',
       headers: {
         Authorization: 'Bearer test-key',
       },
       body: undefined,
-    });
+      signal: expect.any(AbortSignal),
+    }));
   });
 
   it('constructs POST with body correctly', async () => {
@@ -35,14 +37,15 @@ describe('HTTP client', () => {
 
     await client.post('/api/pages', { title: 'test' });
 
-    expect(mockFetch).toHaveBeenCalledWith('http://test:9999/api/pages', {
+    expect(mockFetch).toHaveBeenCalledWith('http://test:9999/api/pages', expect.objectContaining({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer test-key',
       },
       body: JSON.stringify({ title: 'test' }),
-    });
+      signal: expect.any(AbortSignal),
+    }));
   });
 
   it('throws on 4xx with error from body', async () => {
@@ -76,5 +79,27 @@ describe('HTTP client', () => {
     );
 
     await expect(client.get('/api/meta')).rejects.toThrow('plain text error');
+  });
+
+  it('turns request timeouts into an actionable error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('timed out', 'TimeoutError')));
+
+    await expect(client.get('/api/meta')).rejects.toThrow('TodoGraph request timed out');
+  });
+});
+
+describe('page merge safety', () => {
+  it('delegates the complete merge and its recovery preconditions to one server request', async () => {
+    const fakeClient = {
+      post: vi.fn().mockResolvedValue({ movedNodes: 2 }),
+    };
+
+    await expect(handleMergePages(fakeClient as never, {
+      source_page_id: 'source',
+      target_page_id: 'target',
+    })).resolves.toMatchObject({ movedNodes: 2 });
+    expect(fakeClient.post).toHaveBeenCalledWith('/api/pages/source/merge', {
+      targetPageId: 'target',
+    });
   });
 });

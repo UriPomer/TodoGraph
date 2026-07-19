@@ -29,15 +29,15 @@ jobs:
     steps:
       # 1. 拉代码
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       # 2. 启 pnpm（从 package.json 的 packageManager 字段读版本）
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
       # 3. 装 Node（用 pnpm 的 lockfile 做 cache key）
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -64,7 +64,7 @@ jobs:
 
       # 7. 把产物作为 workflow artifact 上传（不论是否是 tag 触发，都能在 Actions 里下载）
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: TodoGraph-windows-portable
           path: Build/*.exe
@@ -74,7 +74,7 @@ jobs:
       # 8. 发布 Release（tag 推送或手动触发均可）
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
           files: |

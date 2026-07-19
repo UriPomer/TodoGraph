@@ -837,6 +837,14 @@ describe('auth routes', () => {
       headers: { authorization: `Bearer ${apiKey}` },
     });
     expect(bearerDisallowed.statusCode).toBe(403);
+
+    const destructiveDenied = await app.inject({
+      method: 'POST',
+      url: '/api/pages/unknown/restore',
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: {},
+    });
+    expect(destructiveDenied.statusCode).toBe(403);
   });
 
   it('returns 400 for workspace imports whose activePageId is missing from meta.pages', async () => {

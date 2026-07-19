@@ -7,7 +7,7 @@ import type {
 import { api, getApiSessionGeneration, resetApiSession } from '@/api/client';
 import { toast } from '@/components/ui/toaster-store';
 import { useTaskStore } from './useTaskStore';
-import { subscribeAllTasksInvalidated } from './workspaceEvents';
+import { subscribeAllTasksInvalidated, subscribeWorkspaceMetaUpdated } from './workspaceEvents';
 import type { PageViewportCache } from '@/features/graph/pageViewportCache';
 
 interface WorkspaceStore {
@@ -145,6 +145,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     toast.error(title, String((err as Error).message ?? err));
   };
   subscribeAllTasksInvalidated(scheduleAllTasksRefresh);
+  subscribeWorkspaceMetaUpdated((meta) => set({ meta }));
 
   const resetSession = () => {
     pageSwitchRequest += 1;
@@ -176,6 +177,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     bootstrap: async (userId) => {
       resetSession();
       const generation = getApiSessionGeneration();
+      useTaskStore.getState().setSessionUser(userId);
       set({ sessionUserId: userId });
       try {
         const meta = await api.loadMeta();
@@ -422,6 +424,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         const resp = await api.loadAllTasks();
         if (!isCurrentSession(generation) || requestId !== allTasksRequest) return;
         set({ allTasks: resp.tasks, allTasksLoading: false });
+        if (resp.errors?.length) {
+          toast.error('部分页面读取失败', `有 ${resp.errors.length} 个页面未显示，请先导出数据并检查服务器日志`);
+        }
       } catch (err) {
         if (!isCurrentSession(generation) || requestId !== allTasksRequest) return;
         set({ allTasksLoading: false });

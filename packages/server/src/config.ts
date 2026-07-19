@@ -5,10 +5,10 @@ export interface ServerConfig {
   port: number;
   host: string;
   /**
-   * 工作区数据目录（v2 布局）：
-   *   {dataDir}/meta.json
-   *   {dataDir}/pages/{pageId}.json
-   *   {dataDir}/tasks.json.v1.bak   （首次迁移后）
+   * 多用户数据根目录：
+   *   {dataDir}/users/{userId}/meta.json
+   *   {dataDir}/users/{userId}/pages/{pageId}.json
+   *   {dataDir}/users/{userId}/backups|trash|journals
    *
    * 向后兼容：如果传入 DATA_FILE（老环境变量），
    *   取其父目录作为 dataDir —— 这样 `DATA_FILE=data/tasks.json`

@@ -49,6 +49,13 @@ export interface BackupInfo {
   size: number;
 }
 
+export interface TrashedPageInfo {
+  name: string;
+  deletedAt: string;
+  page: PageInfo;
+  size: number;
+}
+
 export interface WorkspaceExport {
   exportedAt: string;
   meta: Meta;
@@ -61,14 +68,14 @@ export interface WorkspaceExport {
  * 所有实现必须保证：
  *  - 原子写：页面/meta 文件的写入不能半途损坏（tmp+rename）。
  *  - 失败抛异常：调用方负责转成 HTTP 响应 / Toast。
- *  - 迁移幂等：没有 meta.json 才会跑迁移，跑完之后不会再跑。
+ *  - 迁移可恢复：新 meta.json 提交前保留旧入口和验证过的备份。
  *  - 乐观锁：savePage 可接受 expectedVersion 做版本比对，
  *    不匹配时抛 VersionConflictError，防止多设备覆盖。
  */
 export interface WorkspaceRepository {
   /**
    * 读工作区元信息。若 meta.json 不存在，执行一次性迁移：
-   *  - 有老 tasks.json → 迁成 default page + rename bak
+   *  - 有老 tasks.json → 迁成 default page + copy bak
    *  - 无老数据 → 建 default page 含 SEED
    * 最后一步写 meta.json 才算完成。
    */
@@ -92,9 +99,14 @@ export interface WorkspaceRepository {
   /** 将当前页面文件拷贝到 backups/ 目录，保留最近 50 份，按时间戳命名。 */
   createBackup(pageId: string): Promise<void>;
   listBackups(pageId: string): Promise<BackupInfo[]>;
-  restoreBackup(pageId: string, backupName: string): Promise<PageData>;
+  restoreBackup(pageId: string, backupName: string, expectedVersion?: number): Promise<PageData>;
   /** 从最新备份恢复页面文件。若不存在备份则抛异常。返回恢复后的页面数据。 */
-  restoreLatestBackup(pageId: string): Promise<PageData>;
+  restoreLatestBackup(pageId: string, expectedVersion?: number): Promise<PageData>;
+  listTrashedPages(): Promise<TrashedPageInfo[]>;
+  restoreTrashedPage(
+    name: string,
+    expectedRevision?: number,
+  ): Promise<{ meta: Meta; page: PageInfo; data: PageData }>;
   /** 列出所有 page 的文件路径与 mtime —— 用于 /api/all-tasks 的缓存失效判断。 */
-  listPageMtimes(): Promise<Array<{ pageId: string; mtimeMs: number }>>;
+  listPageMtimes(): Promise<Array<{ pageId: string; mtimeMs: number | null }>>;
 }
