@@ -27,29 +27,32 @@ function installDeferredSwitch() {
   let finishSwitch!: () => void;
   const switchFinished = new Promise<void>((resolve) => { finishSwitch = resolve; });
   const meta = { version: 2 as const, revision: 0, activePageId: SYSTEM_HIERARCHY_PAGE_ID, pages };
+  const switchPage = vi.fn(async (pageId: string) => {
+    await switchFinished;
+    useWorkspaceStore.setState({ meta: { ...meta, activePageId: pageId } });
+  });
   useWorkspaceStore.setState({
     ...useWorkspaceStore.getInitialState(),
     meta,
-    switchPage: async (pageId: string) => {
-      await switchFinished;
-      useWorkspaceStore.setState({ meta: { ...meta, activePageId: pageId } });
-    },
+    switchPage,
   }, true);
-  return { finishSwitch, switchFinished };
+  return { finishSwitch, switchFinished, switchPage };
 }
 
 describe('PageBar mode switching', () => {
-  it('reports graph mode only after the first toggle finishes switching pages', async () => {
+  it('ignores repeated clicks and stays on the list tab after switching pages', async () => {
     const deferred = installDeferredSwitch();
     const onModeChange = vi.fn();
     let renderer: ReturnType<typeof create>;
 
     await act(async () => { renderer = create(<PageBar onModeChange={onModeChange} />); });
-    act(() => renderer.root.findAllByProps({ 'data-workspace-mode-toggle': 'true' })[0]!.props.onClick());
+    const toggle = renderer.root.findAllByProps({ 'data-workspace-mode-toggle': 'true' })[0]!;
+    act(() => { toggle.props.onClick(); toggle.props.onClick(); toggle.props.onClick(); });
+    expect(deferred.switchPage).toHaveBeenCalledOnce();
     expect(onModeChange).not.toHaveBeenCalled();
 
     await act(async () => { deferred.finishSwitch(); await deferred.switchFinished; });
-    expect(onModeChange).toHaveBeenCalledWith('graph');
+    expect(onModeChange).toHaveBeenCalledWith('list');
     act(() => renderer.unmount());
   });
 
@@ -64,7 +67,7 @@ describe('PageBar mode switching', () => {
     expect(onModeChange).not.toHaveBeenCalled();
 
     await act(async () => { deferred.finishSwitch(); await deferred.switchFinished; });
-    expect(onModeChange).toHaveBeenCalledWith('graph');
+    expect(onModeChange).toHaveBeenCalledWith('list');
     act(() => renderer.unmount());
   });
 });

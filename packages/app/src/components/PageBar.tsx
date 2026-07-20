@@ -58,6 +58,7 @@ export function MobilePageSelectorView({
   onCreatePage,
   isListMode,
   onToggleMode,
+  isSwitching = false,
 }: {
   pages: PageInfo[];
   activePageId: string;
@@ -65,6 +66,7 @@ export function MobilePageSelectorView({
   onCreatePage: () => void;
   isListMode: boolean;
   onToggleMode: () => void;
+  isSwitching?: boolean;
 }) {
   const orderedPages = useMemo(
     () => [...pages]
@@ -77,11 +79,12 @@ export function MobilePageSelectorView({
   return (
     <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-2 lg:hidden">
       <div data-mobile-page-controls="true" className="flex min-w-0 items-center gap-2">
-        <WorkspaceModeButton isListMode={isListMode} onToggle={onToggleMode} />
+        <WorkspaceModeButton isListMode={isListMode} disabled={isSwitching} onToggle={onToggleMode} />
         <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
+            disabled={isSwitching}
             aria-label="选择页面"
             data-mobile-page-trigger="true"
             data-selector-mode={isListMode ? 'list' : 'graph'}
@@ -168,6 +171,8 @@ export function PageBar({ onModeChange }: { onModeChange?: (mode: 'list' | 'grap
   const reorderPages = useWorkspaceStore((s) => s.reorderPages);
 
   const [dragId, setDragId] = useState<string | null>(null);
+  const [isSwitching, setIsSwitching] = useState(false);
+  const switchingRef = useRef(false);
   const lastGraphPageIdRef = useRef<string | null>(null);
 
   const pages = useMemo(
@@ -185,22 +190,30 @@ export function PageBar({ onModeChange }: { onModeChange?: (mode: 'list' | 'grap
     }
   }, [meta?.activePageId]);
 
-  const switchModePage = useCallback(async (pageId: string, mode: 'list' | 'graph') => {
-    await switchPage(pageId);
-    if (useWorkspaceStore.getState().meta?.activePageId === pageId) {
-      onModeChange?.(mode);
+  const switchModePage = useCallback(async (pageId: string) => {
+    if (switchingRef.current) return;
+    switchingRef.current = true;
+    setIsSwitching(true);
+    try {
+      await switchPage(pageId);
+      if (useWorkspaceStore.getState().meta?.activePageId === pageId) {
+        onModeChange?.('list');
+      }
+    } finally {
+      switchingRef.current = false;
+      setIsSwitching(false);
     }
   }, [onModeChange, switchPage]);
 
   const handleToggleMode = useCallback(async () => {
     if (!meta || !systemPage) return;
     if (!isListMode) {
-      await switchModePage(systemPage.id, 'list');
+      await switchModePage(systemPage.id);
       return;
     }
     const target = pages.find((page) => page.id === lastGraphPageIdRef.current) ?? pages[0];
     if (target) {
-      await switchModePage(target.id, 'graph');
+      await switchModePage(target.id);
     }
   }, [isListMode, meta, pages, switchModePage, systemPage]);
 
@@ -249,7 +262,7 @@ export function PageBar({ onModeChange }: { onModeChange?: (mode: 'list' | 'grap
     });
     if (title === null) return;
     const info = await createPage(title.trim() || fallbackTitle);
-    if (info) await switchPage(info.id);
+    if (info) await switchModePage(info.id);
   };
 
   return (
@@ -257,16 +270,17 @@ export function PageBar({ onModeChange }: { onModeChange?: (mode: 'list' | 'grap
       <MobilePageSelectorView
         pages={pages}
         activePageId={meta.activePageId}
-        onSwitchPage={(pageId) => void switchModePage(pageId, 'graph')}
+        onSwitchPage={(pageId) => void switchModePage(pageId)}
         onCreatePage={() => void handleCreatePage()}
         isListMode={isListMode}
         onToggleMode={() => void handleToggleMode()}
+        isSwitching={isSwitching}
       />
 
       <div className="hidden items-center gap-2 overflow-x-auto px-3 py-2 lg:flex">
         <WorkspaceModeButton
           isListMode={isListMode}
-          disabled={!systemPage || (isListMode && pages.length === 0)}
+          disabled={isSwitching || !systemPage || (isListMode && pages.length === 0)}
           onToggle={() => void handleToggleMode()}
         />
         {pages.map((page) => {
@@ -301,7 +315,8 @@ export function PageBar({ onModeChange }: { onModeChange?: (mode: 'list' | 'grap
                   'max-w-[180px] shrink-0 truncate px-2 py-1.5 text-sm',
                   active ? 'text-foreground' : 'text-muted-foreground',
                 )}
-                onClick={() => void switchPage(page.id)}
+                onClick={() => void switchModePage(page.id)}
+                disabled={isSwitching}
                 title={page.title}
               >
                 {page.title}
