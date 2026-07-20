@@ -15,7 +15,7 @@ pnpm --filter @todograph/app test        # Run frontend tests
 pnpm package          # Build Windows portable EXE (electron-builder)
 ```
 
-**Single test**: `pnpm --filter <pkg> test -- -t "test name"`
+**Single test**: `pnpm --filter <pkg> exec vitest run -t "test name"`
 
 ## Architecture
 

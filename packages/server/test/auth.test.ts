@@ -543,6 +543,7 @@ describe('auth routes', () => {
       },
     });
     expect(change.statusCode).toBe(200);
+    expect(change.headers['cache-control']).toBe('no-store');
 
     const loginOld = await app.inject({
       method: 'POST',

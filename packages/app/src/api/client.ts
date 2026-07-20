@@ -149,7 +149,14 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+    let message = text || res.statusText || `HTTP ${res.status}`;
+    if (text) {
+      try {
+        const body = JSON.parse(text) as { error?: unknown };
+        if (typeof body.error === 'string' && body.error) message = body.error;
+      } catch { /* keep plain-text response */ }
+    }
+    throw new Error(message);
   }
   return (await res.json()) as T;
 }

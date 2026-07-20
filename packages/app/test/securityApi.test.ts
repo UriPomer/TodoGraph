@@ -165,6 +165,19 @@ describe('security API client', () => {
     });
   });
 
+  it('surfaces the password validation message without raw HTTP or JSON', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ok: false, error: '密码必须同时包含字母和数字' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await expect(api.changePassword('old-password', '12345678')).rejects.toThrow(
+      '密码必须同时包含字母和数字',
+    );
+  });
+
   it('lists page backups', async () => {
     const backups = [{ name: 'backup-1.json', createdAt: '2026-07-05T00:00:00.000Z', size: 123 }];
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(

@@ -65,8 +65,8 @@ export function MobileMoreHeader({ username }: { username: string }) {
   return <header data-mobile-more-header="true" className="flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-2 lg:hidden"><div className="flex h-9 min-w-0 flex-1 items-center px-2.5"><span className="text-sm font-medium text-foreground">更多</span><span className="ml-2 truncate text-xs text-muted-foreground">{username}</span></div><ThemeSwitcher /></header>;
 }
 
-export function MobileMorePanel({ onLogout }: { onLogout: () => void }) {
-  return <div data-mobile-surface="dark" className="h-full overflow-auto bg-[#151317]/60 px-5 text-[#e5e7eb] backdrop-blur-sm"><div className="mx-auto max-w-lg divide-y divide-white/10"><SecurityDialog open embedded /><McpSetupDialog open embedded /><button type="button" onClick={onLogout} className="flex w-full items-center gap-2 py-6 text-sm text-red-300 transition-colors active:text-red-200"><LogOut className="h-4 w-4" />退出登录</button></div></div>;
+export function MobileMorePanel({ onLogout, username }: { onLogout: () => void; username?: string }) {
+  return <div data-mobile-surface="dark" className="h-full overflow-auto bg-[#151317]/60 px-5 text-[#e5e7eb] backdrop-blur-sm"><div className="mx-auto max-w-lg divide-y divide-white/10"><SecurityDialog open embedded username={username} /><McpSetupDialog open embedded /><button type="button" onClick={onLogout} className="flex w-full items-center gap-2 py-6 text-sm text-red-300 transition-colors active:text-red-200"><LogOut className="h-4 w-4" />退出登录</button></div></div>;
 }
 
 const navItems = [['list', ListChecks, '任务'], ['graph', Network, '依赖图'], ['more', MoreHorizontal, '更多']] as const;
@@ -149,10 +149,10 @@ function useDesktopLayout() {
   return isDesktop;
 }
 
-export function WorkspaceContent({ isDesktop, tab, onLogout, graphEnabled = true }: { isDesktop: boolean; tab: MobileTab; onLogout: () => void; graphEnabled?: boolean }) {
+export function WorkspaceContent({ isDesktop, tab, onLogout, graphEnabled = true, username }: { isDesktop: boolean; tab: MobileTab; onLogout: () => void; graphEnabled?: boolean; username?: string }) {
   if (isDesktop) return <div className="min-h-0 flex-1"><div key={graphEnabled ? 'graph' : 'list'} className="workspace-mode-enter h-full">{graphEnabled ? <SplitPane storageKey="todograph.splitLeftWidth" defaultLeftWidth={360} minLeft={260} maxLeft={720} left={<ListView />} right={<GraphView viewportScope="desktop" />} /> : <ListView />}</div></div>;
   const visibleTab = !graphEnabled && tab === 'graph' ? 'list' : tab;
-  return <main data-mobile-tab={visibleTab} className="mobile-frosted-bg min-h-0 flex-1" style={{ paddingBottom: 'calc(3rem + env(safe-area-inset-bottom))' }}><div key={visibleTab} className="workspace-mode-enter h-full">{visibleTab === 'list' && <div className="h-full overflow-auto"><ListView /></div>}{visibleTab === 'graph' && <div className="h-full"><GraphView viewportScope="mobile" /></div>}{visibleTab === 'more' && <MobileMorePanel onLogout={onLogout} />}</div></main>;
+  return <main data-mobile-tab={visibleTab} className="mobile-frosted-bg min-h-0 flex-1" style={{ paddingBottom: 'calc(3rem + env(safe-area-inset-bottom))' }}><div key={visibleTab} className="workspace-mode-enter h-full">{visibleTab === 'list' && <div className="h-full overflow-auto"><ListView /></div>}{visibleTab === 'graph' && <div className="h-full"><GraphView viewportScope="mobile" /></div>}{visibleTab === 'more' && <MobileMorePanel onLogout={onLogout} username={username} />}</div></main>;
 }
 
 function LoadingState() {
@@ -183,5 +183,5 @@ export default function WorkspaceApp({ user, logout }: {
     try { await useTaskStore.getState().flush(); await logout(); } catch { /* save error is already shown */ }
   };
   const ready = loaded && workspaceUserId === user.id;
-  return <><div className="flex h-full flex-col"><Header onTab={setTab} user={user} onLogout={() => void logoutSafely()} onOpenSecurity={() => setSecurityOpen(true)} onOpenMcp={() => setMcpOpen(true)} /><div className={tab === 'more' ? 'hidden lg:block' : undefined}><PageBar onModeChange={(mode) => setTab(mode === 'graph' ? 'graph' : 'list')} /></div>{tab === 'more' && <MobileMoreHeader username={user.username} />}{ready ? <WorkspaceContent isDesktop={isDesktop} tab={tab} graphEnabled={graphEnabled} onLogout={() => void logoutSafely()} /> : <LoadingState />}<Toaster /><DialogContainer /><SecurityDialog open={securityOpen} onClose={() => setSecurityOpen(false)} /><McpSetupDialog open={mcpOpen} onClose={() => setMcpOpen(false)} /></div><MobileBottomNav tab={tab} graphEnabled={graphEnabled} onTab={setTab} /></>;
+  return <><div className="flex h-full flex-col"><Header onTab={setTab} user={user} onLogout={() => void logoutSafely()} onOpenSecurity={() => setSecurityOpen(true)} onOpenMcp={() => setMcpOpen(true)} /><div className={tab === 'more' ? 'hidden lg:block' : undefined}><PageBar onModeChange={(mode) => setTab(mode === 'graph' ? 'graph' : 'list')} /></div>{tab === 'more' && <MobileMoreHeader username={user.username} />}{ready ? <WorkspaceContent isDesktop={isDesktop} tab={tab} graphEnabled={graphEnabled} username={user.username} onLogout={() => void logoutSafely()} /> : <LoadingState />}<Toaster /><DialogContainer /><SecurityDialog open={securityOpen} username={user.username} onClose={() => setSecurityOpen(false)} /><McpSetupDialog open={mcpOpen} onClose={() => setMcpOpen(false)} /></div><MobileBottomNav tab={tab} graphEnabled={graphEnabled} onTab={setTab} /></>;
 }

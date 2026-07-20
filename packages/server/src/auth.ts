@@ -300,6 +300,7 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
   app.post('/api/auth/change-password', {
     config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
   }, async (req: FastifyRequest, reply: FastifyReply) => {
+    reply.header('Cache-Control', 'no-store');
     const hadRememberToken = Boolean(req.cookies[REMEMBER_COOKIE]);
     const session = await authenticateBrowser(req, reply, userRepo, rememberTokenStore, cookieSecure);
     if (!session.ok) {

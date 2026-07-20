@@ -185,19 +185,24 @@ export function PageBar({ onModeChange }: { onModeChange?: (mode: 'list' | 'grap
     }
   }, [meta?.activePageId]);
 
-  const handleToggleMode = useCallback(() => {
+  const switchModePage = useCallback(async (pageId: string, mode: 'list' | 'graph') => {
+    await switchPage(pageId);
+    if (useWorkspaceStore.getState().meta?.activePageId === pageId) {
+      onModeChange?.(mode);
+    }
+  }, [onModeChange, switchPage]);
+
+  const handleToggleMode = useCallback(async () => {
     if (!meta || !systemPage) return;
     if (!isListMode) {
-      void switchPage(systemPage.id);
-      onModeChange?.('list');
+      await switchModePage(systemPage.id, 'list');
       return;
     }
     const target = pages.find((page) => page.id === lastGraphPageIdRef.current) ?? pages[0];
     if (target) {
-      void switchPage(target.id);
-      onModeChange?.('graph');
+      await switchModePage(target.id, 'graph');
     }
-  }, [isListMode, meta, onModeChange, pages, switchPage, systemPage]);
+  }, [isListMode, meta, pages, switchModePage, systemPage]);
 
   const handleDragStart = useCallback((e: React.DragEvent, id: string) => {
     setDragId(id);
@@ -252,20 +257,17 @@ export function PageBar({ onModeChange }: { onModeChange?: (mode: 'list' | 'grap
       <MobilePageSelectorView
         pages={pages}
         activePageId={meta.activePageId}
-        onSwitchPage={(pageId) => {
-          void switchPage(pageId);
-          onModeChange?.('graph');
-        }}
+        onSwitchPage={(pageId) => void switchModePage(pageId, 'graph')}
         onCreatePage={() => void handleCreatePage()}
         isListMode={isListMode}
-        onToggleMode={handleToggleMode}
+        onToggleMode={() => void handleToggleMode()}
       />
 
       <div className="hidden items-center gap-2 overflow-x-auto px-3 py-2 lg:flex">
         <WorkspaceModeButton
           isListMode={isListMode}
           disabled={!systemPage || (isListMode && pages.length === 0)}
-          onToggle={handleToggleMode}
+          onToggle={() => void handleToggleMode()}
         />
         {pages.map((page) => {
           const active = page.id === meta.activePageId;

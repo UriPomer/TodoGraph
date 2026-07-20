@@ -27,12 +27,11 @@ describe('SecurityDialog password change', () => {
     let renderer: ReturnType<typeof create>;
 
     await act(async () => {
-      renderer = create(<SecurityDialog open onClose={vi.fn()} />);
+      renderer = create(<SecurityDialog open username="alice" onClose={vi.fn()} />);
     });
     const input = (placeholder: string) => renderer.root.findByProps({ placeholder });
-    const submit = () => renderer.root.findAllByType('button').find(
-      (button) => Array.isArray(button.props.children) && button.props.children.includes('更新密码'),
-    )!;
+    const form = () => renderer.root.findByType('form');
+    const submit = () => form().props.onSubmit({ preventDefault: vi.fn() });
 
     act(() => {
       input('当前密码').props.onChange({ target: { value: 'secret123' } });
@@ -43,14 +42,48 @@ describe('SecurityDialog password change', () => {
     expect(changePassword).not.toHaveBeenCalled();
 
     act(() => input('再次输入新密码').props.onChange({ target: { value: 'newsecret123' } }));
-    act(() => submit().props.onClick());
+    act(() => submit());
     expect(confirm).toHaveBeenCalledOnce();
     expect(changePassword).not.toHaveBeenCalled();
 
     confirm.mockReturnValue(true);
-    await act(async () => submit().props.onClick());
+    await act(async () => submit());
     expect(changePassword).toHaveBeenCalledWith('secret123', 'newsecret123');
 
+    expect(input('当前密码').props.name).toBe('current-password');
+    expect(input('当前密码').props.autoComplete).toBe('current-password');
+    expect(input('新密码，至少 8 位且包含字母和数字').props.name).toBe('new-password');
+    expect(input('新密码，至少 8 位且包含字母和数字').props.autoComplete).toBe('new-password');
+    expect(renderer.root.findByProps({ name: 'username' }).props).toMatchObject({
+      value: 'alice',
+      autoComplete: 'username',
+      readOnly: true,
+      hidden: true,
+    });
+
+    act(() => renderer.unmount());
+    vi.unstubAllGlobals();
+  });
+
+  it('shows password validation failures next to the form', async () => {
+    const changePassword = vi.spyOn(api, 'changePassword').mockResolvedValue();
+    vi.stubGlobal('window', { confirm: vi.fn(() => true) });
+    vi.stubGlobal('document', { body: {} });
+    let renderer: ReturnType<typeof create>;
+
+    await act(async () => { renderer = create(<SecurityDialog open onClose={vi.fn()} />); });
+    const input = (placeholder: string) => renderer.root.findByProps({ placeholder });
+    act(() => {
+      input('当前密码').props.onChange({ target: { value: 'secret123' } });
+      input('新密码，至少 8 位且包含字母和数字').props.onChange({ target: { value: '12345678' } });
+      input('再次输入新密码').props.onChange({ target: { value: '12345678' } });
+    });
+    act(() => renderer.root.findByType('form').props.onSubmit({ preventDefault: vi.fn() }));
+
+    const alert = renderer.root.findByProps({ role: 'alert' });
+    expect(alert.props.children).toBe('新密码必须同时包含字母和数字');
+    expect(alert.props.className).toContain('bg-destructive/10');
+    expect(changePassword).not.toHaveBeenCalled();
     act(() => renderer.unmount());
     vi.unstubAllGlobals();
   });

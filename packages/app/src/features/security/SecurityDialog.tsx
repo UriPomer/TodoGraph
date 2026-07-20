@@ -8,7 +8,7 @@ import { useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { clearTaskDraft, listTaskDrafts, type TaskDraft } from '@/stores/taskDraftStorage';
 
-interface Props { open: boolean; onClose?: () => void; embedded?: boolean }
+interface Props { open: boolean; onClose?: () => void; embedded?: boolean; username?: string }
 type Action = 'password' | 'export' | 'import' | 'backups' | 'restore' | 'trash' | 'trash-restore' | 'draft-restore';
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-[hsl(var(--primary))]';
 
@@ -20,7 +20,7 @@ function backupLabel(backup: BackupInfo): string {
   return `${Number.isNaN(date.getTime()) ? backup.name : date.toLocaleString()} · ${size}`;
 }
 
-export function SecurityDialog({ open, onClose, embedded = false }: Props) {
+export function SecurityDialog({ open, onClose, embedded = false, username }: Props) {
   const activePageId = useTaskStore((state) => state.activePageId);
   const pageVersion = useTaskStore((state) => state.pageVersion);
   const replaceLoadedPage = useTaskStore((state) => state.replaceLoadedPage);
@@ -34,13 +34,13 @@ export function SecurityDialog({ open, onClose, embedded = false }: Props) {
   const [drafts, setDrafts] = useState<TaskDraft[]>([]);
   const [selectedDraft, setSelectedDraft] = useState('');
   const [busy, setBusy] = useState<Action | null>(null);
-  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [notice, setNotice] = useState<{ action: Action; ok: boolean; text: string } | null>(null);
 
   const run = async (action: Action, task: () => Promise<void>) => {
     setBusy(action);
     setNotice(null);
     try { await task(); }
-    catch (error) { setNotice({ ok: false, text: String((error as Error).message ?? error) }); }
+    catch (error) { setNotice({ action, ok: false, text: String((error as Error).message ?? error) }); }
     finally { setBusy(null); }
   };
 
@@ -80,16 +80,21 @@ export function SecurityDialog({ open, onClose, embedded = false }: Props) {
   const setPassword = (key: keyof typeof passwords) => (event: React.ChangeEvent<HTMLInputElement>) =>
     setPasswords((value) => ({ ...value, [key]: event.target.value }));
 
-  const changePassword = () => {
+  const changePassword = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     if (passwords.next !== passwords.confirm) {
-      setNotice({ ok: false, text: '两次输入的新密码不一致' });
+      setNotice({ action: 'password', ok: false, text: '两次输入的新密码不一致' });
+      return;
+    }
+    if (!/\p{L}/u.test(passwords.next) || !/\p{N}/u.test(passwords.next)) {
+      setNotice({ action: 'password', ok: false, text: '新密码必须同时包含字母和数字' });
       return;
     }
     if (!window.confirm('修改密码后，其他设备上的登录会话将失效。确认继续？')) return;
     void run('password', async () => {
       await api.changePassword(passwords.current, passwords.next);
       setPasswords({ current: '', next: '', confirm: '' });
-      setNotice({ ok: true, text: '密码已更新' });
+      setNotice({ action: 'password', ok: true, text: '密码已更新' });
     });
   };
 
@@ -101,7 +106,7 @@ export function SecurityDialog({ open, onClose, embedded = false }: Props) {
     a.download = `TodoGraph-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
-    setNotice({ ok: true, text: 'JSON 已导出' });
+    setNotice({ action: 'export', ok: true, text: 'JSON 已导出' });
   });
 
   const importJson = (file: File) => void run('import', async () => {
@@ -118,7 +123,7 @@ export function SecurityDialog({ open, onClose, embedded = false }: Props) {
     const page = await api.restoreBackup(activePageId, selectedBackup, pageVersion);
     replaceLoadedPage(activePageId, page);
     await refreshAllTasks();
-    setNotice({ ok: true, text: '已恢复所选备份' });
+    setNotice({ action: 'restore', ok: true, text: '已恢复所选备份' });
     await loadBackups();
   });
   const restoreTrash = () => void run('trash-restore', async () => {
@@ -153,15 +158,21 @@ export function SecurityDialog({ open, onClose, embedded = false }: Props) {
         <div className="space-y-5">
           <section className="border-b border-border/60 pb-5">
             <h3 className="mb-3 text-xs font-semibold">修改密码</h3>
-            <div className="space-y-3">
-              <PasswordInput value={passwords.current} onChange={setPassword('current')} placeholder="当前密码" visibilityLabel="当前密码" autoComplete="current-password" maxLength={200} className={inputClass} />
-              <PasswordInput value={passwords.next} onChange={setPassword('next')} placeholder="新密码，至少 8 位且包含字母和数字" visibilityLabel="新密码" autoComplete="new-password" minLength={8} maxLength={200} className={inputClass} />
-              <PasswordInput value={passwords.confirm} onChange={setPassword('confirm')} placeholder="再次输入新密码" visibilityLabel="确认新密码" autoComplete="new-password" minLength={8} maxLength={200} aria-invalid={mismatch} className={inputClass} />
+            <form method="post" className="space-y-3" onSubmit={changePassword}>
+              {username && <input type="text" name="username" value={username} autoComplete="username" readOnly hidden />}
+              <PasswordInput name="current-password" value={passwords.current} onChange={setPassword('current')} placeholder="当前密码" visibilityLabel="当前密码" autoComplete="current-password" maxLength={200} required className={inputClass} />
+              <PasswordInput name="new-password" value={passwords.next} onChange={setPassword('next')} placeholder="新密码，至少 8 位且包含字母和数字" visibilityLabel="新密码" autoComplete="new-password" minLength={8} maxLength={200} required className={inputClass} />
+              <PasswordInput name="confirm-password" value={passwords.confirm} onChange={setPassword('confirm')} placeholder="再次输入新密码" visibilityLabel="确认新密码" autoComplete="new-password" minLength={8} maxLength={200} required aria-invalid={mismatch} className={inputClass} />
               {mismatch && <p className="text-xs text-destructive">两次输入的新密码不一致</p>}
-              <Button size="sm" className={embedded ? 'h-10 w-full' : undefined} onClick={changePassword} disabled={!passwords.current || !passwords.next || !passwords.confirm || mismatch || busy === 'password'}>
+              <Button type="submit" size="sm" className={embedded ? 'h-10 w-full' : undefined} disabled={!passwords.current || !passwords.next || !passwords.confirm || mismatch || busy === 'password'}>
                 {busy === 'password' && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}更新密码
               </Button>
-            </div>
+              {notice?.action === 'password' && (
+                <p role={notice.ok ? 'status' : 'alert'} className={`rounded-lg border px-3 py-2 text-xs ${notice.ok ? 'border-[hsl(var(--success)/0.3)] bg-[hsl(var(--success)/0.08)] text-[hsl(var(--success))]' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>
+                  {notice.text}
+                </p>
+              )}
+            </form>
           </section>
           <section className="border-b border-border/60 pb-5">
             <h3 className="mb-3 text-xs font-semibold">完整数据备份</h3>
@@ -218,7 +229,7 @@ export function SecurityDialog({ open, onClose, embedded = false }: Props) {
               </div>
             )}
           </section>
-          {notice && <p className={`text-xs ${notice.ok ? 'text-[hsl(var(--success))]' : 'text-destructive'}`}>{notice.text}</p>}
+          {notice && notice.action !== 'password' && <p className={`text-xs ${notice.ok ? 'text-[hsl(var(--success))]' : 'text-destructive'}`}>{notice.text}</p>}
         </div>
       </div>
   );
