@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { claimPageForAutoLayout } from '@/features/graph/pageAutoLayout';
+import { describe, expect, it, vi } from 'vitest';
+import { claimPageForAutoLayout, fitPageAfterAutoLayout } from '@/features/graph/pageAutoLayout';
 import { buildAlignedPatches } from '@/features/graph/GraphView';
 import type { Task } from '@todograph/shared';
 
@@ -32,6 +32,20 @@ describe('page auto-layout gate', () => {
     expect(claimPageForAutoLayout(checked, 'a', ['1'], one)).toBe(true);
     expect(claimPageForAutoLayout(checked, 'a', ['1'], one)).toBe(false);
     expect(claimPageForAutoLayout(checked, 'b', ['2'], two)).toBe(true);
+  });
+
+  it('fits the viewport on the frame after layout positions commit', () => {
+    let scheduled!: FrameRequestCallback;
+    const fitView = vi.fn();
+
+    fitPageAfterAutoLayout(fitView, (callback) => {
+      scheduled = callback;
+      return 7;
+    });
+
+    expect(fitView).not.toHaveBeenCalled();
+    scheduled(0);
+    expect(fitView).toHaveBeenCalledWith({ padding: 0.2, duration: 250 });
   });
 });
 

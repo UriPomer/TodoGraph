@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { dialog } from '@/components/ui/dialog-store';
+import { toast } from '@/components/ui/toaster-store';
 import type { TaskStatus } from '@todograph/shared';
 import { GroupContentsDialog, type GroupDescendant } from './GroupContentsDialog';
 import { centeredDropPosition, isOutsideRect } from './collapsedGroupDrag';
@@ -178,7 +179,9 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
           className="nodrag nopan"
           onClick={(e) => {
             e.stopPropagation();
-            toggleStatus(id);
+            if (toggleStatus(id) && d.status === 'doing') {
+              toast.action('已完成', '撤销', () => useTaskStore.getState().undo(), d.title);
+            }
           }}
         />
 
@@ -222,7 +225,9 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
                       aria-label={`推进 ${child.title} 状态`}
                       onClick={(event) => {
                         event.stopPropagation();
-                        toggleStatus(child.id);
+                        if (toggleStatus(child.id) && child.status === 'doing') {
+                          toast.action('已完成', '撤销', () => useTaskStore.getState().undo(), child.title);
+                        }
                       }}
                       onDoubleClick={(event) => event.stopPropagation()}
                     />

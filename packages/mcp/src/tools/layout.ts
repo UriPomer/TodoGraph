@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import dagre from 'dagre';
 import { computeNodeSizeMap, type Task } from '@todograph/shared';
 import type { client as ClientType } from '../client.js';
+import { toolResult } from './result.js';
 
 // ── Handler ──
 
@@ -71,9 +72,6 @@ export function registerLayoutTools(server: McpServer, c: typeof ClientType) {
         page_id: z.string().min(1).describe('页面 ID'),
       },
     },
-    async ({ page_id }) => {
-      const result = await handleAutoLayout(c, { page_id });
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    },
+    async ({ page_id }) => toolResult(() => handleAutoLayout(c, { page_id })),
   );
 }

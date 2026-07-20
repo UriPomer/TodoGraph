@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { dialog } from '@/components/ui/dialog-store';
+import { toast } from '@/components/ui/toaster-store';
 import { MAX_TITLE_LENGTH } from '@/lib/measureText';
 import type { TaskStatus } from '@todograph/shared';
 import { TaskStatusButton } from './TaskStatusButton';
@@ -65,7 +66,9 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
         onClick={(e) => {
           if (e.shiftKey) return;
           e.stopPropagation();
-          toggleStatus(id);
+          if (toggleStatus(id) && d.status === 'doing') {
+            toast.action('已完成', '撤销', () => useTaskStore.getState().undo(), d.title);
+          }
         }}
       />
 
@@ -134,7 +137,10 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
           if (e.shiftKey) return;
           e.stopPropagation();
           const ok = await dialog.confirm(`删除「${d.title}」`, { danger: true });
-          if (ok) deleteTask(id);
+          if (ok) {
+            deleteTask(id);
+            toast.action('已删除', '撤销', () => useTaskStore.getState().undo(), d.title);
+          }
         }}
         title="删除"
       >

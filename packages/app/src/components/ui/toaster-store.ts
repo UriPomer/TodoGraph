@@ -34,6 +34,6 @@ export const toast = {
   error: (title: string, description?: string) =>
     useToastStore.getState().show({ title, description, variant: 'destructive' }),
   /** 操作 toast：带撤销按钮，4 秒后自动消失 */
-  action: (title: string, actionLabel: string, onAction: () => void) =>
-    useToastStore.getState().show({ title, action: { label: actionLabel, onClick: onAction } }),
+  action: (title: string, actionLabel: string, onAction: () => void, description?: string) =>
+    useToastStore.getState().show({ title, description, action: { label: actionLabel, onClick: onAction } }),
 };

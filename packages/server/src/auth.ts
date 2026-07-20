@@ -3,6 +3,14 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import '@fastify/secure-session';
 import type { StoredUser, UserRepository } from './repositories/UserRepository.js';
 import type { McpKeyScope, McpKeyStore } from './mcp-keys.js';
+import {
+  isOlderMcpVersion,
+  isValidMcpVersion,
+  LATEST_MCP_VERSION,
+  mcpUpdateRequired,
+  MCP_LATEST_VERSION_HEADER,
+  MCP_VERSION_HEADER,
+} from './mcp-version.js';
 import type { RememberTokenRepository } from './repositories/RememberTokenRepository.js';
 
 const SALT_LEN = 32;
@@ -401,7 +409,7 @@ function parseMCPKeys(): Map<string, string> {
   }
 }
 
-async function resolveUserId(
+export async function resolveMcpPrincipal(
   authHeader: string | undefined,
   keyStore: McpKeyStore | null,
 ): Promise<{ userId: string; scopes: McpKeyScope[] } | null> {
@@ -451,8 +459,16 @@ export function authHook(
     if (!req.url.startsWith('/api/')) return;
 
     // API key 优先：env 配置或动态 key 文件
-    const mcpPrincipal = await resolveUserId(req.headers.authorization, keyStore);
+    const mcpPrincipal = await resolveMcpPrincipal(req.headers.authorization, keyStore);
     if (mcpPrincipal) {
+      const mcpVersion = req.headers[MCP_VERSION_HEADER];
+      // Clients without a valid version header cannot reliably render advisory responses.
+      if (!isValidMcpVersion(mcpVersion)) {
+        return reply.status(426).send(mcpUpdateRequired(mcpVersion));
+      }
+      if (isOlderMcpVersion(mcpVersion)) {
+        reply.header(MCP_LATEST_VERSION_HEADER, LATEST_MCP_VERSION);
+      }
       // 白名单：API key 只能访问 MCP 工具所需的端点
       if (!isAPIKeyAllowed(req.method, req.url, mcpPrincipal.scopes)) {
         return reply.status(403).send({ ok: false, error: 'API key 不能直接访问此端点，请通过 MCP 工具操作' });

@@ -1,28 +1,36 @@
 {
   "name": "@todograph/mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist/index.js",
+    "dist/index.js.map",
+    "dist/index.d.ts",
+    "dist/index.d.ts.map"
+  ],
   "bin": {
     "todograph-mcp": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --external:@modelcontextprotocol/sdk/* --external:dagre --external:zod --sourcemap --outfile=dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
-    "publish:npm": "pnpm build && npm publish --access public"
+    "publish:npm": "pnpm --filter @todograph/shared build && pnpm build && tsx scripts/publish.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@todograph/shared": "workspace:*",
     "dagre": "^0.8.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@todograph/server": "workspace:*",
+    "@todograph/shared": "workspace:*",
     "@types/dagre": "^0.7.52",
     "@types/node": "^22.10.2",
+    "esbuild": "^0.28.1",
+    "semver": "^7.7.4",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vitest": "^3.2.6"

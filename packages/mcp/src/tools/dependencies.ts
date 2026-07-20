@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { client as ClientType } from '../client.js';
-import { textResult } from './result.js';
+import { toolResult } from './result.js';
 
 // ── Handlers ──
 
@@ -87,7 +87,7 @@ export function registerDependencyTools(server: McpServer, c: typeof ClientType)
           .describe('要移除的依赖边'),
       },
     },
-    async (params) => textResult(await handleManageDependencies(c, params)),
+    async (params) => toolResult(() => handleManageDependencies(c, params)),
   );
 
   server.registerTool(
@@ -100,6 +100,6 @@ export function registerDependencyTools(server: McpServer, c: typeof ClientType)
         page_id: z.string().min(1).optional().describe('页面 ID，不传则跨所有页推荐'),
       },
     },
-    async (params) => textResult(await handleGetRecommendations(c, params)),
+    async (params) => toolResult(() => handleGetRecommendations(c, params)),
   );
 }

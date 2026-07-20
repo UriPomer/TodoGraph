@@ -210,12 +210,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       if (!meta) return;
       if (meta.activePageId === pageId) return;
       try {
-        await useTaskStore.getState().flush();
-        if (!isCurrentSession(generation) || !isCurrentSwitch()) return;
-      } catch {
-        return;
-      }
-      try {
+        // loadPage owns the drain-before-switch boundary and can immediately paint a cached page.
         await useTaskStore.getState().loadPage(pageId);
         if (!isCurrentSession(generation) || !isCurrentSwitch()) return;
       } catch (err) {

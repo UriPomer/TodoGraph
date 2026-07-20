@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { createElement } from 'react';
 import {
   api,
   apiFetch,
@@ -6,7 +8,7 @@ import {
   resetApiSession,
   subscribeToUnauthorized,
 } from '../src/api/client';
-import { mcpConfig } from '../src/features/mcp/McpSetupDialog';
+import { McpSetupDialog, mcpConfig } from '../src/features/mcp/McpSetupDialog';
 
 describe('security API client', () => {
   const workspaceExport = {
@@ -45,7 +47,7 @@ describe('security API client', () => {
     });
     const config = JSON.parse(mcpConfig('tdg-secret')).mcpServers.todograph;
     expect(config).toMatchObject({
-      command: 'npx', args: ['-y', '@todograph/mcp'],
+      command: 'npx', args: ['-y', '@todograph/mcp@latest'],
       env: { TODOGRAPH_API_BASE: 'http://127.0.0.1:43123', TODOGRAPH_API_KEY: 'tdg-secret' },
     });
   });
@@ -54,9 +56,16 @@ describe('security API client', () => {
     vi.stubGlobal('window', { location: { origin: 'http://localhost:5174' } });
     const config = JSON.parse(mcpConfig('tdg-secret')).mcpServers.todograph;
     expect(config).toMatchObject({
-      command: 'npx', args: ['-y', '@todograph/mcp'],
+      command: 'npx', args: ['-y', '@todograph/mcp@latest'],
       env: { TODOGRAPH_API_BASE: 'http://localhost:5173' },
     });
+  });
+
+  it('renders destructive MCP permission as an aligned application switch', () => {
+    const html = renderToStaticMarkup(createElement(McpSetupDialog, { open: true, embedded: true }));
+    expect(html).toContain('role="switch"');
+    expect(html).toContain('aria-checked="false"');
+    expect(html).not.toContain('type="checkbox"');
   });
 
   it('includes credentials when Electron injects a cross-origin API base', async () => {

@@ -9,17 +9,23 @@ flowchart LR
   Browser[Browser entry] --> React[React UI]
   Electron[Electron main/preload] --> React
   Electron --> Host[desktop-host]
-  MCP[MCP stdio entry] --> McpTools[MCP tools]
+  MCP[MCP stdio entry] --> MCPDispatch[Registered-tool lookup<br/>and input validation]
+  MCPDispatch --> McpTools[MCP tools]
+  MCPDispatch -->|tool absent| MCPError[MCP tool-not-found result]
 
   React -->|commands only| Zustand[Zustand stores\nmutation boundary]
+  Zustand --> PageCache[Session page-data LRU\nread-through switch cache]
+  PageCache --> Zustand
   Zustand --> Draft[Durable local draft]
   Zustand --> Queue[Debounced single-flight save]
   Queue --> HTTP[Fastify REST API]
   McpTools --> HTTP
   Host --> HTTP
 
-  HTTP --> Auth[Session/API-key authorization]
-  Auth --> Scope[Session or scoped API-key authorization]
+  HTTP --> Auth[Session/API-key authentication]
+  Auth --> MCPVersion[MCP version-header validation]
+  MCPVersion -->|missing or malformed| MCPUpgrade[426 MCP_UPDATE_REQUIRED]
+  MCPVersion -->|valid; older gets advisory header| Scope[Session or scoped API-key authorization]
   Scope --> Validate[Schema + capacity + hierarchy + DAG validation]
   Validate --> Version[Optimistic version check]
   Version --> Lock[Process + filesystem lock]
@@ -33,6 +39,21 @@ flowchart LR
   Data --> Backup[(Backups / trash)]
   Backup --> RecoveryUI[Backup, recycle-bin and draft recovery UI]
 ```
+
+## MCP compatibility pipeline
+
+```text
+tools/call
+  -> registered-tool lookup (missing tools stop here; no HTTP request is made)
+  -> MCP input validation
+  -> authenticated TodoGraph HTTP request
+  -> validate MCP version header
+     -> missing or malformed: stop with MCP_UPDATE_REQUIRED
+     -> valid and older: execute compatible route and append the advisory header to its result
+     -> current or newer: execute compatible route normally
+```
+
+If an MCP-backed HTTP route is absent, version direction determines the recovery message: an older or unidentified MCP must update MCP, while a current or newer MCP must update TodoGraph. Publishing builds shared before MCP, then compares the packed artifact with the exact npm version and npm `latest` before publishing or skipping. npm, Docker, and desktop release workflows share this serialized guard; a manual desktop release explicitly dispatches the version-tagged Docker build after creating its release tag because `GITHUB_TOKEN` tag creation does not trigger another workflow.
 
 ## Persistence pipeline
 
@@ -53,9 +74,24 @@ UI command
   -> clear only the matching local draft
 ```
 
+## List drag pipeline
+
+```text
+drag-handle pointer input
+  -> movement threshold
+  -> pure drop-intent classification (reorder / nest / unparent / none)
+  -> insertion or nesting feedback + edge auto-scroll
+  -> one Zustand command on pointer release
+  -> one undo snapshot + scheduled persistence
+```
+
+Ready and Blocked roots are displayed in reverse storage order, while Done roots and child rows use forward storage order. The drag intent carries that direction explicitly so the store never infers presentation order from hierarchy alone.
+
 Destructive operations must create a flushed recovery point before their commit point. Import aborts if the current workspace cannot be exported. Restore snapshots the live page first and checks the caller's expected page version. Delete writes a tombstone before removing page metadata. Multi-page writes use a recovery journal. Page backups, import snapshots, and deleted-page tombstones are bounded by both count and bytes while always retaining the newest recovery point.
 
 When a page version conflicts, the server version remains authoritative for the original page, while the client preserves local edits in a recovery page or, if that fails, a user-scoped device draft. The account/data panel can restore hidden conflict drafts as new pages and restore deleted pages from the recycle bin.
+
+Page switching follows `flush current page -> remember bounded session snapshot -> paint cached target when present -> refresh target from server -> poll active version`. The cache is cleared on session reset and never replaces server version checks; it only removes the blank/network wait when revisiting a page.
 
 ## Package ownership
 

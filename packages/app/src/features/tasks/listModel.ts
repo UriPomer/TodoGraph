@@ -24,7 +24,6 @@ export function buildTaskListModel(
   nodes: Task[],
   graph: PageData,
   readySet: Set<string>,
-  recommendedId: string | undefined,
   collapsed: Record<string, boolean>,
   previousDepInfo = new Map<string, DepInfo>(),
 ) {
@@ -74,8 +73,6 @@ export function buildTaskListModel(
       }
     }
   };
-  const priority = (task: Task) =>
-    (task.id === recommendedId ? 2 : 0) + (task.status === 'doing' ? 1 : 0);
   for (const section of ['ready', 'blocked', 'done'] as const) {
     const sectionRoots = section === 'done'
       ? nodes.filter((node) =>
@@ -83,9 +80,7 @@ export function buildTaskListModel(
         )
       : roots.filter((root) => sectionOf(root) === section);
     if (section !== 'done') {
-      sectionRoots.sort((a, b) =>
-        priority(b) - priority(a) || originalOrder.get(b.id)! - originalOrder.get(a.id)!,
-      );
+      sectionRoots.sort((a, b) => originalOrder.get(b.id)! - originalOrder.get(a.id)!);
     }
     for (const root of sectionRoots) append(root, 0, section);
   }

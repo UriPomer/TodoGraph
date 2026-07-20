@@ -9,12 +9,12 @@ import { defaultPositionFor } from '@/lib/defaultPosition';
 import { CrossPageReady, selectCrossPageReadyTasks } from './CrossPageReady';
 import { TaskInput } from './TaskInput';
 import { TaskItem } from './TaskItem';
-import { buildTaskListModel, isDescendant, type DepInfo, type FlatItem } from './listModel';
+import { buildTaskListModel, type DepInfo, type FlatItem } from './listModel';
+import { dragAutoScrollDelta, resolveListDropIntent, type ListDropIntent } from './listDrag';
 type DragState =
-  | { taskId: string; offsetX: number; offsetY: number; startX: number; startY: number; active: false }
-  | { taskId: string; offsetX: number; offsetY: number; startX: number; startY: number; active: true; x: number; y: number; targetId: string | null; willUnparent: boolean; nearItemId: string | null }
+  | { taskId: string; pointerId: number; offsetX: number; offsetY: number; startX: number; startY: number; active: false }
+  | { taskId: string; pointerId: number; offsetX: number; offsetY: number; startX: number; startY: number; active: true; x: number; y: number; intent: ListDropIntent }
   | null;
-const DRAG_DELAY_MS = 150;
 const DRAG_THRESHOLD_PX = 8;
 /**
  * 极简列表视图（无外层卡片）：
@@ -32,9 +32,9 @@ export function ListView() {
   const activePageId = useTaskStore((s) => s.activePageId);
   const allTasks = useWorkspaceStore((s) => s.allTasks);
   const setParent = useTaskStore((s) => s.setParent);
-  const updateTask = useTaskStore((s) => s.updateTask);
+  const reorderTask = useTaskStore((s) => s.reorderTask);
   const addTask = useTaskStore((s) => s.addTask);
-  const { graph, readySet, recommended } = useDerived();
+  const { graph, readySet } = useDerived();
   // Deliberately retain the last semantic snapshot during coordinate-only node updates.
   const semanticNodes = useMemo(() => nodes, [listRevision]);
   const hierarchyMetrics = useMemo(() => buildHierarchyMetrics(semanticNodes), [semanticNodes]);
@@ -50,7 +50,6 @@ export function ListView() {
     dragRef.current = next;
     setDrag(next);
   }, []);
-  const dragTimerRef = useRef<number | null>(null);
   const dragTask = useMemo(
     () => (drag ? nodes.find((n) => n.id === drag.taskId) ?? null : null),
     [drag, nodes],
@@ -61,11 +60,10 @@ export function ListView() {
       semanticNodes,
       { nodes: semanticNodes, edges: graph.edges },
       readySet,
-      recommended?.id,
       collapsed,
       depInfoCacheRef.current,
     ),
-    [semanticNodes, graph.edges, readySet, recommended?.id, collapsed],
+    [semanticNodes, graph.edges, readySet, collapsed],
   );
   useEffect(() => {
     depInfoCacheRef.current = listModel.depInfo;
@@ -75,124 +73,135 @@ export function ListView() {
     setCollapsed((prev) => ({ ...prev, [parentId]: !prev[parentId] }));
   }, []);
   const handleAddChild = useCallback(
-    (parentId: string) => {
+    (parentId: string, title: string) => {
       const s = useTaskStore.getState();
       if ((hierarchyMetrics.depthById.get(parentId) ?? 0) + 1 >= MAX_HIERARCHY_DEPTH) {
         toast.error(`嵌套不能超过 ${MAX_HIERARCHY_DEPTH} 层`);
-        return;
+        return false;
       }
       const pos = defaultPositionFor({
         parentId,
         nodes: s.nodes,
         viewportCenter: s.viewportCenter,
       });
-      addTask({ title: '未命名', parentId, x: pos.x, y: pos.y });
+      addTask({ title, parentId, x: pos.x, y: pos.y });
       setCollapsed((prev) => (prev[parentId] ? { ...prev, [parentId]: false } : prev));
+      return true;
     },
     [addTask, hierarchyMetrics],
   );
-  const handleDragStart = useCallback((e: React.MouseEvent, task: Task) => {
-    if (window.matchMedia('(pointer: coarse)').matches) return;
-    e.preventDefault(); // 防止文本选中
-    const nativeEvent = e.nativeEvent;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const offsetX = nativeEvent.clientX - rect.left;
-    const offsetY = nativeEvent.clientY - rect.top;
+  const handleDragStart = useCallback((e: React.PointerEvent, task: Task) => {
+    if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    const row = e.currentTarget.closest('[data-task-id]') as HTMLElement | null;
+    const rect = row?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
+    const offsetX = e.clientX - rect.left;
+    const offsetY = e.clientY - rect.top;
     const initial: DragState = {
       taskId: task.id,
+      pointerId: e.pointerId,
       offsetX,
       offsetY,
-      startX: nativeEvent.clientX,
-      startY: nativeEvent.clientY,
+      startX: e.clientX,
+      startY: e.clientY,
       active: false,
     };
     updateDrag(initial);
-    dragTimerRef.current = window.setTimeout(() => {
-      const current = dragRef.current;
-      if (current && !current.active) {
-        updateDrag({ ...current, active: true, x: nativeEvent.clientX, y: nativeEvent.clientY, targetId: null, willUnparent: false, nearItemId: null });
-      }
-    }, DRAG_DELAY_MS);
   }, [updateDrag]);
+  const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!drag) {
-      if (dragTimerRef.current !== null) {
-        window.clearTimeout(dragTimerRef.current);
-        dragTimerRef.current = null;
-      }
-      return;
-    }
+    if (!drag) return;
+    const eventDocument = document;
+    let autoScrollFrame = 0;
+    let latestPointer: { x: number; y: number } | null = null;
 
-    const onMouseMove = (e: MouseEvent) => {
+    const intentAt = (current: Extract<DragState, { active: true }>, clientX: number, clientY: number) => {
+      const targetLi = eventDocument.elementFromPoint(clientX, clientY)?.closest('[data-task-id]') as HTMLElement | null;
+      const targetId = targetLi?.getAttribute('data-task-id') ?? null;
+      const dragged = hierarchyMetrics.byId.get(current.taskId);
+      if (!dragged) return { kind: 'none' } as const;
+      return resolveListDropIntent({
+        startX: current.startX,
+        clientX,
+        clientY,
+        dragged,
+        target: targetId ? hierarchyMetrics.byId.get(targetId) ?? null : null,
+        targetRect: targetLi?.getBoundingClientRect() ?? null,
+        byId: hierarchyMetrics.byId,
+        depthById: hierarchyMetrics.depthById,
+        subtreeHeightById: hierarchyMetrics.subtreeHeightById,
+      });
+    };
+
+    const autoScroll = () => {
+      autoScrollFrame = 0;
       const current = dragRef.current;
-      if (!current) return;
+      const scroller = scrollRef.current;
+      if (!current?.active || !latestPointer || !scroller) return;
+      const delta = dragAutoScrollDelta(latestPointer.y, scroller.getBoundingClientRect());
+      if (!delta) return;
+      scroller.scrollTop += delta;
+      updateDrag({
+        ...current,
+        x: latestPointer.x,
+        y: latestPointer.y,
+        intent: intentAt(current, latestPointer.x, latestPointer.y),
+      });
+      autoScrollFrame = requestAnimationFrame(autoScroll);
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      const current = dragRef.current;
+      if (!current || e.pointerId !== current.pointerId) return;
       const dx = e.clientX - current.startX;
       const dy = e.clientY - current.startY;
       if (!current.active) {
         if (Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD_PX) {
-          if (dragTimerRef.current !== null) {
-            window.clearTimeout(dragTimerRef.current);
-            dragTimerRef.current = null;
-          }
-          updateDrag({ ...current, active: true, x: e.clientX, y: e.clientY, targetId: null, willUnparent: false, nearItemId: null });
+          updateDrag({ ...current, active: true, x: e.clientX, y: e.clientY, intent: { kind: 'none' } });
         }
         return;
       }
-
-        const draggedHeight = hierarchyMetrics.subtreeHeightById.get(current.taskId) ?? 0;
-        const el = document.elementFromPoint(e.clientX, e.clientY);
-        const targetLi = el?.closest('[data-task-id]') as HTMLElement | null;
-        let targetId: string | null = null;
-        let nearItemId: string | null = null;
-        if (targetLi) {
-          const tid = targetLi.getAttribute('data-task-id');
-          if (tid && tid !== current.taskId && !isDescendant(hierarchyMetrics.byId, tid, current.taskId)) {
-            const candDepth = hierarchyMetrics.depthById.get(tid) ?? 0;
-            if (candDepth + 1 + draggedHeight + 1 <= MAX_HIERARCHY_DEPTH) {
-              targetId = tid;
-            }
-          }
-          nearItemId = tid;
-        }
-
-        const draggingNode = hierarchyMetrics.byId.get(current.taskId);
-        const willUnparent = !targetId && !!draggingNode?.parentId;
-        updateDrag({ ...current, x: e.clientX, y: e.clientY, targetId, willUnparent, nearItemId });
-    };
-    const onMouseUp = () => {
-      if (dragTimerRef.current !== null) {
-        window.clearTimeout(dragTimerRef.current);
-        dragTimerRef.current = null;
+      e.preventDefault();
+      latestPointer = { x: e.clientX, y: e.clientY };
+      updateDrag({ ...current, x: e.clientX, y: e.clientY, intent: intentAt(current, e.clientX, e.clientY) });
+      if (!autoScrollFrame && typeof requestAnimationFrame === 'function') {
+        autoScrollFrame = requestAnimationFrame(autoScroll);
       }
+    };
+    const onPointerUp = (e: PointerEvent) => {
       const current = dragRef.current;
+      if (!current || e.pointerId !== current.pointerId) return;
       updateDrag(null);
-      if (!current?.active) return;
-      if (current.targetId) {
-        const child = nodes.find((n) => n.id === current.taskId);
-        if (child && (child.x === undefined || child.y === undefined)) {
-          const vc = useTaskStore.getState().viewportCenter;
-          updateTask(current.taskId, { x: vc?.x ?? 200, y: vc?.y ?? 100 });
-        }
-        setParent(current.taskId, current.targetId);
-      } else if (nodes.find((n) => n.id === current.taskId)?.parentId) {
+      if (!current.active) return;
+      if (current.intent.kind === 'nest') {
+        setParent(current.taskId, current.intent.targetId);
+      } else if (current.intent.kind === 'reorder') {
+        reorderTask(current.taskId, current.intent.anchorId, current.intent.position, current.intent.storageOrder);
+      } else if (current.intent.kind === 'unparent') {
         setParent(current.taskId, null);
       }
     };
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
+    const onPointerCancel = (e: PointerEvent) => {
+      if (dragRef.current?.pointerId === e.pointerId) updateDrag(null);
     };
-  }, [drag?.taskId, childMap, setParent, updateTask, updateDrag, nodes, hierarchyMetrics]);
-  const scrollRef = useRef<HTMLDivElement>(null);
+    eventDocument.addEventListener('pointermove', onPointerMove);
+    eventDocument.addEventListener('pointerup', onPointerUp);
+    eventDocument.addEventListener('pointercancel', onPointerCancel);
+    return () => {
+      if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
+      eventDocument.removeEventListener('pointermove', onPointerMove);
+      eventDocument.removeEventListener('pointerup', onPointerUp);
+      eventDocument.removeEventListener('pointercancel', onPointerCancel);
+    };
+  }, [drag?.taskId, setParent, reorderTask, updateDrag, hierarchyMetrics]);
   const pullRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [pullReady, setPullReady] = useState(false);
   const [focusTrigger, setFocusTrigger] = useState(0);
   const pullReadyRef = useRef(false);
-  const PULL_THRESHOLD = 60;
-  const PULL_MAX = 100;
+  const PULL_THRESHOLD = 80;
+  const PULL_MAX = 112;
   useEffect(() => {
     const el = scrollRef.current;
     const indicator = pullRef.current;
@@ -212,7 +221,7 @@ export function ListView() {
       const dy = e.touches[0]!.clientY - startY;
       if (dy > 0 && el.scrollTop <= 0) {
         e.preventDefault();
-        dist = Math.min(dy * 0.5, PULL_MAX);
+        dist = Math.min(dy * 0.45, PULL_MAX);
         content.style.transition = 'none';
         content.style.transform = `translateY(${dist}px)`;
         indicator.style.transition = 'none';
@@ -333,13 +342,14 @@ export function ListView() {
             mobileKey="ready"
             hint="可执行"
             items={readyArr}
-            recommendedId={recommended?.id}
             depInfo={depInfo}
             childMap={childMap}
             collapsed={collapsed}
             onToggleCollapse={toggleCollapse}
-            dragTaskId={drag?.taskId ?? null}
-            dropTargetId={drag?.active ? drag.targetId ?? null : null}
+            dragTaskId={drag?.active ? drag.taskId : null}
+            dropTargetId={drag?.active && drag.intent.kind === 'nest' ? drag.intent.targetId : null}
+            reorderTargetId={drag?.active && drag.intent.kind === 'reorder' ? drag.intent.anchorId : null}
+            reorderPosition={drag?.active && drag.intent.kind === 'reorder' ? drag.intent.position : undefined}
             onDragStart={handleDragStart}
             onAddChild={handleAddChild}
             empty="暂无可执行任务"
@@ -349,13 +359,14 @@ export function ListView() {
             mobileKey="blocked"
             hint="有未完成的前置"
             items={blockedArr}
-            recommendedId={recommended?.id}
             depInfo={depInfo}
             childMap={childMap}
             collapsed={collapsed}
             onToggleCollapse={toggleCollapse}
-            dragTaskId={drag?.taskId ?? null}
-            dropTargetId={drag?.active ? drag.targetId ?? null : null}
+            dragTaskId={drag?.active ? drag.taskId : null}
+            dropTargetId={drag?.active && drag.intent.kind === 'nest' ? drag.intent.targetId : null}
+            reorderTargetId={drag?.active && drag.intent.kind === 'reorder' ? drag.intent.anchorId : null}
+            reorderPosition={drag?.active && drag.intent.kind === 'reorder' ? drag.intent.position : undefined}
             onDragStart={handleDragStart}
             onAddChild={handleAddChild}
           />
@@ -363,13 +374,14 @@ export function ListView() {
             title="Done"
             mobileKey="done"
             items={doneArr}
-            recommendedId={undefined}
             depInfo={depInfo}
             childMap={childMap}
             collapsed={collapsed}
             onToggleCollapse={toggleCollapse}
-            dragTaskId={drag?.taskId ?? null}
-            dropTargetId={drag?.active ? drag.targetId ?? null : null}
+            dragTaskId={drag?.active ? drag.taskId : null}
+            dropTargetId={drag?.active && drag.intent.kind === 'nest' ? drag.intent.targetId : null}
+            reorderTargetId={drag?.active && drag.intent.kind === 'reorder' ? drag.intent.anchorId : null}
+            reorderPosition={drag?.active && drag.intent.kind === 'reorder' ? drag.intent.position : undefined}
             onDragStart={handleDragStart}
             onAddChild={handleAddChild}
             sectionCollapsed={doneSectionCollapsed}
@@ -422,7 +434,7 @@ export function ListView() {
       {/* Ungroup 指示线：拖拽激活 + 落点不合法 + 被拖节点原本有父 → 在被拖行左侧画一条蓝色竖线，
           代表"松手后会脱离父节点，移到顶层（depth=0）"。放到最外层 fixed 覆盖层，
           避免被被拖行的 opacity-30 继承变淡。 */}
-      {drag?.active && drag.willUnparent && <UnparentIndicator taskId={drag.taskId} />}
+      {drag?.active && drag.intent.kind === 'unparent' && <UnparentIndicator taskId={drag.taskId} />}
     </div>
   );
 }
@@ -463,21 +475,22 @@ interface SectionProps {
   mobileKey: 'ready' | 'blocked' | 'done';
   hint?: string;
   items: FlatItem[];
-  recommendedId: string | undefined;
   depInfo: Map<string, DepInfo>;
   childMap: Map<string, Task[]>;
   collapsed: Record<string, boolean>;
   onToggleCollapse: (id: string) => void;
   dragTaskId: string | null;
   dropTargetId: string | null;
-  onDragStart: (e: React.MouseEvent, task: Task) => void;
-  onAddChild?: (parentId: string) => void;
+  reorderTargetId: string | null;
+  reorderPosition?: 'before' | 'after';
+  onDragStart: (e: React.PointerEvent, task: Task) => void;
+  onAddChild?: (parentId: string, title: string) => boolean;
   empty?: string;
   sectionCollapsed?: boolean;
   onToggleSection?: () => void;
 }
 
-function Section({ title, mobileKey, hint, items, recommendedId, depInfo, childMap, collapsed, onToggleCollapse, dragTaskId, dropTargetId, onDragStart, onAddChild, empty, sectionCollapsed = false, onToggleSection }: SectionProps) {
+function Section({ title, mobileKey, hint, items, depInfo, childMap, collapsed, onToggleCollapse, dragTaskId, dropTargetId, reorderTargetId, reorderPosition, onDragStart, onAddChild, empty, sectionCollapsed = false, onToggleSection }: SectionProps) {
   const visibleIds = new Set(items.map(({ task }) => task.id));
   const heading = (
     <>
@@ -521,7 +534,6 @@ function Section({ title, mobileKey, hint, items, recommendedId, depInfo, childM
               <TaskItem
                 key={task.id}
                 task={task}
-                recommended={task.id === recommendedId}
                 dependencyInfo={depInfo.get(task.id)}
                 depth={depth}
                 hasChildren={hasChildren}
@@ -529,6 +541,7 @@ function Section({ title, mobileKey, hint, items, recommendedId, depInfo, childM
                 onToggleCollapse={onToggleCollapse}
                 isDragging={task.id === dragTaskId}
                 isDropTarget={task.id === dropTargetId}
+                reorderPosition={task.id === reorderTargetId ? reorderPosition : undefined}
                 onDragStart={onDragStart}
                 onAddChild={onAddChild}
               />

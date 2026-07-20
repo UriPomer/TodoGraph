@@ -25,7 +25,7 @@ export function Toaster() {
           <div className="flex flex-1 items-center justify-between gap-3">
             <div className="flex flex-col gap-1">
               <ToastTitle>{t.title}</ToastTitle>
-              {t.description && <ToastDescription>{t.description}</ToastDescription>}
+              {t.description && <ToastDescription className="max-w-[min(56vw,24rem)] truncate" title={t.description}>{t.description}</ToastDescription>}
             </div>
             {t.action && (
               <button

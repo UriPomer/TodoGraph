@@ -40,7 +40,7 @@ function installDeferredSwitch() {
 }
 
 describe('PageBar mode switching', () => {
-  it('ignores repeated clicks and stays on the list tab after switching pages', async () => {
+  it('ignores repeated clicks and restores the graph tab after leaving list mode', async () => {
     const deferred = installDeferredSwitch();
     const onModeChange = vi.fn();
     let renderer: ReturnType<typeof create>;
@@ -52,11 +52,11 @@ describe('PageBar mode switching', () => {
     expect(onModeChange).not.toHaveBeenCalled();
 
     await act(async () => { deferred.finishSwitch(); await deferred.switchFinished; });
-    expect(onModeChange).toHaveBeenCalledWith('list');
+    expect(onModeChange).toHaveBeenCalledWith('graph');
     act(() => renderer.unmount());
   });
 
-  it('waits for a selected graph page before reporting graph mode', async () => {
+  it('keeps the current tab when selecting another page', async () => {
     const deferred = installDeferredSwitch();
     const onModeChange = vi.fn();
     let renderer: ReturnType<typeof create>;
@@ -67,7 +67,7 @@ describe('PageBar mode switching', () => {
     expect(onModeChange).not.toHaveBeenCalled();
 
     await act(async () => { deferred.finishSwitch(); await deferred.switchFinished; });
-    expect(onModeChange).toHaveBeenCalledWith('list');
+    expect(onModeChange).not.toHaveBeenCalled();
     act(() => renderer.unmount());
   });
 });

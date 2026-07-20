@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { MCP_VERSION } from '../src/version.js';
+import { toolResult } from '../src/tools/result.js';
 import { handleMergePages } from '../src/tools/pages.js';
 
 describe('HTTP client', () => {
@@ -23,6 +25,7 @@ describe('HTTP client', () => {
       method: 'GET',
       headers: {
         Authorization: 'Bearer test-key',
+        'X-TodoGraph-MCP-Version': MCP_VERSION,
       },
       body: undefined,
       signal: expect.any(AbortSignal),
@@ -42,10 +45,46 @@ describe('HTTP client', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer test-key',
+        'X-TodoGraph-MCP-Version': MCP_VERSION,
       },
       body: JSON.stringify({ title: 'test' }),
       signal: expect.any(AbortSignal),
     }));
+  });
+
+  it('keeps compatible operations successful and shows the MCP update notice', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'X-TodoGraph-MCP-Latest-Version': '9.0.0' },
+      }),
+    ));
+
+    const result = await toolResult(() => client.get('/api/meta'));
+
+    expect(result.content).toHaveLength(2);
+    expect(result.content[0]?.text).toContain(`当前 MCP 版本为 ${MCP_VERSION}`);
+    expect(result.content[0]?.text).toContain('npx -y @todograph/mcp@latest');
+    expect(result.content[1]?.text).toContain('"ok": true');
+  });
+
+  it('isolates MCP update notices between concurrent tool calls', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: string | URL | Request) => {
+      const needsUpdate = String(input).endsWith('/api/outdated');
+      await Promise.resolve();
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: needsUpdate ? { 'X-TodoGraph-MCP-Latest-Version': '9.0.0' } : {},
+      });
+    }));
+
+    const [outdated, current] = await Promise.all([
+      toolResult(() => client.get('/api/outdated')),
+      toolResult(() => client.get('/api/current')),
+    ]);
+
+    expect(outdated.content).toHaveLength(2);
+    expect(current.content).toHaveLength(1);
   });
 
   it('throws on 4xx with error from body', async () => {

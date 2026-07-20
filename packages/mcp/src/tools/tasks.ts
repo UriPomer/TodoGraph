@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { TaskStatus } from '@todograph/shared';
 import type { client as ClientType } from '../client.js';
-import { textResult } from './result.js';
+import { toolResult } from './result.js';
 
 function runCommand<T>(c: typeof ClientType, pageId: string, command: unknown): Promise<T> {
   return c.post<T>(`/api/pages/${encodeURIComponent(pageId)}/commands`, command);
@@ -98,7 +98,7 @@ export function registerTaskTools(server: McpServer, c: typeof ClientType) {
         task_ids: z.array(z.string().min(1)).min(1).max(100).describe('要删除的任务 ID 列表'),
       },
     },
-    async (params) => textResult(await handleDeleteTasks(c, params)),
+    async (params) => toolResult(() => handleDeleteTasks(c, params)),
   );
 
   server.registerTool(
@@ -111,11 +111,11 @@ export function registerTaskTools(server: McpServer, c: typeof ClientType) {
         page_id: z.string().min(1).describe('要恢复备份的页面 ID'),
       },
     },
-    async (params) => {
+    async (params) => toolResult(async () => {
       const result = await c.post<{ ok: boolean; data?: unknown; error?: string }>(`/api/pages/${encodeURIComponent(params.page_id)}/restore`);
       if (!result.ok) throw new Error(result.error ?? 'restore failed');
-      return textResult({ restored: true, data: result.data });
-    },
+      return { restored: true, data: result.data };
+    }),
   );
 
   server.registerTool(
@@ -132,7 +132,7 @@ export function registerTaskTools(server: McpServer, c: typeof ClientType) {
         depends_on: z.array(z.string().min(1)).optional().describe('依赖的已有任务 id 列表'),
       },
     },
-    async (params) => textResult(await handleCreateTask(c, params)),
+    async (params) => toolResult(() => handleCreateTask(c, params)),
   );
 
   server.registerTool(
@@ -160,7 +160,7 @@ export function registerTaskTools(server: McpServer, c: typeof ClientType) {
           .describe('依赖边：from/to 都是 tasks 数组索引'),
       },
     },
-    async (params) => textResult(await handleCreateTasks(c, params)),
+    async (params) => toolResult(() => handleCreateTasks(c, params)),
   );
 
   server.registerTool(
@@ -179,6 +179,6 @@ export function registerTaskTools(server: McpServer, c: typeof ClientType) {
         y: z.number().optional().describe('Y 坐标'),
       },
     },
-    async (params) => textResult(await handleUpdateTask(c, params)),
+    async (params) => toolResult(() => handleUpdateTask(c, params)),
   );
 }

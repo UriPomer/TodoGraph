@@ -1,0 +1,2 @@
+# Keep cross-platform build artifacts and npm pack digests deterministic.
+* text=auto eol=lf

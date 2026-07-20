@@ -12,13 +12,13 @@ const task = (id: string, parentId?: string): Task => ({
 describe('task list model', () => {
   it('shows an orphan once as a root', () => {
     const orphan = task('orphan', 'missing');
-    const model = buildTaskListModel([orphan], { nodes: [orphan], edges: [] }, new Set(['orphan']), undefined, {});
+    const model = buildTaskListModel([orphan], { nodes: [orphan], edges: [] }, new Set(['orphan']), {});
     expect(model.ready).toEqual([{ task: orphan, depth: 0 }]);
   });
 
   it('terminates and shows every node once when legacy data contains a hierarchy cycle', () => {
     const nodes = [task('a', 'b'), task('b', 'a')];
-    const model = buildTaskListModel(nodes, { nodes, edges: [] }, new Set(['a', 'b']), undefined, {});
+    const model = buildTaskListModel(nodes, { nodes, edges: [] }, new Set(['a', 'b']), {});
     const byId = new Map(nodes.map((node) => [node.id, node]));
     expect(model.ready.map(({ task: item }) => item.id).sort()).toEqual(['a', 'b']);
     expect(isDescendant(byId, 'b', 'a')).toBe(true);
@@ -47,7 +47,7 @@ describe('task list model', () => {
 
   it('keeps children beside their sorted root', () => {
     const nodes = [task('old'), task('child', 'old'), { ...task('doing'), status: 'doing' as const }];
-    const model = buildTaskListModel(nodes, { nodes, edges: [] }, new Set(nodes.map(({ id }) => id)), undefined, {});
+    const model = buildTaskListModel(nodes, { nodes, edges: [] }, new Set(nodes.map(({ id }) => id)), {});
     expect(model.ready.map(({ task: item, depth }) => [item.id, depth])).toEqual([
       ['doing', 0],
       ['old', 0],
@@ -61,8 +61,21 @@ describe('task list model', () => {
       task('ready'),
       { ...task('second'), status: 'done' as const },
     ];
-    const model = buildTaskListModel(nodes, { nodes, edges: [] }, new Set(['ready']), undefined, {});
+    const model = buildTaskListModel(nodes, { nodes, edges: [] }, new Set(['ready']), {});
     expect(model.done.map(({ task: item }) => item.id)).toEqual(['first', 'second']);
+  });
+
+  it('keeps manual root order ahead of doing or recommendation priority', () => {
+    const doing = { ...task('doing'), status: 'doing' as const };
+    const newer = task('newer');
+    const nodes = [doing, newer];
+    const model = buildTaskListModel(
+      nodes,
+      { nodes, edges: [] },
+      new Set(nodes.map(({ id }) => id)),
+      {},
+    );
+    expect(model.ready.map(({ task: item }) => item.id)).toEqual(['newer', 'doing']);
   });
 
   it('moves completed children of an unfinished parent into the done section', () => {
@@ -75,7 +88,6 @@ describe('task list model', () => {
       nodes,
       { nodes, edges: [] },
       new Set(nodes.map(({ id }) => id)),
-      undefined,
       {},
     );
 

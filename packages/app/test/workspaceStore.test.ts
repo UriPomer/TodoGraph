@@ -34,6 +34,7 @@ vi.mock('@/components/ui/toaster-store', () => ({ toast }));
 import { useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useHistoryStore } from '@/stores/useHistoryStore';
+import { saveTaskDraft } from '@/stores/taskDraftStorage';
 
 function makePage(id: string, title: string, order: number): PageInfo {
   return {
@@ -65,8 +66,17 @@ describe('workspace/task store conflict handling', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    const values = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      get length() { return values.size; },
+      key: (index: number) => [...values.keys()][index] ?? null,
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    });
     api.loadAllTasks.mockResolvedValue({ tasks: [] });
     session.generation = 0;
+    useTaskStore.getState().resetSession();
     useTaskStore.setState(useTaskStore.getInitialState(), true);
     useWorkspaceStore.setState(useWorkspaceStore.getInitialState(), true);
     useHistoryStore.getState().clear();
@@ -75,6 +85,23 @@ describe('workspace/task store conflict handling', () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('warns only once for the same stale recovery draft in a session', async () => {
+    useTaskStore.getState().setSessionUser('u1');
+    saveTaskDraft('u1', 'p-1', 1, [{ id: 'draft', title: 'draft', status: 'todo' }], []);
+    const serverPage = makePageData(2);
+    api.loadPage.mockResolvedValue(serverPage);
+
+    await useTaskStore.getState().loadPage('p-1');
+    await useTaskStore.getState().loadPage('p-1');
+
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenCalledWith(
+      '发现冲突草稿',
+      '服务器版本已变化，本地草稿仍保存在此设备中',
+    );
   });
 
   it('clears all user-owned state and history when the session resets', () => {
@@ -155,9 +182,9 @@ describe('workspace/task store conflict handling', () => {
   });
 
   it('does not restore stale workspace state when a session resets during page switching', async () => {
-    let finishFlush!: () => void;
-    const flush = vi.fn(() => new Promise<void>((resolve) => {
-      finishFlush = resolve;
+    let finishLoad!: () => void;
+    const loadPage = vi.fn(() => new Promise<void>((resolve) => {
+      finishLoad = resolve;
     }));
     useWorkspaceStore.setState({
       sessionUserId: 'u1',
@@ -167,12 +194,12 @@ describe('workspace/task store conflict handling', () => {
     useTaskStore.setState({
       activePageId: 'p-1',
       loaded: true,
-      flush,
+      loadPage,
     } as Partial<ReturnType<typeof useTaskStore.getState>>);
 
     const switching = useWorkspaceStore.getState().switchPage('p-2');
     useWorkspaceStore.getState().resetSession();
-    finishFlush();
+    finishLoad();
     await switching;
 
     expect(useWorkspaceStore.getState()).toMatchObject({
@@ -181,6 +208,29 @@ describe('workspace/task store conflict handling', () => {
       loaded: false,
     });
     expect(api.setActivePage).not.toHaveBeenCalled();
+  });
+
+  it('paints a previously visited page from session cache while refreshing it', async () => {
+    api.loadPage
+      .mockResolvedValueOnce(makePageData(1, 'cached-page'))
+      .mockResolvedValueOnce(makePageData(1, 'other-page'));
+
+    await useTaskStore.getState().loadPage('p-1');
+    await useTaskStore.getState().loadPage('p-2');
+
+    let finishRefresh!: (data: PageData) => void;
+    api.loadPage.mockImplementationOnce(() => new Promise<PageData>((resolve) => {
+      finishRefresh = resolve;
+    }));
+    const loading = useTaskStore.getState().loadPage('p-1');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(useTaskStore.getState().activePageId).toBe('p-1');
+    expect(useTaskStore.getState().nodes[0]?.id).toBe('cached-page');
+
+    finishRefresh(makePageData(1, 'cached-page'));
+    await loading;
   });
 
   it('does not let an older page switch overwrite a newer one', async () => {

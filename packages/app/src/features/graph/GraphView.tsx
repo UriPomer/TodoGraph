@@ -58,7 +58,7 @@ import {
   usePageViewportLifecycle,
 } from './usePageViewportLifecycle';
 import { MultiDragSession } from './multiDragSession';
-import { claimPageForAutoLayout } from './pageAutoLayout';
+import { claimPageForAutoLayout, fitPageAfterAutoLayout } from './pageAutoLayout';
 import { buildGraphNodeProjection } from './graphNodeProjection';
 const nodeTypes: NodeTypes = {
   task: TaskNode,
@@ -590,6 +590,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
     },
     [removeEdge],
   );
+  const layoutFitRafRef = useRef<number | null>(null);
   const applyAutoLayout = useCallback(() => {
     const groupIds = [...parentMap.keys()].sort(
       (left, right) => (depthById.get(right) ?? 0) - (depthById.get(left) ?? 0),
@@ -626,7 +627,16 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
       return { id: node.id, patch: { x: position.x, y: position.y } };
     });
     updateTasksBulk(patches);
-  }, [rfNodes, rfEdges, updateTasksBulk, parentMap, depthById, nodeGeometryById]);
+    if (layoutFitRafRef.current !== null) cancelAnimationFrame(layoutFitRafRef.current);
+    // Fit only after React Flow has committed the newly calculated positions.
+    layoutFitRafRef.current = fitPageAfterAutoLayout((options) => {
+      layoutFitRafRef.current = null;
+      return rf.fitView(options);
+    });
+  }, [rfNodes, rfEdges, updateTasksBulk, parentMap, depthById, nodeGeometryById, rf]);
+  useEffect(() => () => {
+    if (layoutFitRafRef.current !== null) cancelAnimationFrame(layoutFitRafRef.current);
+  }, []);
   const autoLayoutCheckedPagesRef = useRef(new Set<string>());
   useEffect(() => {
     const nodeIds = nodes.map((node) => node.id);

@@ -8,12 +8,18 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import path from 'node:path';
 import { workspaceRoutes } from './routes/workspace.js';
 import { mcpRoutes } from './routes/mcp.js';
-import { authRoutes, authHook } from './auth.js';
+import { authRoutes, authHook, resolveMcpPrincipal } from './auth.js';
 import { McpKeyStore } from './mcp-keys.js';
 import { FileWorkspaceRepository } from './repositories/FileWorkspaceRepository.js';
 import { FileUserRepository } from './repositories/FileUserRepository.js';
 import { FileRememberTokenRepository } from './repositories/FileRememberTokenRepository.js';
 import type { WorkspaceRepository } from './repositories/Repository.js';
+import {
+  isOlderMcpVersion,
+  mcpUpdateRequired,
+  MCP_VERSION_HEADER,
+  todographUpdateRequired,
+} from './mcp-version.js';
 
 export interface AppOptions {
   /** Local file repositories serialize writers per dataDir; network filesystems are unsupported. */
@@ -111,14 +117,34 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
       root: path.resolve(opts.staticDir),
       prefix: '/',
     });
-    app.setNotFoundHandler((req, reply) => {
-      if (req.url.startsWith('/api/')) {
-        reply.status(404).send({ error: 'not found' });
+  }
+
+  app.setNotFoundHandler(async (req, reply) => {
+    if (req.url.startsWith('/api/')) {
+      if (req.headers.authorization?.startsWith('Bearer ')) {
+        const mcpPrincipal = await resolveMcpPrincipal(req.headers.authorization, keyStore);
+        if (!mcpPrincipal) {
+          reply.status(401).send({ ok: false, error: '请先登录' });
+          return;
+        }
+        const mcpVersion = req.headers[MCP_VERSION_HEADER];
+        // Old clients need a new MCP; current/new clients reached an older TodoGraph API.
+        reply.status(426).send(
+          isOlderMcpVersion(mcpVersion)
+            ? mcpUpdateRequired(mcpVersion)
+            : todographUpdateRequired(mcpVersion),
+        );
         return;
       }
+      reply.status(404).send({ error: 'not found' });
+      return;
+    }
+    if (opts.staticDir) {
       reply.sendFile('index.html');
-    });
-  }
+      return;
+    }
+    reply.status(404).send({ error: 'not found' });
+  });
 
   return app;
 }

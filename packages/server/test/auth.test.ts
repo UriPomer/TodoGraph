@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { LATEST_MCP_VERSION } from '../src/mcp-version.js';
 import { buildApp } from '../src/app.js';
 
 function makeSecret(): string {
@@ -814,13 +815,92 @@ describe('auth routes', () => {
     expect(keyRes.statusCode).toBe(200);
     const apiKey = (keyRes.json() as { key: string }).key;
 
+    const unidentifiedMcp = await app.inject({
+      method: 'POST',
+      url: '/api/pages',
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: { title: '不可识别旧版' },
+    });
+    expect(unidentifiedMcp.statusCode).toBe(426);
+    expect(unidentifiedMcp.json()).toMatchObject({
+      code: 'MCP_UPDATE_REQUIRED',
+      currentVersion: null,
+      latestVersion: LATEST_MCP_VERSION,
+    });
+
+    for (const [index, version] of ['0.0.0'].entries()) {
+      const outdated = await app.inject({
+        method: 'POST',
+        url: '/api/pages',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'x-todograph-mcp-version': version,
+        },
+        payload: { title: `兼容旧版-${index}` },
+      });
+      expect(outdated.statusCode).toBe(200);
+      expect(outdated.headers['x-todograph-mcp-latest-version']).toBe(LATEST_MCP_VERSION);
+    }
+
     const bearerMeta = await app.inject({
       method: 'GET',
       url: '/api/meta',
-      headers: { authorization: `Bearer ${apiKey}` },
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'x-todograph-mcp-version': LATEST_MCP_VERSION,
+      },
     });
     expect(bearerMeta.statusCode).toBe(200);
     expect(bearerMeta.cookies).toHaveLength(0);
+    expect(bearerMeta.headers['x-todograph-mcp-latest-version']).toBeUndefined();
+    expect((bearerMeta.json() as { pages: Array<{ title: string }> }).pages)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ title: '兼容旧版-0' }),
+      ]));
+
+    const newerMcp = await app.inject({
+      method: 'GET',
+      url: '/api/meta',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'x-todograph-mcp-version': '999.0.0',
+      },
+    });
+    expect(newerMcp.statusCode).toBe(200);
+    expect(newerMcp.headers['x-todograph-mcp-latest-version']).toBeUndefined();
+
+    const missingOperation = await app.inject({
+      method: 'POST',
+      url: '/api/removed-mcp-operation',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'x-todograph-mcp-version': '0.0.0',
+      },
+    });
+    expect(missingOperation.statusCode).toBe(426);
+    expect(missingOperation.json()).toMatchObject({
+      code: 'MCP_UPDATE_REQUIRED',
+      currentVersion: '0.0.0',
+      latestVersion: LATEST_MCP_VERSION,
+    });
+
+    for (const version of [LATEST_MCP_VERSION, '999.0.0']) {
+      const missingBackendOperation = await app.inject({
+        method: 'POST',
+        url: '/api/removed-mcp-operation',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'x-todograph-mcp-version': version,
+        },
+      });
+      expect(missingBackendOperation.statusCode).toBe(426);
+      expect(missingBackendOperation.json()).toMatchObject({
+        code: 'TODOGRAPH_UPDATE_REQUIRED',
+        currentMcpVersion: version,
+      });
+      expect((missingBackendOperation.json() as { error: string }).error)
+        .toContain('更新 TodoGraph');
+    }
 
     const bearerCookies = Object.fromEntries(
       (bearerMeta.cookies as unknown as { name: string; value: string }[]).map((c) => [c.name, c.value]),
@@ -835,14 +915,20 @@ describe('auth routes', () => {
     const bearerDisallowed = await app.inject({
       method: 'GET',
       url: '/api/mcp/keys',
-      headers: { authorization: `Bearer ${apiKey}` },
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'x-todograph-mcp-version': LATEST_MCP_VERSION,
+      },
     });
     expect(bearerDisallowed.statusCode).toBe(403);
 
     const destructiveDenied = await app.inject({
       method: 'POST',
       url: '/api/pages/unknown/restore',
-      headers: { authorization: `Bearer ${apiKey}` },
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'x-todograph-mcp-version': LATEST_MCP_VERSION,
+      },
       payload: {},
     });
     expect(destructiveDenied.statusCode).toBe(403);
@@ -850,10 +936,27 @@ describe('auth routes', () => {
     const taskDeleteDenied = await app.inject({
       method: 'POST',
       url: '/api/pages/unknown/commands',
-      headers: { authorization: `Bearer ${apiKey}` },
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'x-todograph-mcp-version': LATEST_MCP_VERSION,
+      },
       payload: { type: 'delete_tasks', taskIds: ['task-1'] },
     });
     expect(taskDeleteDenied.statusCode).toBe(403);
+  });
+
+  it('rejects an invalid MCP bearer before classifying a missing operation', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/removed-mcp-operation',
+      headers: {
+        authorization: 'Bearer invalid-mcp-key',
+        'x-todograph-mcp-version': LATEST_MCP_VERSION,
+      },
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ ok: false, error: '请先登录' });
   });
 
   it('returns 400 for workspace imports whose activePageId is missing from meta.pages', async () => {

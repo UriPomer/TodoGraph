@@ -190,14 +190,14 @@ export function PageBar({ onModeChange }: { onModeChange?: (mode: 'list' | 'grap
     }
   }, [meta?.activePageId]);
 
-  const switchModePage = useCallback(async (pageId: string) => {
+  const switchModePage = useCallback(async (pageId: string, nextMode?: 'list' | 'graph') => {
     if (switchingRef.current) return;
     switchingRef.current = true;
     setIsSwitching(true);
     try {
       await switchPage(pageId);
-      if (useWorkspaceStore.getState().meta?.activePageId === pageId) {
-        onModeChange?.('list');
+      if (nextMode && useWorkspaceStore.getState().meta?.activePageId === pageId) {
+        onModeChange?.(nextMode);
       }
     } finally {
       switchingRef.current = false;
@@ -208,12 +208,12 @@ export function PageBar({ onModeChange }: { onModeChange?: (mode: 'list' | 'grap
   const handleToggleMode = useCallback(async () => {
     if (!meta || !systemPage) return;
     if (!isListMode) {
-      await switchModePage(systemPage.id);
+      await switchModePage(systemPage.id, 'list');
       return;
     }
     const target = pages.find((page) => page.id === lastGraphPageIdRef.current) ?? pages[0];
     if (target) {
-      await switchModePage(target.id);
+      await switchModePage(target.id, 'graph');
     }
   }, [isListMode, meta, pages, switchModePage, systemPage]);
 

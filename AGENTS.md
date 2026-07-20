@@ -7,7 +7,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ```bash
 pnpm dev              # Start Fastify (5173) + Vite (5174) concurrently
 pnpm dev:electron     # Run Electron desktop app with HMR
-pnpm -r build         # Build all workspace packages (tsc)
+pnpm -r build         # Build packages (tsc; MCP entry bundled with esbuild)
 pnpm test             # Build dependencies, then run all workspace tests
 pnpm typecheck        # Type-check every workspace package
 pnpm --filter @todograph/server test     # Run server tests
@@ -32,7 +32,7 @@ This is a **pnpm monorepo** with six packages. See [`ARCHITECTURE.md`](./ARCHITE
 
 ## Data flow
 
-1. **TaskStore** (`useTaskStore`) is the single source of truth for the current page's nodes/edges. All writes go through it → 250ms debounced save to server → server validates DAG (cycle check) → writes JSON.
+1. **TaskStore** (`useTaskStore`) is the single source of truth for the current page's nodes/edges. All writes go through it → 250ms debounced save to server → server validates DAG (cycle check) → writes JSON. A bounded session-only page cache paints revisited pages immediately, then refreshes them from the server; session reset clears it.
 2. **WorkspaceStore** (`useWorkspaceStore`) manages multi-page orchestration — meta, page CRUD, cross-page move, all-tasks aggregation.
 3. **Undo/redo**: `useHistoryStore` holds snapshots. Every mutation in `useTaskStore` calls `pushPre()` before modifying state.
 4. **Save path**: `useTaskStore.scheduleSave()` → 250ms debounce → `api.savePage()` → `PUT /api/pages/:id` → server validates capacity, dependency DAG and task hierarchy → `FileWorkspaceRepository.savePage()` (fsync + atomic rename).
@@ -49,6 +49,7 @@ This is a **pnpm monorepo** with six packages. See [`ARCHITECTURE.md`](./ARCHITE
 - **Migration**: On first `loadMeta()` with no `meta.json`, `FileWorkspaceRepository` auto-migrates legacy `tasks.json` (v1) → page-per-user layout, or seeds demo data if no data exists.
 - **Electron**: Main process starts Fastify on a random port, preload injects `__API_BASE__` via `contextBridge`. Portable mode redirects `userData` to exe-adjacent `data/` folder.
 - **Vite dev proxy**: `vite.config.ts` proxies `/api` to `http://127.0.0.1:5173` (the Fastify dev server).
+- **MCP compatibility releases**: `packages/mcp/package.json` is the MCP runtime version and must match `LATEST_MCP_VERSION` (enforced by test). npm, Docker, and desktop release workflows share the exact-pack/latest-version guard; server distributions publish that package before advertising it.
 - **Themes**: All colors as HSL CSS custom properties (`hsl(var(--xxx))`). 6 套主题（glass-dark/light、default-dark/light、muted-warm/cool）。每套主题一个独立 CSS 文件在 `styles/themes/`。`ThemeDef` 接口在 `features/theme/themes.ts`，包含 `id/label/mode/icon/preview`。新增主题只需：1) 创建 `styles/themes/<name>.css`，2) 在 `THEMES` 数组中加一条，3) 在 `globals.css` 顶部 `@import`。
 - **玻璃/磨砂背景引擎**：`index.html` 中 `bg-sharp`（锐利原图）+ `bg-matte`（backdrop-filter blur 18px）双层 fixed div。背景图 6 张随机（`public/bg-{1..6}.jpg`），`main.tsx` 启动时设置 `--bg-url` CSS 变量。非玻璃主题自动隐藏这两层。
 - **Hover 透镜效果**：`App.tsx` 全局 mouseover 代理，任何带 `data-lens` 属性的元素 hover 时在 `bg-matte` 的 CSS mask 上挖洞（`--hole-x/y/r`），露出锐利原图。透镜消失有 100ms 延迟防闪烁。

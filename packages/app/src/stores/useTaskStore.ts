@@ -64,6 +64,7 @@ interface TaskStore {
   /** 同步浏览器实测尺寸；属于派生几何，不进入撤销历史。 */
   syncMeasuredSizes: (measurements: Array<{ id: string; width: number; height: number }>) => void;
   toggleStatus: (id: string) => boolean;
+  completeTask: (id: string) => boolean;
   setStatus: (id: string, status: TaskStatus) => void;
   addEdge: (from: string, to: string) => boolean;
   removeEdge: (from: string, to: string) => void;
@@ -77,6 +78,8 @@ interface TaskStore {
     parentId: string | null,
     positionHint?: { x: number; y: number },
   ) => boolean;
+  /** 按列表视觉顺序把任务放到同级锚点之前或之后，不改变父子关系。 */
+  reorderTask: (taskId: string, anchorId: string, position: 'before' | 'after', storageOrder: 'forward' | 'reverse') => boolean;
   ascendOneLevel: (childId: string) => boolean;
   /** 把一批子任务合并到一个新父任务下；若 existingParentId 给出则复用它，否则创建新父。 */
   groupTasks: (
@@ -100,6 +103,9 @@ const nextStatus: Record<TaskStatus, TaskStatus> = {
   doing: 'done',
   done: 'todo',
 };
+function hasUndoneChild(nodes: readonly Task[], parentId: string): boolean {
+  return nodes.some((node) => node.parentId === parentId && node.status !== 'done');
+}
 interface HierarchyIndex {
   byId: Map<string, Task>;
   childIdsByParentId: Map<string, string[]>;
@@ -292,6 +298,13 @@ export const useTaskStore = create<TaskStore>((set, get) => {
   let loadRequestId = 0;
   let sessionUserId: string | null = null;
   let draftStorageWarningShown = false;
+  const warnedStaleDrafts = new Set<string>();
+  const pageCache = new Map<string, PageData>();
+  const rememberPage = (pageId: string, data: PageData) => {
+    pageCache.delete(pageId);
+    pageCache.set(pageId, data);
+    if (pageCache.size > 12) pageCache.delete(pageCache.keys().next().value!);
+  };
   const stopPolling = () => {
     if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
   };
@@ -308,6 +321,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         const { activePageId, pageVersion } = get();
         if (g.version !== pageVersion && activePageId === pageId) {
           const repaired = repairGeometry(g.nodes);
+          rememberPage(pageId, { ...g, nodes: repaired });
           set((state) => ({
             nodes: repaired,
             edges: g.edges,
@@ -419,12 +433,17 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       ? draft
       : null;
     if (draft && !serverMatchesDraft && !recoveredDraft) {
-      toast.error('发现冲突草稿', '服务器版本已变化，本地草稿仍保存在此设备中');
+      const warningKey = `${pageId}:${draft.baseVersion}:${draft.savedAt}`;
+      if (!warnedStaleDrafts.has(warningKey)) {
+        warnedStaleDrafts.add(warningKey);
+        toast.error('发现冲突草稿', '服务器版本已变化，本地草稿仍保存在此设备中');
+      }
     }
     const effective = recoveredDraft
       ? { ...data, nodes: recoveredDraft.nodes, edges: recoveredDraft.edges }
       : data;
     const repaired = repairGeometry(effective.nodes);
+    rememberPage(pageId, { ...data, nodes: repaired, edges: effective.edges });
     set((state) => ({
       activePageId: pageId,
       pageVersion: data.version ?? 0,
@@ -449,6 +468,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     cancelScheduledSave();
     sessionUserId = null;
     draftStorageWarningShown = false;
+    warnedStaleDrafts.clear();
+    pageCache.clear();
     useHistoryStore.getState().clear();
     set({
       activePageId: null,
@@ -479,13 +500,35 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       const generation = getApiSessionGeneration();
       await flush();
       if (generation !== getApiSessionGeneration() || requestId !== loadRequestId) return;
+      const current = get();
+      if (current.activePageId && current.loaded) {
+        rememberPage(current.activePageId, {
+          nodes: current.nodes,
+          edges: current.edges,
+          version: current.pageVersion,
+        });
+      }
+      const cached = pageCache.get(pageId);
+      if (cached) {
+        applyPage(pageId, cached);
+        startPolling(pageId);
+      }
       try {
         const g = await api.loadPage(pageId);
         if (generation !== getApiSessionGeneration() || requestId !== loadRequestId) return;
-        applyPage(pageId, g);
+        const visible = get();
+        if (!cached || visible.activePageId !== pageId || visible.pageVersion !== (g.version ?? 0)) {
+          applyPage(pageId, g);
+        } else {
+          rememberPage(pageId, g);
+        }
         startPolling(pageId);
       } catch (err) {
         if (generation !== getApiSessionGeneration() || requestId !== loadRequestId) return;
+        if (cached) {
+          toast.info('已显示页面缓存', '连接恢复后会自动同步最新数据');
+          return;
+        }
         toast.error('加载页面失败', String((err as Error).message));
         set({ loaded: true });
         throw err;
@@ -504,6 +547,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     setSessionUser: (userId) => {
       sessionUserId = userId;
       draftStorageWarningShown = false;
+      warnedStaleDrafts.clear();
     },
     addTask: ({ title, x, y, parentId }) => {
       pushPre();
@@ -649,15 +693,27 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       const s = get();
       const node = s.nodes.find((n) => n.id === id);
       if (!node) return false;
-      if (nextStatus[node.status] === 'done') {
-        const hasUndoneChild = s.nodes.some((n) => n.parentId === id && n.status !== 'done');
-        if (hasUndoneChild) return false;
-      }
+      if (nextStatus[node.status] === 'done' && hasUndoneChild(s.nodes, id)) return false;
       pushPre();
       set((s2) => ({
         nodes: s2.nodes.map((n) => (n.id === id ? { ...n, status: nextStatus[n.status] } : n)),
         recommendationRevision: s2.recommendationRevision + 1,
         listRevision: s2.listRevision + 1,
+      }));
+      scheduleSave();
+      return true;
+    },
+    completeTask: (id) => {
+      const state = get();
+      const node = state.nodes.find((candidate) => candidate.id === id);
+      if (!node || node.status === 'done' || hasUndoneChild(state.nodes, id)) return false;
+      pushPre();
+      set((current) => ({
+        nodes: current.nodes.map((candidate) => (
+          candidate.id === id ? { ...candidate, status: 'done' as const } : candidate
+        )),
+        recommendationRevision: current.recommendationRevision + 1,
+        listRevision: current.listRevision + 1,
       }));
       scheduleSave();
       return true;
@@ -763,7 +819,9 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       if (positionHint) {
         patch = { ...patch, x: positionHint.x, y: positionHint.y };
       } else {
-        const world = worldPositionFromIndex(idx, childId);
+        const world = child.x === undefined || child.y === undefined
+          ? (state.viewportCenter ?? { x: 200, y: 100 })
+          : worldPositionFromIndex(idx, childId);
         const parentWorld = parentId
           ? worldPositionFromIndex(idx, parentId)
           : { x: 0, y: 0 };
@@ -778,6 +836,39 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       } else {
         set((s) => ({ nodes: repairGeometry(s.nodes, [childId]) }));
       }
+      scheduleSave();
+      return true;
+    },
+    reorderTask: (taskId, anchorId, position, storageOrder) => {
+      const state = get();
+      const task = state.nodes.find((node) => node.id === taskId);
+      const anchor = state.nodes.find((node) => node.id === anchorId);
+      if (!task || !anchor || task.id === anchor.id) return false;
+      if ((task.parentId ?? null) !== (anchor.parentId ?? null)) return false;
+
+      const siblings = state.nodes.filter(
+        (node) => (node.parentId ?? null) === (task.parentId ?? null),
+      );
+      const withoutTask = siblings.filter((node) => node.id !== taskId);
+      const anchorIndex = withoutTask.findIndex((node) => node.id === anchorId);
+      if (anchorIndex < 0) return false;
+      const storagePosition = storageOrder === 'forward'
+        ? position
+        : position === 'before' ? 'after' : 'before';
+      const insertionIndex = anchorIndex + (storagePosition === 'after' ? 1 : 0);
+      withoutTask.splice(insertionIndex, 0, task);
+      if (siblings.every((node, index) => node.id === withoutTask[index]?.id)) return false;
+
+      pushPre();
+      let siblingIndex = 0;
+      set((current) => ({
+        nodes: current.nodes.map((node) => (
+          (node.parentId ?? null) === (task.parentId ?? null)
+            ? withoutTask[siblingIndex++]!
+            : node
+        )),
+        listRevision: current.listRevision + 1,
+      }));
       scheduleSave();
       return true;
     },

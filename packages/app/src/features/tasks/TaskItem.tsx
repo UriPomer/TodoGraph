@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronRight, ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
+import { Check, ChevronRight, ChevronDown, FileText, GripVertical, Plus, Trash2 } from 'lucide-react';
 import { MAX_HIERARCHY_DEPTH, type Task } from '@todograph/shared';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/LinkifiedText';
@@ -10,7 +10,6 @@ import { dialog } from '@/components/ui/dialog-store';
 
 interface Props {
   task: Task;
-  recommended?: boolean;
   dependencyInfo?: { undone: number; total: number; parentTitles: string[] };
   /** 层级缩进深度，0 = 顶层 */
   depth?: number;
@@ -24,37 +23,41 @@ interface Props {
   isDragging?: boolean;
   /** 当前是否是 hover 的 drop target */
   isDropTarget?: boolean;
-  /** mousedown 拖拽开始回调 */
-  onDragStart?: (e: React.MouseEvent, task: Task) => void;
+  /** 当前行边缘显示的排序落点。 */
+  reorderPosition?: 'before' | 'after';
+  /** 专用把手的 pointerdown 拖拽开始回调 */
+  onDragStart?: (e: React.PointerEvent, task: Task) => void;
   /** 添加子任务；仅在 depth < MAX-1 时传入才显示按钮 */
-  onAddChild?: (parentId: string) => void;
+  onAddChild?: (parentId: string, title: string) => boolean;
 }
 
 /**
  * 极简任务行（参考 ref.PNG）：
  * - 无卡片边框/背景，仅靠空白与分组呈现
- * - 左侧单个状态圆点：todo=空心 / doing=中心点 / done=实心 + 勾
+ * - 左侧拖动把手；状态圆点：todo=空心 / doing=中心点 / done=实心 + 勾
  * - done 状态整行灰化 + 标题 line-through
- * - 优先级/删除按钮只在 hover 时浮现
+ * - 子任务、描述和删除按钮在行尾集中显示
  *
  * 用 memo 包住：ListView 每次 store 变化都会重排列表，但对于未变动的行
  * props 引用相同时跳过重渲染，避免大列表下 input 输入卡顿。
  */
-export const TaskItem = memo(function TaskItem({ task, recommended, dependencyInfo, depth = 0, hasChildren, isCollapsed, onToggleCollapse, isDragging, isDropTarget, onDragStart, onAddChild }: Props) {
+export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0, hasChildren, isCollapsed, onToggleCollapse, isDragging, isDropTarget, reorderPosition, onDragStart, onAddChild }: Props) {
   const toggleStatus = useTaskStore((s) => s.toggleStatus);
+  const completeTask = useTaskStore((s) => s.completeTask);
   const updateTask = useTaskStore((s) => s.updateTask);
   const deleteTask = useTaskStore((s) => s.deleteTask);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(task.title);
   const [descExpanded, setDescExpanded] = useState(false);
   const [descDraft, setDescDraft] = useState(task.description ?? '');
+  const [addingChild, setAddingChild] = useState(false);
+  const [childDraft, setChildDraft] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const descRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (editing) {
       inputRef.current?.focus();
-      inputRef.current?.select();
     }
   }, [editing]);
 
@@ -81,6 +84,18 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
     }
   };
 
+  const commitChild = () => {
+    const title = childDraft.trim();
+    if (!title) {
+      setAddingChild(false);
+      return;
+    }
+    if (onAddChild?.(task.id, title)) {
+      setChildDraft('');
+      setAddingChild(false);
+    }
+  };
+
   // ===== 移动端滑动手势：纯 DOM 动画，不经过 React 渲染管线 =====
   // touchmove 期间每帧 ~16ms 预算，React reconciliation 太慢，改用 ref 直接操作 DOM
   const swipeLayerRef = useRef<HTMLDivElement>(null);
@@ -89,7 +104,8 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const swipeOffsetRef = useRef(0); //  touchmove 期间累积偏移，供 touchend 读
   const swipingRef = useRef(false);
-  const SWIPE_THRESHOLD = 60;
+  const SWIPE_START_THRESHOLD = 18;
+  const SWIPE_COMMIT_THRESHOLD = 96;
 
   const cancelSwipeDOM = () => {
     const el = swipeLayerRef.current;
@@ -97,8 +113,16 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       el.style.transition = 'transform 0.2s ease-out';
       el.style.transform = 'translateX(0px)';
     }
-    if (bgRightRef.current) bgRightRef.current.style.opacity = '0';
-    if (bgLeftRef.current) bgLeftRef.current.style.opacity = '0';
+    if (bgRightRef.current) {
+      bgRightRef.current.style.opacity = '0';
+      bgRightRef.current.style.backgroundColor = 'transparent';
+      bgRightRef.current.textContent = '完成';
+    }
+    if (bgLeftRef.current) {
+      bgLeftRef.current.style.opacity = '0';
+      bgLeftRef.current.style.backgroundColor = 'transparent';
+      bgLeftRef.current.textContent = '删除';
+    }
   };
 
   const onSwipeStart = useCallback((e: React.TouchEvent) => {
@@ -125,7 +149,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
     const dy = e.touches[0]!.clientY - start.y;
 
     if (!swipingRef.current) {
-      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+      if (Math.abs(dx) > SWIPE_START_THRESHOLD && Math.abs(dx) > Math.abs(dy) * 1.35) {
         swipingRef.current = true;
         const el = swipeLayerRef.current;
         if (el) el.style.transition = 'none';
@@ -136,13 +160,23 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
     const clamped = mag > 100 ? 100 + (mag - 100) * 0.3 : mag;
     const offset = dx > 0 ? clamped : -clamped;
     swipeOffsetRef.current = offset;
+    e.preventDefault();
 
     const el = swipeLayerRef.current;
     if (el) el.style.transform = `translateX(${offset}px)`;
 
-    const opacity = Math.min(1, Math.max(0, (Math.abs(offset) - 20) / 40));
-    if (bgRightRef.current) bgRightRef.current.style.opacity = String(dx > 0 ? opacity : 0);
-    if (bgLeftRef.current) bgLeftRef.current.style.opacity = String(dx < 0 ? opacity : 0);
+    const armed = Math.abs(offset) >= SWIPE_COMMIT_THRESHOLD;
+    const opacity = Math.min(1, Math.max(0, (Math.abs(offset) - 36) / 60));
+    if (bgRightRef.current) {
+      bgRightRef.current.style.opacity = String(dx > 0 ? opacity : 0);
+      bgRightRef.current.style.backgroundColor = armed && dx > 0 ? 'hsl(var(--success) / 0.12)' : 'transparent';
+      bgRightRef.current.textContent = armed && dx > 0 ? '松手完成' : '完成';
+    }
+    if (bgLeftRef.current) {
+      bgLeftRef.current.style.opacity = String(dx < 0 ? opacity : 0);
+      bgLeftRef.current.style.backgroundColor = armed && dx < 0 ? 'hsl(var(--destructive) / 0.12)' : 'transparent';
+      bgLeftRef.current.textContent = armed && dx < 0 ? '松手删除' : '删除';
+    }
   }, []);
 
   const onSwipeEnd = useCallback((e: React.TouchEvent) => {
@@ -161,21 +195,22 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
 
     cancelSwipeDOM();
 
-    if (Math.abs(offset) > SWIPE_THRESHOLD) {
+    if (Math.abs(offset) >= SWIPE_COMMIT_THRESHOLD) {
       setTimeout(() => {
-        if (offset > SWIPE_THRESHOLD) {
-          if (toggleStatus(task.id)) {
-            toast.action('已完成', '撤销', () => useTaskStore.getState().undo());
+        if (offset >= SWIPE_COMMIT_THRESHOLD) {
+          if (task.status === 'done') return;
+          if (completeTask(task.id)) {
+            toast.action('已完成', '撤销', () => useTaskStore.getState().undo(), task.title);
           } else {
             toast.info('无法完成', '该任务下还有未完成的子任务');
           }
         } else {
           deleteTask(task.id);
-          toast.action('已删除', '撤销', () => useTaskStore.getState().undo());
+          toast.action('已删除', '撤销', () => useTaskStore.getState().undo(), task.title);
         }
       }, 220);
     }
-  }, [toggleStatus, deleteTask, task.id]);
+  }, [completeTask, deleteTask, task.id, task.status, task.title]);
   const onSwipeCancel = useCallback(() => {
     swipeStartRef.current = null;
     swipingRef.current = false;
@@ -186,9 +221,10 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
   return (
     <li
       data-task-id={task.id}
-      onMouseDown={(e) => {
-        if (e.button !== 0) return; // 只响应左键
-        onDragStart?.(e, task);
+      onClick={(e) => {
+        if (!(e.target as HTMLElement).closest('button, input, textarea, a, [data-task-title]')) {
+          window.getSelection()?.removeAllRanges();
+        }
       }}
       onTouchStart={onSwipeStart}
       onTouchMove={onSwipeMove}
@@ -204,6 +240,15 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         task.status === 'done' && !isDragging && 'text-muted-foreground',
       )}
     >
+      {reorderPosition && (
+        <span
+          data-reorder-indicator={reorderPosition}
+          className={cn(
+            'pointer-events-none absolute inset-x-2 z-20 h-0.5 rounded-full bg-[hsl(var(--primary))] shadow-[0_0_6px_hsl(var(--primary)/0.55)]',
+            reorderPosition === 'before' ? 'top-0' : 'bottom-0',
+          )}
+        />
+      )}
       {/* 滑动手势背景指示 — 由 ref 直接操作 DOM，不经过 React */}
       <div ref={bgRightRef} className="absolute inset-y-0 left-0 flex items-center pl-4 text-sm font-semibold text-[hsl(var(--success))] pointer-events-none" style={{ opacity: 0 }}>
         完成
@@ -218,6 +263,22 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         style={{ paddingLeft: `${12 + depth * 20}px` }}
       >
       <div className="flex items-center gap-2 py-1.5 pr-2 max-lg:min-h-[44px]">
+      <button
+        type="button"
+        title="拖动任务"
+        aria-label={`拖动任务：${task.title}`}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+          onDragStart?.(event, task);
+        }}
+        onTouchStart={(event) => event.stopPropagation()}
+        onTouchMove={(event) => event.stopPropagation()}
+        onTouchEnd={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+        className="flex h-8 w-6 shrink-0 touch-none cursor-grab items-center justify-center rounded-lg text-muted-foreground/55 transition-colors hover:bg-foreground/5 hover:text-muted-foreground active:cursor-grabbing max-lg:h-10 max-lg:w-7"
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
       {/* 折叠/展开按钮 */}
       {hasChildren && (
         <button
@@ -239,10 +300,11 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
       {/* spacer 尺寸与 CrossPageReady.tsx 中保持一致 */}
       {!hasChildren && <span className="shrink-0 w-[10px]" />}<StatusDot
         status={task.status}
-        recommended={recommended}
         onClick={() => {
           if (!toggleStatus(task.id)) {
             toast.info('无法完成', '该任务下还有未完成的子任务');
+          } else if (task.status === 'doing') {
+            toast.action('已完成', '撤销', () => useTaskStore.getState().undo(), task.title);
           }
         }}
       />
@@ -265,9 +327,15 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         />
       ) : (
         <span
-          onDoubleClick={() => { setDraft(task.title); setEditing(true); }}
+          data-task-title="true"
+          onDoubleClick={(event) => {
+            event.preventDefault();
+            window.getSelection()?.removeAllRanges();
+            setDraft(task.title);
+            setEditing(true);
+          }}
           className={cn(
-            'flex-1 min-w-0 truncate text-sm cursor-text',
+            'flex-1 min-w-0 truncate text-sm cursor-text select-text',
             task.status === 'done' && 'line-through',
           )}
           title="双击编辑"
@@ -291,11 +359,11 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onAddChild(task.id);
+              setAddingChild(true);
             }}
             onMouseDown={(e) => e.stopPropagation()}
             className={cn(
-              'shrink-0 text-muted-foreground rounded p-1',
+              'flex h-8 w-8 shrink-0 items-center justify-center text-muted-foreground rounded-lg',
               'transition-[color,transform,background-color] duration-150 ease-out',
               'hover:text-[hsl(var(--primary))] hover:bg-foreground/5 active:scale-90',
             )}
@@ -312,7 +380,7 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
           }}
           onMouseDown={(e) => e.stopPropagation()}
           className={cn(
-            'shrink-0 rounded p-1',
+              'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
             'transition-[color,transform,background-color] duration-150 ease-out',
             'hover:bg-foreground/5 active:scale-90',
             task.description ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground',
@@ -328,10 +396,13 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
               description: '删除后可从撤销 toast 恢复',
               danger: true,
             });
-            if (ok) deleteTask(task.id);
+            if (ok) {
+              deleteTask(task.id);
+              toast.action('已删除', '撤销', () => useTaskStore.getState().undo(), task.title);
+            }
           }}
           className={cn(
-            'shrink-0 text-muted-foreground rounded p-1.5 ml-1',
+              'flex h-8 w-8 shrink-0 items-center justify-center text-muted-foreground rounded-lg ml-1',
             'transition-[color,transform,background-color] duration-150 ease-out',
             'hover:text-destructive hover:bg-foreground/5 active:scale-90',
             'max-lg:min-h-[28px] max-lg:min-w-[28px]',
@@ -342,6 +413,31 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
         </button>
       </div>
       </div>
+
+      {addingChild && onAddChild && (
+        <div className="flex items-center gap-2 pb-2 pr-2" style={{ paddingLeft: `${32 + (depth + 1) * 20}px` }}>
+          <Plus className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--primary))]" />
+          <input
+            autoFocus
+            value={childDraft}
+            placeholder="输入子任务名称…"
+            maxLength={MAX_TITLE_LENGTH}
+            onMouseDown={(event) => event.stopPropagation()}
+            onChange={(event) => setChildDraft(event.target.value)}
+            onBlur={commitChild}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                commitChild();
+              } else if (event.key === 'Escape') {
+                setChildDraft('');
+                setAddingChild(false);
+              }
+            }}
+            className="h-8 min-w-0 flex-1 rounded-lg border border-[hsl(var(--primary)/0.4)] bg-background px-3 text-sm outline-none focus:border-[hsl(var(--primary))]"
+          />
+        </div>
+      )}
 
       {/* 描述展开区：点 FileText 按钮打开，blur 时保存 */}
       {descExpanded && (
@@ -385,29 +481,25 @@ export const TaskItem = memo(function TaskItem({ task, recommended, dependencyIn
 /** 状态圆点：三态极简视觉。 */
 function StatusDot({
   status,
-  recommended,
   onClick,
 }: {
   status: Task['status'];
-  recommended?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
       className={cn(
-        'relative flex shrink-0 items-center justify-center rounded-full h-[14px] w-[14px]',
+        'relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full lg:h-7 lg:w-7',
         'transition-[transform,box-shadow] duration-150 ease-out',
         'hover:scale-110 active:scale-90',
-        // 推荐项：细微的成功色光晕
-        recommended && 'shadow-[0_0_0_2px_hsl(var(--success)/0.25)]',
       )}
       title="点击切换状态 todo → doing → done"
     >
       {/* 外圈 */}
       <span
         className={cn(
-          'absolute inset-0 rounded-full border',
+          'h-[14px] w-[14px] rounded-full border',
           status === 'todo' && 'border-muted-foreground/55',
           status === 'doing' && 'border-[hsl(var(--primary))]',
           status === 'done' && 'border-transparent bg-muted-foreground/70',
@@ -415,11 +507,11 @@ function StatusDot({
       />
       {/* doing：中心实点 */}
       {status === 'doing' && (
-        <span className="relative h-[7px] w-[7px] rounded-full bg-[hsl(var(--primary))]" />
+        <span className="absolute h-[7px] w-[7px] rounded-full bg-[hsl(var(--primary))]" />
       )}
       {/* done：白色勾 */}
       {status === 'done' && (
-        <Check className="relative h-3 w-3 text-[hsl(var(--card))]" strokeWidth={3} />
+        <Check className="absolute h-3 w-3 text-[hsl(var(--card))]" strokeWidth={3} />
       )}
     </button>
   );

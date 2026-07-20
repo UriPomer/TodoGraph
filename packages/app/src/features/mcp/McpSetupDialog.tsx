@@ -15,7 +15,7 @@ export function mcpConfig(apiKey: string): string {
     mcpServers: {
       todograph: {
         command: 'npx',
-        args: ['-y', '@todograph/mcp'],
+        args: ['-y', '@todograph/mcp@latest'],
         env: { TODOGRAPH_API_BASE: apiBase, TODOGRAPH_API_KEY: apiKey },
       },
     },
@@ -84,10 +84,21 @@ export function McpSetupDialog({ open, onClose, embedded = false }: Props) {
             <input value={label} onChange={(event) => setLabel(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void generate(); }} placeholder="设备名称" className={`min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-xs ${embedded ? 'h-10' : 'h-8'}`} />
             <Button size="sm" className={embedded ? 'h-10 px-4' : undefined} onClick={() => void generate()} disabled={busy === 'generate'}>{busy === 'generate' ? '生成中...' : '生成'}</Button>
           </div>
-          <label className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" checked={allowDestructive} onChange={(event) => setAllowDestructive(event.target.checked)} className="mt-0.5" />
-            允许 AI 删除、恢复和跨页面移动数据
-          </label>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={allowDestructive}
+            onClick={() => setAllowDestructive((value) => !value)}
+            className="mt-3 flex min-h-10 w-full items-center justify-between gap-3 rounded-xl px-3 text-left text-xs text-muted-foreground transition-colors duration-200 hover:bg-foreground/5"
+          >
+            <span>允许 AI 删除、恢复和跨页面移动数据</span>
+            <span
+              aria-hidden="true"
+              className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors duration-200 ${allowDestructive ? 'border-[hsl(var(--primary))] bg-[hsl(var(--primary))]' : 'border-border bg-muted'}`}
+            >
+              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${allowDestructive ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </span>
+          </button>
           {generated && (
             <div className="mt-3 space-y-3">
               <div className="rounded-lg border border-[hsl(var(--primary))/0.2] bg-[hsl(var(--primary))/0.08] p-3">

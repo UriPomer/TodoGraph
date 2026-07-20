@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { client as ClientType } from '../client.js';
-import { textResult } from './result.js';
+import { toolResult } from './result.js';
 
 // ── Handlers (testable without MCP) ──
 
@@ -82,7 +82,7 @@ export function registerPageTools(server: McpServer, c: typeof ClientType) {
         '列出 TodoGraph 工作区中所有页面，返回每个页面的 id、标题、排序、任务数量。用于了解工作区全貌，是大多数操作的第一步。',
       inputSchema: {},
     },
-    async () => textResult(await handleListPages(c)),
+    async () => toolResult(() => handleListPages(c)),
   );
 
   server.registerTool(
@@ -93,7 +93,7 @@ export function registerPageTools(server: McpServer, c: typeof ClientType) {
         '获取指定页面的完整数据，包括所有任务节点（id, title, status, parentId, description, x, y）和依赖边（from, to）。修改页面内容前必须先调用此工具了解当前状态。',
       inputSchema: { page_id: z.string().min(1).describe('页面 ID') },
     },
-    async ({ page_id }) => textResult(await handleGetPage(c, { page_id })),
+    async ({ page_id }) => toolResult(() => handleGetPage(c, { page_id })),
   );
 
   server.registerTool(
@@ -104,7 +104,7 @@ export function registerPageTools(server: McpServer, c: typeof ClientType) {
         '新建一个页面。页面是任务的容器，不同页面可以按主题/阶段组织任务。title 长度 1-100 字符。',
       inputSchema: { title: z.string().min(1).max(100).describe('页面标题') },
     },
-    async ({ title }) => textResult(await handleCreatePage(c, { title })),
+    async ({ title }) => toolResult(() => handleCreatePage(c, { title })),
   );
 
   server.registerTool(
@@ -119,6 +119,6 @@ export function registerPageTools(server: McpServer, c: typeof ClientType) {
       },
     },
     async ({ source_page_id, target_page_id }) =>
-      textResult(await handleMergePages(c, { source_page_id, target_page_id })),
+      toolResult(() => handleMergePages(c, { source_page_id, target_page_id })),
   );
 }
