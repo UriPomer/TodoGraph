@@ -25,6 +25,7 @@ export function SecurityDialog({ open, onClose, embedded = false, username }: Pr
   const pageVersion = useTaskStore((state) => state.pageVersion);
   const replaceLoadedPage = useTaskStore((state) => state.replaceLoadedPage);
   const refreshAllTasks = useWorkspaceStore((state) => state.refreshAllTasks);
+  const refreshMetaAfterConflict = useWorkspaceStore((state) => state.refreshMetaAfterConflict);
   const sessionUserId = useWorkspaceStore((state) => state.sessionUserId);
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' });
   const [backups, setBackups] = useState<BackupInfo[]>([]);
@@ -130,7 +131,15 @@ export function SecurityDialog({ open, onClose, embedded = false, username }: Pr
     if (!selectedTrash || !window.confirm('恢复后页面会重新加入工作区。继续？')) return;
     await useTaskStore.getState().flush();
     const revision = useWorkspaceStore.getState().meta?.revision;
-    const restored = await api.restoreTrashedPage(selectedTrash, revision);
+    let restored: Awaited<ReturnType<typeof api.restoreTrashedPage>>;
+    try {
+      restored = await api.restoreTrashedPage(selectedTrash, revision);
+    } catch (error) {
+      if (error && typeof error === 'object' && 'conflict' in error) {
+        await refreshMetaAfterConflict();
+      }
+      throw error;
+    }
     if (restored.cleanupWarning) {
       window.alert(restored.cleanupWarning);
     }

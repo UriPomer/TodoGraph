@@ -343,6 +343,23 @@ describe('MCP tools integration', () => {
       expect(Array.isArray(result.recommendations)).toBe(true);
       expect(typeof result.summary).toBe('string');
     });
+
+    it('prefers a ready task that unlocks more downstream work', async () => {
+      const page = await handleCreatePage(client, { title: `推荐下游-${Date.now()}` });
+      const a = await handleCreateTask(client, { page_id: page.page.id, title: '高解锁价值' });
+      const b = await handleCreateTask(client, { page_id: page.page.id, title: '无下游' });
+      const c = await handleCreateTask(client, { page_id: page.page.id, title: '后续一' });
+      const d = await handleCreateTask(client, { page_id: page.page.id, title: '后续二' });
+      await handleManageDependencies(client, {
+        page_id: page.page.id,
+        add: [{ from: a.task.id, to: c.task.id }, { from: a.task.id, to: d.task.id }],
+      });
+
+      const result = await handleGetRecommendations(client, { page_id: page.page.id });
+
+      expect(result.recommendations[0].task.id).toBe(a.task.id);
+      expect(result.recommendations.some((item) => item.task.id === b.task.id)).toBe(true);
+    });
   });
 
   describe('auto_layout', () => {

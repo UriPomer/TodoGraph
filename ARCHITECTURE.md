@@ -98,11 +98,13 @@ mouse movement or touch long-press arbitration
 
 Ready and Blocked roots are displayed in reverse storage order, while Done roots and child rows use forward storage order. The drag intent carries that direction explicitly so the store never infers presentation order from hierarchy alone.
 
-Destructive operations must create a flushed recovery point before their commit point. Import aborts if the current workspace cannot be exported. Restore snapshots the live page first and checks the caller's expected page version. Delete writes a tombstone before removing page metadata. Multi-page writes use a recovery journal. Page backups, import snapshots, and deleted-page tombstones are bounded by both count and bytes while always retaining the newest recovery point.
+Destructive operations must create a flushed recovery point before their commit point. Import aborts if the current workspace cannot be exported. Restore snapshots the live page first and checks the caller's expected page version. Delete writes a tombstone before removing page metadata. Multi-page writes use a recovery journal. Page merge is owned by the repository: it backs up both pages, writes the source tombstone and journal, writes the target, then commits by replacing metadata; startup either finalizes that exact pair or restores both pages and metadata. Page backups, import snapshots, and deleted-page tombstones are bounded by both count and bytes while always retaining the newest recovery point.
 
 When a page version conflicts, the server version remains authoritative for the original page, while the client preserves local edits in a recovery page or, if that fails, a user-scoped device draft. The account/data panel can restore hidden conflict drafts as new pages and restore deleted pages from the recycle bin.
 
 Page switching follows `flush current page -> remember bounded session snapshot -> paint cached target when present -> refresh target from server -> poll active version`. The cache is cleared on session reset and never replaces server version checks; it only removes the blank/network wait when revisiting a page.
+
+The `/api/all-tasks` cache is user-scoped, byte-bounded and LRU-bounded. Repository mutations invalidate only the authenticated user's entry. Aggregation attaches the shared default recommendation score, so the UI-facing data and MCP apply the same ready/doing/downstream ordering.
 
 ## Mobile runtime boundary
 

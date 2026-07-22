@@ -27,7 +27,7 @@ This is a **pnpm monorepo** with six packages. See [`ARCHITECTURE.md`](./ARCHITE
 | `@todograph/core` | Pure DAG algorithms. Reuses canonical domain types from shared. `buildAdj`, `topoSort`, `wouldCreateCycle`, `readyTasks`, `recommend`. |
 | `@todograph/shared` | Canonical Zod schemas, hierarchy validation, limits, and geometry helpers shared by frontend and backend. |
 | `@todograph/server` | Fastify 5 backend. Serves REST API and optionally static frontend files. |
-| `@todograph/app` | React 18 + Vite frontend + Electron shell. React Flow graph editor, Zustand stores, shadcn/ui components. |
+| `@todograph/app` | React 18 + Vite frontend + Electron/Capacitor shells. React Flow graph editor, Zustand stores, shadcn/ui components. |
 | `@todograph/mcp` | Independently published MCP server and TodoGraph tools. |
 | `@todograph/desktop-host` | Owns the loopback Fastify lifecycle and session secret used by Electron. |
 

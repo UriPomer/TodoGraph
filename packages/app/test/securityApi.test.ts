@@ -214,6 +214,20 @@ describe('security API client', () => {
     });
   });
 
+  it('reports metadata conflicts when restoring a trashed page', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ serverRevision: 7 }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await expect(api.restoreTrashedPage('deleted.json', 6)).rejects.toMatchObject({
+      conflict: true,
+      serverRevision: 7,
+    });
+  });
+
   it('loads workspace JSON export', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify(workspaceExport), { status: 200 }),

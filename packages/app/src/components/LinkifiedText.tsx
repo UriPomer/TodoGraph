@@ -16,24 +16,19 @@ export function LinkifiedText({ text, className, compactUrls = false }: Props) {
     <span className={className}>
       {segments.map((seg, i) =>
         seg.isUrl ? (
-          <span
+          <a
             key={i}
-            className={`text-[hsl(var(--link))] underline cursor-pointer${compactUrls ? ' whitespace-nowrap' : ''}`}
-            onMouseDown={(e) => {
-              if (e.metaKey || e.ctrlKey) {
-                e.stopPropagation();
-                e.preventDefault();
-              }
-            }}
-            onClick={(e) => {
-              if (e.metaKey || e.ctrlKey) {
-                e.stopPropagation();
-                window.open(seg.text, '_blank', 'noopener,noreferrer');
-              }
-            }}
+            href={seg.text}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`nodrag nopan text-[hsl(var(--link))] underline cursor-pointer${compactUrls ? ' whitespace-nowrap' : ''}`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
           >
             {compactUrls ? compactUrlLabel(seg.text) : seg.text}
-          </span>
+          </a>
         ) : (
           <span key={i}>{seg.text}</span>
         ),

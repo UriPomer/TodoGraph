@@ -29,6 +29,7 @@ describe('FileWorkspaceRepository concurrency guards', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await fs.rm(rootDir, { recursive: true, force: true });
   });
 
@@ -49,6 +50,87 @@ describe('FileWorkspaceRepository concurrency guards', () => {
     await expect(
       repo.deletePage(SYSTEM_HIERARCHY_PAGE_ID, meta.revision),
     ).rejects.toThrow('system page cannot be deleted');
+  });
+
+  it('rejects completing a parent while a direct child is incomplete', async () => {
+    const meta = await repo.loadMeta();
+    const pageId = meta.pages.find((page) => page.id !== SYSTEM_HIERARCHY_PAGE_ID)!.id;
+    const page = await repo.loadPage(pageId);
+
+    await expect(repo.savePage(pageId, {
+      nodes: [
+        { id: 'parent', title: 'Parent', status: 'done' },
+        { id: 'child', title: 'Child', status: 'todo', parentId: 'parent' },
+      ],
+      edges: [],
+    }, page.version)).rejects.toThrow('completed parent has incomplete child');
+  });
+
+  it('normalizes task descriptions before persistence', async () => {
+    const meta = await repo.loadMeta();
+    const pageId = meta.pages.find((page) => page.id !== SYSTEM_HIERARCHY_PAGE_ID)!.id;
+    const page = await repo.loadPage(pageId);
+
+    await repo.savePage(pageId, {
+      nodes: [
+        { id: 'blank', title: 'Blank', status: 'todo', description: '  \n  ', x: 0, y: 0 },
+        { id: 'text', title: 'Text', status: 'todo', description: '  useful text  ', x: 300, y: 0 },
+      ],
+      edges: [],
+    }, page.version);
+
+    const saved = await repo.loadPage(pageId);
+    expect(saved.nodes.find((node) => node.id === 'blank')?.description).toBeUndefined();
+    expect(saved.nodes.find((node) => node.id === 'text')?.description).toBe('useful text');
+  });
+
+  it('merges pages as one repository operation', async () => {
+    const initial = await repo.loadMeta();
+    const source = await repo.createPage('Source', initial.revision);
+    const target = await repo.createPage('Target', source.meta.revision);
+    const sourcePage = await repo.loadPage(source.page.id);
+    await repo.savePage(source.page.id, {
+      nodes: [{ id: 'move-me', title: 'Move me', status: 'todo' }],
+      edges: [],
+    }, sourcePage.version);
+
+    await expect(repo.mergePages(source.page.id, target.page.id)).resolves.toMatchObject({ movedNodes: 1 });
+
+    const meta = await repo.loadMeta();
+    expect(meta.pages.some((page) => page.id === source.page.id)).toBe(false);
+    expect((await repo.loadPage(target.page.id)).nodes.some((node) => node.id === 'move-me')).toBe(true);
+    await expect(fs.access(repoPagePath(userDir, source.page.id))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('rolls back both pages when merge metadata commit fails', async () => {
+    const initial = await repo.loadMeta();
+    const source = await repo.createPage('Rollback source', initial.revision);
+    const target = await repo.createPage('Rollback target', source.meta.revision);
+    const sourcePage = await repo.loadPage(source.page.id);
+    await repo.savePage(source.page.id, {
+      nodes: [{ id: 'rollback-node', title: 'Rollback', status: 'todo' }],
+      edges: [],
+    }, sourcePage.version);
+    const beforeMeta = await repo.loadMeta();
+    const beforeSource = await repo.loadPage(source.page.id);
+    const beforeTarget = await repo.loadPage(target.page.id);
+    const realRename = fs.rename.bind(fs);
+    let failed = false;
+    const rename = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (!failed && String(to) === path.join(userDir, 'meta.json')) {
+        failed = true;
+        throw new Error('injected meta commit failure');
+      }
+      return realRename(from, to);
+    });
+
+    await expect(repo.mergePages(source.page.id, target.page.id)).rejects.toThrow('injected meta commit failure');
+    rename.mockRestore();
+
+    expect(await repo.loadMeta()).toEqual(beforeMeta);
+    expect(await repo.loadPage(source.page.id)).toEqual(beforeSource);
+    expect(await repo.loadPage(target.page.id)).toEqual(beforeTarget);
+    await expect(fs.access(path.join(userDir, '.merge-pages-journal.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('rejects writes to page ids that are not present in workspace metadata', async () => {

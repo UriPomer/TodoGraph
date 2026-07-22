@@ -46,6 +46,8 @@ interface WorkspaceStore {
 
   // ---- aggregation ----
   refreshAllTasks: () => Promise<void>;
+  /** Refresh meta after an external optimistic-lock conflict. */
+  refreshMetaAfterConflict: () => Promise<boolean>;
   /** 当前页的写操作完成后调用 —— 标脏 allTasks，稍后重拉。 */
   invalidateAllTasks: () => void;
 }
@@ -448,6 +450,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         set({ allTasksLoading: false });
         console.warn('loadAllTasks failed', err);
       }
+    },
+
+    refreshMetaAfterConflict: async () => {
+      const generation = getApiSessionGeneration();
+      return (await syncMetaAfterConflict(generation)) !== null;
     },
 
     invalidateAllTasks: scheduleAllTasksRefresh,

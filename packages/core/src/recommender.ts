@@ -16,6 +16,11 @@ export interface DerivedReadyState {
   recommended: Task | null;
 }
 
+export interface ScoredRecommendation {
+  task: Task;
+  downstreamCount: number;
+}
+
 /**
  * 单次反向拓扑遍历预计算所有节点的下游计数。
  * 处理顺序：逆拓扑序，每个节点的下游 = Σ(1 + 子节点下游) 并去重。
@@ -172,4 +177,13 @@ export function rankRecommendations(
   strategy: RecommendationStrategy = defaultStrategy,
 ): Task[] {
   return strategy.rank(graph);
+}
+
+/** Exposes the default strategy's comparable score for cross-page consumers. */
+export function scoreRecommendations(graph: Graph): ScoredRecommendation[] {
+  const { ready, downCount } = buildReadyContext(graph);
+  return rankReadyTasks(ready, downCount).map((task) => ({
+    task,
+    downstreamCount: downCount.get(task.id) ?? 0,
+  }));
 }

@@ -6,6 +6,11 @@ export const MAX_PAGE_TITLE_LENGTH = 100;
 export const SYSTEM_HIERARCHY_PAGE_ID = 'system-hierarchy';
 export const SYSTEM_HIERARCHY_PAGE_TITLE = '清单';
 
+export function normalizeTaskDescription(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
 export const TaskSchema = z.object({
   id: z.string().min(1),
   // Persisted data remains readable across upgrades; write boundaries enforce the current limit.
@@ -27,7 +32,7 @@ export const TaskSchema = z.object({
    * 任务描述 —— 长文，支持多行。上限 4000 字节，避免误贴超长文本。
    * 显示层会做截断（前两行），hover 出完整 tooltip。
    */
-  description: z.string().max(4000).optional(),
+  description: z.string().max(4000).optional().transform(normalizeTaskDescription),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -99,6 +104,8 @@ export const AllTasksItemSchema = TaskSchema.extend({
   _pageId: z.string().min(1),
   _pageTitle: z.string(),
   _ready: z.boolean(),
+  /** Default recommendation strategy score, comparable across pages. */
+  _downstream: z.number().int().min(0).optional(),
 });
 export const AllTasksResponseSchema = z.object({
   tasks: z.array(AllTasksItemSchema),

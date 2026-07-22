@@ -9,7 +9,9 @@ import {
   GROUP_PADDING_X,
   GROUP_PADDING_Y,
   MAX_HIERARCHY_DEPTH,
+  normalizeTaskDescription,
   resolveNodeOverlaps,
+  hasIncompleteDirectChild,
 } from '@todograph/shared';
 import { useHistoryStore } from './useHistoryStore';
 import { emitAllTasksInvalidated, emitWorkspaceMetaUpdated } from './workspaceEvents';
@@ -105,9 +107,6 @@ const nextStatus: Record<TaskStatus, TaskStatus> = {
   doing: 'done',
   done: 'todo',
 };
-function hasUndoneChild(nodes: readonly Task[], parentId: string): boolean {
-  return nodes.some((node) => node.parentId === parentId && node.status !== 'done');
-}
 interface HierarchyIndex {
   byId: Map<string, Task>;
   childIdsByParentId: Map<string, string[]>;
@@ -290,7 +289,7 @@ function patchAffectsGeometry(patch: Partial<Task>): boolean {
 function patchAffectsList(patch: Partial<Task>): boolean {
   return patch.title !== undefined ||
     patch.status !== undefined ||
-    patch.description !== undefined ||
+    Object.prototype.hasOwnProperty.call(patch, 'description') ||
     Object.prototype.hasOwnProperty.call(patch, 'parentId');
 }
 
@@ -572,15 +571,18 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       return get().nodes.find((node) => node.id === t.id) ?? t;
     },
     updateTask: (id, patch) => {
+      const nextPatch = Object.prototype.hasOwnProperty.call(patch, 'description')
+        ? { ...patch, description: normalizeTaskDescription(patch.description) }
+        : patch;
       pushPre();
       set((s) => {
         let changed = false;
         const next = s.nodes.map((n) => {
           if (n.id !== id) return n;
           changed = true;
-          const updated = { ...n, ...patch };
-          if (patch.title !== undefined) {
-            updated.title = patch.title.slice(0, MAX_TITLE_LENGTH);
+          const updated = { ...n, ...nextPatch };
+          if (nextPatch.title !== undefined) {
+            updated.title = nextPatch.title.slice(0, MAX_TITLE_LENGTH);
             updated.width = measureTextWidth(updated.title);
             updated.height = undefined;
           }
@@ -588,12 +590,12 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         });
         return changed
           ? {
-              nodes: patchAffectsGeometry(patch) ? repairGeometry(next, [id]) : next,
+              nodes: patchAffectsGeometry(nextPatch) ? repairGeometry(next, [id]) : next,
               recommendationRevision:
-                patch.status === undefined
+                nextPatch.status === undefined
                   ? s.recommendationRevision
                   : s.recommendationRevision + 1,
-              listRevision: patchAffectsList(patch) ? s.listRevision + 1 : s.listRevision,
+              listRevision: patchAffectsList(nextPatch) ? s.listRevision + 1 : s.listRevision,
             }
           : s;
       });
@@ -695,7 +697,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       const s = get();
       const node = s.nodes.find((n) => n.id === id);
       if (!node) return false;
-      if (nextStatus[node.status] === 'done' && hasUndoneChild(s.nodes, id)) return false;
+      if (nextStatus[node.status] === 'done' && hasIncompleteDirectChild(s.nodes, id)) return false;
       pushPre();
       set((s2) => ({
         nodes: s2.nodes.map((n) => (n.id === id ? { ...n, status: nextStatus[n.status] } : n)),
@@ -708,7 +710,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     completeTask: (id) => {
       const state = get();
       const node = state.nodes.find((candidate) => candidate.id === id);
-      if (!node || node.status === 'done' || hasUndoneChild(state.nodes, id)) return false;
+      if (!node || node.status === 'done' || hasIncompleteDirectChild(state.nodes, id)) return false;
       pushPre();
       set((current) => ({
         nodes: current.nodes.map((candidate) => (
@@ -721,6 +723,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       return true;
     },
     setStatus: (id, status) => {
+      const state = get();
+      if (status === 'done' && hasIncompleteDirectChild(state.nodes, id)) return;
       pushPre();
       set((s) => ({
         nodes: s.nodes.map((n) => (n.id === id ? { ...n, status } : n)),
@@ -816,6 +820,11 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       }
       const child = idx.byId.get(childId);
       if (!child) return false;
+      const parent = parentId ? idx.byId.get(parentId) : undefined;
+      if (parent?.status === 'done' && child.status !== 'done') {
+        toast.error('已完成的父任务不能接收未完成的子任务', '已阻止');
+        return false;
+      }
       pushPre();
       let patch: Partial<Task> = { parentId: parentId ?? undefined };
       if (positionHint) {
@@ -899,6 +908,11 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       if (anchorIndex < 0) return false;
       const insertionIndex = anchorIndex + (storagePosition === 'after' ? 1 : 0);
       const sameParent = (task.parentId ?? null) === targetParentId;
+      const targetParent = targetParentId ? index.byId.get(targetParentId) : undefined;
+      if (!sameParent && targetParent?.status === 'done' && task.status !== 'done') {
+        toast.error('已完成的父任务不能接收未完成的子任务', '已阻止');
+        return false;
+      }
       let movedTask = task;
       if (!sameParent) {
         const world = task.x === undefined || task.y === undefined

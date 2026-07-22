@@ -1,4 +1,4 @@
-import type { Graph, Meta, NodeOverlapConflict, PageData, PageInfo } from '@todograph/shared';
+import type { Graph, Meta, MoveNodesResponse, NodeOverlapConflict, PageData, PageInfo } from '@todograph/shared';
 
 /** Legacy v1 port kept for consumers migrating single-file graphs. */
 export interface GraphRepository {
@@ -91,6 +91,8 @@ export interface WorkspaceRepository {
   ): Promise<number[]>;
   createPage(title: string, expectedRevision?: number): Promise<{ page: PageInfo; meta: Meta }>;
   deletePage(pageId: string, expectedRevision?: number): Promise<Meta>;
+  /** Atomically move every source task into target and remove the source page. */
+  mergePages(sourcePageId: string, targetPageId: string): Promise<MoveNodesResponse>;
   renamePage(pageId: string, title: string, expectedRevision?: number): Promise<Meta>;
   reorderPages(ids: string[], expectedRevision?: number): Promise<Meta>;
   setActivePage(pageId: string, expectedRevision?: number): Promise<Meta>;
@@ -107,6 +109,6 @@ export interface WorkspaceRepository {
     name: string,
     expectedRevision?: number,
   ): Promise<{ meta: Meta; page: PageInfo; data: PageData; cleanupWarning?: string }>;
-  /** 列出所有 page 的文件路径与 mtime —— 用于 /api/all-tasks 的缓存失效判断。 */
+  /** 列出所有 page 的 mtime，作为 /api/all-tasks 用户级主动失效之外的安全检查。 */
   listPageMtimes(): Promise<Array<{ pageId: string; mtimeMs: number | null }>>;
 }

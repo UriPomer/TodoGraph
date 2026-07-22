@@ -1,7 +1,7 @@
 {
   "name": "@todograph/app",
   "version": "0.1.0",
-  "description": "TodoGraph desktop app (Electron + React + Vite)",
+  "description": "TodoGraph web, Electron, and Capacitor app",
   "author": "TodoGraph",
   "type": "module",
   "private": true,

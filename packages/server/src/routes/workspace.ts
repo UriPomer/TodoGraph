@@ -9,7 +9,7 @@ import {
   type AllTasksResponse,
   type Meta,
 } from '@todograph/shared';
-import { isDAG, readyTasks } from '@todograph/core';
+import { isDAG, scoreRecommendations } from '@todograph/core';
 import { z } from 'zod';
 import type { FastifyPluginAsync } from 'fastify';
 import {
@@ -117,27 +117,55 @@ const WorkspaceImportSchema = z.object({
 /**
  * /api/all-tasks 的内存缓存。
  *
- * 命中条件：缓存的 meta.activePageId + pages 列表完全一致，
- * 且所有页面文件的 mtime 不晚于缓存时记录的值 —— 这样
- * AI/用户直接改磁盘上的 JSON 文件也能在下次请求时被发现。
+ * 正常 API 写入会按用户精确失效。meta 摘要和页面 mtime 是额外的
+ * 尽力而为检查；直接修改磁盘文件不属于受支持的写入路径。
  */
-interface AllTasksCache {
+export interface AllTasksCache {
   key: string; // meta 摘要：activePageId + pages.id.order
   mtimes: Map<string, number>;
   response: AllTasksResponse;
 }
 
-const allCacheByUser = new Map<string, AllTasksCache | null>();
+export class AllTasksCacheStore {
+  private readonly entries = new Map<string, { cache: AllTasksCache; bytes: number }>();
+  private totalBytes = 0;
+
+  constructor(private readonly maxBytes = 32 * 1024 * 1024, private readonly maxUsers = 32) {}
+
+  get(userId: string): AllTasksCache | null {
+    const entry = this.entries.get(userId);
+    if (!entry) return null;
+    this.entries.delete(userId);
+    this.entries.set(userId, entry);
+    return entry.cache;
+  }
+
+  set(userId: string, cache: AllTasksCache): void {
+    this.delete(userId);
+    const bytes = Buffer.byteLength(JSON.stringify(cache.response), 'utf8');
+    if (bytes > this.maxBytes) return;
+    this.entries.set(userId, { cache, bytes });
+    this.totalBytes += bytes;
+    while (this.entries.size > this.maxUsers || this.totalBytes > this.maxBytes) {
+      const oldestUserId = this.entries.keys().next().value as string | undefined;
+      if (!oldestUserId) break;
+      this.delete(oldestUserId);
+    }
+  }
+
+  delete(userId: string): void {
+    const previous = this.entries.get(userId);
+    if (!previous) return;
+    this.totalBytes -= previous.bytes;
+    this.entries.delete(userId);
+  }
+}
 
 export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   const { getRepo } = opts;
-  const getCache = (userId: string) => allCacheByUser.get(userId) ?? null;
-  const setCache = (userId: string, cache: AllTasksCache | null) => {
-    if (cache === null) allCacheByUser.delete(userId);
-    else allCacheByUser.set(userId, cache);
-  };
-  const invalidateAll = () => {
-    allCacheByUser.clear();
+  const allTasksCache = new AllTasksCacheStore();
+  const invalidateForRequest = (req: Parameters<typeof getAuthenticatedUserId>[0]) => {
+    allTasksCache.delete(getAuthenticatedUserId(req));
   };
 
   app.get('/api/meta', async (req) => {
@@ -189,7 +217,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
     try {
       const newVersion = await repo.savePage(req.params.id, parsed.data, expectedVersion);
-      invalidateAll();
+      invalidateForRequest(req);
       return { ok: true, version: newVersion };
     } catch (err) {
       if (err instanceof VersionConflictError) {
@@ -227,7 +255,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
     try {
       const result = await repo.createPage(parsed.data.title, parsed.data.expectedRevision);
-      invalidateAll();
+      invalidateForRequest(req);
       return result;
     } catch (err) {
       if (err instanceof MetaVersionConflictError) {
@@ -247,7 +275,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
     try {
       const nextMeta = await repo.deletePage(req.params.id, parsed.data.expectedRevision);
-      invalidateAll();
+      invalidateForRequest(req);
       return { ok: true, meta: nextMeta };
     } catch (err) {
       if (err instanceof MetaVersionConflictError) {
@@ -270,7 +298,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       let nextMeta: Meta | null = null;
       if (parsed.data.title !== undefined) {
         nextMeta = await repo.renamePage(req.params.id, parsed.data.title, parsed.data.expectedRevision);
-        invalidateAll();
+        invalidateForRequest(req);
       }
       if (parsed.data.activate) {
         nextMeta = await repo.setActivePage(
@@ -298,7 +326,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
     try {
       await repo.reorderPages(parsed.data.ids, parsed.data.expectedRevision);
-      invalidateAll();
+      invalidateForRequest(req);
       const nextMeta = await repo.loadMeta();
       return { ok: true, meta: nextMeta };
     } catch (err) {
@@ -335,7 +363,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     const repo = getRepo(getAuthenticatedUserId(req));
     try {
       const result = await executeTaskCommand(repo, req.params.id, parsed.data);
-      invalidateAll();
+      invalidateForRequest(req);
       return result;
     } catch (err) {
       if (err instanceof VersionConflictError) {
@@ -435,7 +463,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         parsed.data.expectedSourceVersion,
         parsed.data.expectedTargetVersion,
       );
-      invalidateAll();
+      invalidateForRequest(req);
       return resp;
     } catch (err) {
       if (err instanceof VersionConflictError) {
@@ -459,21 +487,8 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       return { ok: false, error: 'invalid merge target' };
     }
     try {
-      const initialMeta = await repo.loadMeta();
-      if (req.params.id === SYSTEM_HIERARCHY_PAGE_ID) throw new Error('system page cannot be merged');
-      if (!initialMeta.pages.some((page) => page.id === req.params.id)) throw new Error('source page not found');
-      if (!initialMeta.pages.some((page) => page.id === parsed.data.targetPageId)) throw new Error('target page not found');
-      if (initialMeta.pages.length <= 1) throw new Error('last page cannot be merged');
-      // Recovery points are server-side preconditions so a client disconnect cannot skip them.
-      await Promise.all([repo.createBackup(req.params.id), repo.createBackup(parsed.data.targetPageId)]);
-      const source = await repo.loadPage(req.params.id);
-      const nodeIds = source.nodes.map((node) => node.id);
-      const moved = nodeIds.length > 0
-        ? await moveNodesBetweenPages(repo, req.params.id, parsed.data.targetPageId, nodeIds)
-        : { movedNodes: 0, movedEdges: 0, autoIncludedChildren: 0, lostEdges: 0, droppedParentLinks: 0 };
-      const meta = await repo.loadMeta();
-      await repo.deletePage(req.params.id, meta.revision);
-      invalidateAll();
+      const moved = await repo.mergePages(req.params.id, parsed.data.targetPageId);
+      invalidateForRequest(req);
       return moved;
     } catch (error) {
       if (error instanceof VersionConflictError) {
@@ -495,7 +510,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     const meta = await repo.loadMeta();
     const key = cacheKeyFromMeta(meta);
     const mtimes = await repo.listPageMtimes();
-    const cached = getCache(userId);
+    const cached = allTasksCache.get(userId);
     if (
       cached &&
       cached.key === key &&
@@ -508,9 +523,17 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     for (const p of meta.pages) {
       try {
         const pd = await repo.loadPage(p.id);
-        const readySet = new Set(readyTasks(pd).map((task) => task.id));
+        const scored = scoreRecommendations(pd);
+        const downstreamById = new Map(scored.map((item) => [item.task.id, item.downstreamCount]));
         for (const n of pd.nodes) {
-          tasks.push({ ...n, _pageId: p.id, _pageTitle: p.title, _ready: readySet.has(n.id) });
+          const downstream = downstreamById.get(n.id);
+          tasks.push({
+            ...n,
+            _pageId: p.id,
+            _pageTitle: p.title,
+            _ready: downstream !== undefined,
+            ...(downstream !== undefined ? { _downstream: downstream } : {}),
+          });
         }
       } catch (err) {
         app.log.warn({ pageId: p.id, err }, 'skipping page in all-tasks aggregation');
@@ -522,7 +545,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     for (const m of mtimes) {
       if (m.mtimeMs !== null) mtimesMap.set(m.pageId, m.mtimeMs);
     }
-    if (errors.length === 0) setCache(userId, { key, mtimes: mtimesMap, response });
+    if (errors.length === 0) allTasksCache.set(userId, { key, mtimes: mtimesMap, response });
     return response;
   });
 
@@ -555,7 +578,7 @@ export const workspaceRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     }
     try {
       const meta = await repo.importWorkspace(parsed.data);
-      invalidateAll();
+      invalidateForRequest(req);
       return { ok: true, meta };
     } catch (err) {
       reply.status(400);

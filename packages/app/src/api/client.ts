@@ -360,6 +360,7 @@ export const api = {
     const res = await request(`/api/trash/pages/${encodeURIComponent(name)}/restore`, 'POST', {
       expectedRevision,
     });
+    await rejectConflict(res, 'meta');
     const body = await json<{ meta: Meta; page: PageInfo; data: unknown; cleanupWarning?: string }>(res);
     return { ...body, data: PageDataSchema.parse(body.data) };
   },

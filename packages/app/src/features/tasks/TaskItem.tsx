@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Check, ChevronRight, ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
-import { MAX_HIERARCHY_DEPTH, type Task } from '@todograph/shared';
+import { MAX_HIERARCHY_DEPTH, normalizeTaskDescription, type Task } from '@todograph/shared';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { MAX_TITLE_LENGTH } from '@/lib/measureText';
@@ -16,6 +16,11 @@ import {
 } from './gesturePolicy';
 
 const useBrowserLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+type DescriptionMode = 'closed' | 'viewing' | 'editing';
+
+function isMobileViewport(): boolean {
+  return typeof window !== 'undefined' && !!window.matchMedia?.('(max-width: 1023px)').matches;
+}
 
 export interface TaskDragStart {
   pointerId: number;
@@ -89,10 +94,11 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
   const completeTask = useTaskStore((s) => s.completeTask);
   const updateTask = useTaskStore((s) => s.updateTask);
   const deleteTask = useTaskStore((s) => s.deleteTask);
+  const description = normalizeTaskDescription(task.description);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(task.title);
-  const [descExpanded, setDescExpanded] = useState(false);
-  const [descDraft, setDescDraft] = useState(task.description ?? '');
+  const [descriptionMode, setDescriptionMode] = useState<DescriptionMode>('closed');
+  const [descDraft, setDescDraft] = useState(description ?? '');
   const [addingChild, setAddingChild] = useState(false);
   const [childDraft, setChildDraft] = useState('');
   const rowRef = useRef<HTMLLIElement>(null);
@@ -113,12 +119,12 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
 
   useEffect(() => {
     // 当 store 的 description 外部变化时同步 draft
-    setDescDraft(task.description ?? '');
-  }, [task.description]);
+    setDescDraft(description ?? '');
+  }, [description]);
 
   useEffect(() => {
-    if (descExpanded) descRef.current?.focus();
-  }, [descExpanded]);
+    if (descriptionMode === 'editing') descRef.current?.focus();
+  }, [descriptionMode]);
 
   const beginTitleEditing = useCallback((element: HTMLElement, clientX: number, clientY: number) => {
     window.getSelection()?.removeAllRanges();
@@ -135,9 +141,10 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
   };
 
   const commitDesc = () => {
-    const d = descDraft;
-    if (d !== (task.description ?? '')) {
-      updateTask(task.id, { description: d === '' ? undefined : d });
+    const normalized = normalizeTaskDescription(descDraft);
+    const currentDescription = useTaskStore.getState().nodes.find((node) => node.id === task.id)?.description;
+    if (normalized !== currentDescription) {
+      updateTask(task.id, { description: normalized });
     }
   };
 
@@ -271,7 +278,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       }
       const target = event.target as HTMLElement;
       const titleElement = target.closest('[data-task-title]') as HTMLElement | null;
-      if (target.closest('button, input, textarea') || (target.closest('a') && !titleElement)) return;
+      if (target.closest('button, input, textarea, a') || target.closest('[data-task-description-view]')) return;
       const touch = event.touches[0]!;
       const pending = {
         kind: 'pending' as const,
@@ -441,7 +448,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       }}
       data-lens
       className={cn(
-        'mobile-task-row group relative flex flex-col select-none max-lg:-mx-5 max-lg:px-5 [content-visibility:auto] [contain-intrinsic-size:auto_52px]',
+        'mobile-task-row group relative -mx-5 flex flex-col px-5 select-none [content-visibility:auto] [contain-intrinsic-size:auto_52px]',
         'transition-colors duration-200',
         'lg:hover:bg-foreground/[0.035]',
         isDragging && 'opacity-25 lg:scale-[0.98]',
@@ -568,16 +575,32 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
           data-task-action="description"
           onClick={(e) => {
             e.stopPropagation();
-            setDescExpanded((v) => !v);
+            if (descriptionMode === 'editing') {
+              commitDesc();
+              setDescriptionMode('closed');
+              return;
+            }
+            if (descriptionMode === 'viewing') {
+              setDescriptionMode('closed');
+              return;
+            }
+            setDescriptionMode(isMobileViewport() && description ? 'viewing' : 'editing');
           }}
-          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            if (descriptionMode === 'editing') e.preventDefault();
+          }}
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            if (descriptionMode === 'editing') e.preventDefault();
+          }}
           className={cn(
             'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
             'transition-[color,transform,background-color] duration-150 ease-out',
             'lg:hover:bg-foreground/5 active:scale-90',
-            task.description ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground',
+            description ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground',
           )}
-          title={task.description ? '查看/编辑描述' : '添加描述'}
+          title={description ? '查看/编辑描述' : '添加描述'}
         >
           <FileText className="h-3.5 w-3.5" />
         </button>
@@ -632,8 +655,8 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
         </div>
       )}
 
-      {/* 描述展开区：点 FileText 按钮打开，blur 时保存 */}
-      {descExpanded && (
+      {/* 编辑态：空描述直接进入；已有描述在移动端需从阅读态显式进入。 */}
+      {descriptionMode === 'editing' && (
         <div
           className="pb-2 pr-2"
           style={{ paddingLeft: `${10 + 14 + 16}px` }}
@@ -646,24 +669,53 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
             onBlur={commitDesc}
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
-                setDescDraft(task.description ?? '');
-                setDescExpanded(false);
+                setDescDraft(description ?? '');
+                setDescriptionMode('closed');
               }
             }}
             rows={2}
             placeholder="添加描述..."
-            className="w-full resize-none border-0 border-l-2 border-[hsl(var(--primary)/0.35)] bg-transparent px-2 py-1 text-base font-normal leading-5 tracking-normal text-muted-foreground outline-none placeholder:text-muted-foreground/45 focus:border-[hsl(var(--primary)/0.7)] lg:text-xs lg:leading-4"
+            className="w-full resize-none border-0 border-l-2 border-[hsl(var(--primary)/0.35)] bg-transparent px-2 py-1 !text-xs font-normal !leading-4 tracking-normal text-muted-foreground outline-none placeholder:text-muted-foreground/45 focus:border-[hsl(var(--primary)/0.7)]"
           />
         </div>
       )}
 
+      {descriptionMode === 'viewing' && description && (
+        <div
+          className="pb-2 pr-2"
+          style={{ paddingLeft: `${10 + 14 + 16}px` }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <p
+            data-task-description-view="true"
+            role="button"
+            tabIndex={0}
+            className="w-full whitespace-pre-wrap break-words border-l-2 border-[hsl(var(--primary)/0.35)] px-2 py-1 text-xs font-normal leading-4 tracking-normal text-muted-foreground select-text"
+            onClick={(event) => {
+              event.stopPropagation();
+              setDescDraft(description);
+              setDescriptionMode('editing');
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return;
+              event.preventDefault();
+              event.stopPropagation();
+              setDescDraft(description);
+              setDescriptionMode('editing');
+            }}
+          >
+            <LinkifiedText text={description} />
+          </p>
+        </div>
+      )}
+
       {/* 折叠态下的单行预览：有描述且未展开时显示 */}
-      {!descExpanded && task.description && (
+      {descriptionMode === 'closed' && description && (
         <p
           className="pb-1 pr-2 text-[11px] font-normal leading-4 tracking-normal text-muted-foreground/75 line-clamp-1 max-lg:hidden lg:text-xs"
           style={{ paddingLeft: `${10 + 14 + 16}px` }}
         >
-          <LinkifiedText text={task.description} />
+          <LinkifiedText text={description} />
         </p>
       )}
       </div>

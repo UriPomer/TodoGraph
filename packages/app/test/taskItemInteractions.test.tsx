@@ -47,10 +47,11 @@ const pointerEvent = (down: ReturnType<typeof pointerDown>, clientX: number, cli
 });
 type TouchListener = (event: any) => void;
 const touchPoint = (clientX: number, clientY: number, identifier = POINTER_ID) => ({ identifier, clientX, clientY });
-const touchTarget = (titleElement?: HTMLElement, isLink = false) => ({
+const touchTarget = (titleElement?: HTMLElement, isLink = false, isDescription = false) => ({
   closest: (selector: string) => {
     if (selector === '[data-task-title]') return titleElement ?? null;
     if (selector === 'a') return isLink ? {} : null;
+    if (selector === '[data-task-description-view]') return isDescription ? {} : null;
     return null;
   },
 });
@@ -1011,7 +1012,8 @@ describe('task list row interactions', () => {
     renderer.unmount();
   });
 
-  it('closes the description on the second button press after blur saves it', () => {
+  it('keeps desktop description editing and closes it on the second button press', () => {
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) });
     const renderer = create(<TaskItem task={task} />);
     const description = renderer.root.findByProps({ 'data-task-action': 'description' });
     const click = { stopPropagation: vi.fn() };
@@ -1019,7 +1021,8 @@ describe('task list row interactions', () => {
     act(() => description.props.onClick(click));
     const textarea = renderer.root.findByType('textarea');
     expect(textarea.props.rows).toBe(2);
-    expect(textarea.props.className).toContain('text-base');
+    expect(textarea.props.className).toContain('text-xs');
+    expect(textarea.props.className).not.toContain('text-base');
     expect(textarea.props.className).toContain('bg-transparent');
     expect(textarea.props.className).toContain('border-l-2');
     act(() => textarea.props.onChange({ target: { value: '补充说明' } }));
@@ -1028,6 +1031,105 @@ describe('task list row interactions', () => {
 
     expect(renderer.root.findAllByType('textarea')).toHaveLength(0);
     expect(useTaskStore.getState().nodes[0]?.description).toBe('补充说明');
+    expect(useHistoryStore.getState().undoStack).toHaveLength(1);
+    renderer.unmount();
+  });
+
+  it('opens an editor immediately for an empty description on mobile', () => {
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+    const renderer = create(<TaskItem task={task} />);
+    const description = renderer.root.findByProps({ 'data-task-action': 'description' });
+
+    act(() => description.props.onClick({ stopPropagation: vi.fn() }));
+
+    const textarea = renderer.root.findByType('textarea');
+    expect(textarea.props.placeholder).toBe('添加描述...');
+    expect(textarea.props.className).toContain('text-xs');
+    expect(textarea.props.className).not.toContain('text-base');
+    renderer.unmount();
+  });
+
+  it('opens an existing mobile description in read-only mode before explicit editing', () => {
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+    const describedTask = { ...task, description: '先阅读这段描述' };
+    useTaskStore.setState({ nodes: [describedTask] });
+    const renderer = create(<TaskItem task={describedTask} />);
+    const description = renderer.root.findByProps({ 'data-task-action': 'description' });
+
+    act(() => description.props.onClick({ stopPropagation: vi.fn() }));
+
+    expect(renderer.root.findAllByType('textarea')).toHaveLength(0);
+    expect(useTaskStore.getState().nodes[0]?.description).toBe('先阅读这段描述');
+    expect(useTaskStore.getState().backupRevision).toBe(0);
+    const readView = renderer.root.findByProps({ 'data-task-description-view': 'true' });
+    expect(readView.props.className).toContain('text-xs');
+    expect(readView.props.className).toContain('border-l-2');
+    expect(readView.findAllByType('span').some((span) => span.children.includes('先阅读这段描述'))).toBe(true);
+    expect(renderer.root.findAllByProps({ 'data-task-action': 'edit-description' })).toHaveLength(0);
+
+    act(() => readView.props.onClick({ stopPropagation: vi.fn() }));
+    expect(renderer.root.findByType('textarea').props.value).toBe('先阅读这段描述');
+    renderer.unmount();
+  });
+
+  it('treats a whitespace-only mobile description as empty and clears it on blur', () => {
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+    const whitespaceTask = { ...task, description: '  \n  ' };
+    useTaskStore.setState({ nodes: [whitespaceTask] });
+    const renderer = create(<TaskItem task={whitespaceTask} />);
+    const description = renderer.root.findByProps({ 'data-task-action': 'description' });
+
+    act(() => description.props.onClick({ stopPropagation: vi.fn() }));
+
+    const textarea = renderer.root.findByType('textarea');
+    expect(textarea.props.value).toBe('');
+    expect(textarea.props.className).toContain('!text-xs');
+    act(() => textarea.props.onBlur());
+    expect(useTaskStore.getState().nodes[0]?.description).toBeUndefined();
+    renderer.unmount();
+  });
+
+  it('deletes an existing mobile description when its cleared editor is closed from the description button', () => {
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+    const describedTask = { ...task, description: '准备删除的描述' };
+    useTaskStore.setState({ nodes: [describedTask] });
+    const renderer = create(<TaskItem task={describedTask} />);
+    const descriptionButton = renderer.root.findByProps({ 'data-task-action': 'description' });
+
+    act(() => descriptionButton.props.onClick({ stopPropagation: vi.fn() }));
+    const readView = renderer.root.findByProps({ 'data-task-description-view': 'true' });
+    act(() => readView.props.onClick({ stopPropagation: vi.fn() }));
+    const textarea = renderer.root.findByType('textarea');
+    act(() => textarea.props.onChange({ target: { value: '' } }));
+    act(() => descriptionButton.props.onClick({ stopPropagation: vi.fn() }));
+
+    expect(renderer.root.findAllByType('textarea')).toHaveLength(0);
+    expect(useTaskStore.getState().nodes[0]?.description).toBeUndefined();
+    expect(useTaskStore.getState().listRevision).toBe(1);
+    expect(useHistoryStore.getState().undoStack).toHaveLength(1);
+    renderer.unmount();
+  });
+
+  it('leaves a long-pressed mobile description to native text selection instead of task dragging', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+    const describedTask = { ...task, description: '可复制的描述' };
+    useTaskStore.setState({ nodes: [describedTask] });
+    const rowTouchListeners = new Map<string, TouchListener>();
+    const onDragStart = vi.fn();
+    const renderer = create(<TaskItem task={describedTask} onDragStart={onDragStart} />, {
+      createNodeMock: (element) => element.type === 'li'
+        ? taskRowNode(rowTouchListeners, { left: 0, top: 0, bottom: 80, width: 320, height: 80 })
+        : null,
+    });
+    const description = renderer.root.findByProps({ 'data-task-action': 'description' });
+    act(() => description.props.onClick({ stopPropagation: vi.fn() }));
+
+    touchStart(rowTouchListeners, 80, 60, touchTarget(undefined, false, true));
+    act(() => vi.advanceTimersByTime(LIST_LONG_PRESS_MS));
+
+    expect(onDragStart).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByType('textarea')).toHaveLength(0);
     renderer.unmount();
   });
 

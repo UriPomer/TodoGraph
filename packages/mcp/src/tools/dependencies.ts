@@ -31,7 +31,7 @@ export async function handleGetRecommendations(
   const allTasks = await c.get<{
     tasks: Array<{
       id: string; title: string; status: string;
-      _pageId: string; _pageTitle: string; _ready: boolean;
+      _pageId: string; _pageTitle: string; _ready: boolean; _downstream?: number;
     }>;
   }>('/api/all-tasks');
 
@@ -41,10 +41,11 @@ export async function handleGetRecommendations(
   }
 
   const ready = tasks.filter((t) => t._ready);
-  const doing = ready.filter((t) => t.status === 'doing');
-  const todo = ready.filter((t) => t.status === 'todo');
+  ready.sort((a, b) =>
+    Number(b.status === 'doing') - Number(a.status === 'doing') ||
+    (b._downstream ?? 0) - (a._downstream ?? 0));
 
-  const recommendations = [...doing, ...todo].map((t) => ({
+  const recommendations = ready.map((t) => ({
     task: {
       id: t.id,
       title: t.title,

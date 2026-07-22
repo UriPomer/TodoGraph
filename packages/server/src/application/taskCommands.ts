@@ -2,6 +2,7 @@ import dagre from 'dagre';
 import { isDAG } from '@todograph/core';
 import {
   resolveNodeOverlaps,
+  hasIncompleteDirectChild,
   validateDependencyEdges,
   validateTaskHierarchy,
   type PageData,
@@ -223,6 +224,9 @@ export async function executeTaskCommand(
       const nodes = resolveNodeOverlaps(page.nodes).nodes;
       const index = nodes.findIndex((node) => node.id === command.taskId);
       if (index === -1) throw new Error(`task not found: ${command.taskId}`);
+      if (command.status === 'done' && hasIncompleteDirectChild(nodes, command.taskId)) {
+        throw new Error('parent task cannot be completed before all direct children are done');
+      }
       const updated = { ...nodes[index]! };
       if (command.title !== undefined) updated.title = command.title;
       if (command.status !== undefined) updated.status = command.status;

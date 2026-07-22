@@ -254,6 +254,10 @@ describe('list revision', () => {
     useTaskStore.getState().setParent('b', 'a');
     useTaskStore.getState().addEdge('a', 'b');
     expect(useTaskStore.getState().listRevision).toBe(10);
+
+    useTaskStore.getState().updateTask('a', { description: 'details' });
+    useTaskStore.getState().updateTask('a', { description: undefined });
+    expect(useTaskStore.getState().listRevision).toBe(12);
   });
 });
 

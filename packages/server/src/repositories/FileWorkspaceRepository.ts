@@ -11,9 +11,11 @@ import {
   resolveNodeOverlaps,
   type Graph,
   type Meta,
+  type MoveNodesResponse,
   type PageData,
   type PageInfo,
 } from '@todograph/shared';
+import { planWorkspaceMove } from '../domain/workspaceMovePlan.js';
 import {
   type BackupInfo,
   MetaVersionConflictError,
@@ -53,6 +55,17 @@ interface SavePagesJournalEntry {
 
 interface SavePagesJournal {
   entries: SavePagesJournalEntry[];
+}
+
+interface MergePagesJournal {
+  sourcePageId: string;
+  targetPageId: string;
+  previousMetaRaw: string;
+  previousSourceRaw: string;
+  previousTargetRaw: string;
+  trashName: string;
+  nextMetaSha256: string;
+  nextTargetSha256: string;
 }
 
 type WorkspaceImportJournalPhase =
@@ -121,6 +134,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   private readonly legacyPath: string;
   private readonly legacyBackupPath: string;
   private readonly savePagesJournalPath: string;
+  private readonly mergePagesJournalPath: string;
   private readonly workspaceImportJournalPath: string;
   /** Old root-level data dir (pre-multi-user). If set and meta.json exists there, migrate it in. */
   private readonly legacyV2Dir?: string;
@@ -132,6 +146,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     this.legacyPath = path.join(dataDir, 'tasks.json');
     this.legacyBackupPath = path.join(dataDir, 'tasks.json.v1.bak');
     this.savePagesJournalPath = path.join(dataDir, '.save-pages-journal.json');
+    this.mergePagesJournalPath = path.join(dataDir, '.merge-pages-journal.json');
     this.workspaceImportJournalPath = path.join(dataDir, '.workspace-import-journal.json');
     this.legacyV2Dir = legacyV2Dir;
   }
@@ -248,6 +263,86 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
         if (e.code !== 'ENOENT') return nextMeta;
       }
       return nextMeta;
+    });
+  }
+
+  async mergePages(sourcePageId: string, targetPageId: string): Promise<MoveNodesResponse> {
+    return this.runLocked(async () => {
+      if (sourcePageId === targetPageId) throw new Error('invalid merge target');
+      const meta = await this.loadMetaUnlocked();
+      if (sourcePageId === SYSTEM_HIERARCHY_PAGE_ID) throw new Error('system page cannot be merged');
+      this.assertKnownPage(meta, sourcePageId);
+      this.assertKnownPage(meta, targetPageId);
+      if (meta.pages.length <= 1) throw new Error('last page cannot be merged');
+
+      const sourcePath = this.pageFilePath(sourcePageId);
+      const targetPath = this.pageFilePath(targetPageId);
+      const [previousMetaRaw, previousSourceRaw, previousTargetRaw] = await Promise.all([
+        fs.readFile(this.metaPath, 'utf8'),
+        fs.readFile(sourcePath, 'utf8'),
+        fs.readFile(targetPath, 'utf8'),
+      ]);
+      const source = parseValidPageData(JSON.parse(previousSourceRaw), sourcePageId, undefined, false);
+      const target = parseValidPageData(JSON.parse(previousTargetRaw), targetPageId, undefined, false);
+      const plan = source.nodes.length === 0
+        ? {
+            target,
+            result: { movedNodes: 0, movedEdges: 0, autoIncludedChildren: 0, lostEdges: 0, droppedParentLinks: 0 },
+          }
+        : planWorkspaceMove(
+            source,
+            target,
+            source.nodes.map((node) => node.id),
+            pageSupportsDependencyGraph(meta.pages.find((page) => page.id === targetPageId)),
+          );
+      const validTarget = parseValidPageData(
+        plan.target,
+        targetPageId,
+        collectLegacyLongTaskTitles(JSON.parse(previousTargetRaw)),
+      );
+      const nextTarget = { ...validTarget, version: (target.version ?? 0) + 1 };
+      assertPageCapacity(nextTarget, targetPageId);
+      assertNoNodeOverlaps(validTarget, targetPageId);
+      const nextMeta = this.bumpMeta({
+        ...meta,
+        pages: meta.pages.filter((page) => page.id !== sourcePageId),
+        activePageId: meta.activePageId === sourcePageId ? targetPageId : meta.activePageId,
+      });
+      await Promise.all([this.createBackupUnlocked(sourcePageId), this.createBackupUnlocked(targetPageId)]);
+      const deletedAt = new Date().toISOString();
+      const trashDir = path.join(this.dataDir, 'trash', 'pages');
+      const trashName = `${deletedAt.replace(/[:.]/g, '-')}-${sourcePageId}.json`;
+
+      const journal: MergePagesJournal = {
+        sourcePageId,
+        targetPageId,
+        previousMetaRaw,
+        previousSourceRaw,
+        previousTargetRaw,
+        trashName,
+        nextMetaSha256: this.hashJson(nextMeta),
+        nextTargetSha256: this.hashJson(nextTarget),
+      };
+      await atomicWriteJson(this.mergePagesJournalPath, journal);
+      try {
+        await atomicWriteText(
+          path.join(trashDir, trashName),
+          JSON.stringify({
+            deletedAt,
+            page: meta.pages.find((page) => page.id === sourcePageId),
+            data: JSON.parse(previousSourceRaw),
+          }, null, 2),
+        );
+        await atomicWriteJson(targetPath, nextTarget);
+        await atomicWriteJson(this.metaPath, nextMeta);
+      } catch (error) {
+        await this.restoreMergePagesJournalUnlocked(journal);
+        throw error;
+      }
+
+      // Metadata is the commit point. Cleanup failures are recovered on the next locked operation.
+      await this.finalizeMergePagesJournalUnlocked(journal).catch(() => undefined);
+      return plan.result;
     });
   }
 
@@ -689,10 +784,57 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     return withWorkspaceLock(this.workspaceLockKey(), () =>
       withFilesystemLock(this.dataDir, async () => {
         await this.recoverPendingWorkspaceImportUnlocked();
+        await this.recoverPendingMergePagesUnlocked();
         await this.recoverPendingSavePagesUnlocked();
         return task();
       }),
     );
+  }
+
+  private async recoverPendingMergePagesUnlocked(): Promise<void> {
+    const raw = await this.readTextIfExists(this.mergePagesJournalPath);
+    if (raw === null) return;
+    const journal = JSON.parse(raw) as MergePagesJournal;
+    const [liveMetaRaw, liveTargetRaw] = await Promise.all([
+      this.readTextIfExists(this.metaPath),
+      this.readTextIfExists(this.pageFilePath(journal.targetPageId)),
+    ]);
+    const committed =
+      liveMetaRaw !== null && this.hashRawJson(liveMetaRaw) === journal.nextMetaSha256 &&
+      liveTargetRaw !== null && this.hashRawJson(liveTargetRaw) === journal.nextTargetSha256;
+    if (committed) {
+      await this.finalizeMergePagesJournalUnlocked(journal);
+      return;
+    }
+    await this.restoreMergePagesJournalUnlocked(journal);
+  }
+
+  private async restoreMergePagesJournalUnlocked(journal: MergePagesJournal): Promise<void> {
+    await atomicWriteText(this.pageFilePath(journal.sourcePageId), journal.previousSourceRaw);
+    await atomicWriteText(this.pageFilePath(journal.targetPageId), journal.previousTargetRaw);
+    await atomicWriteText(this.metaPath, journal.previousMetaRaw);
+    this.assertSafeTrashName(journal.trashName);
+    await fs.unlink(path.join(this.dataDir, 'trash', 'pages', journal.trashName)).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+      },
+    );
+    await fs.unlink(this.mergePagesJournalPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+    await Promise.all([syncDirectory(this.pagesDir), syncDirectory(this.dataDir)]);
+  }
+
+  private async finalizeMergePagesJournalUnlocked(journal: MergePagesJournal): Promise<void> {
+    await fs.unlink(this.pageFilePath(journal.sourcePageId)).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+    await syncDirectory(this.pagesDir);
+    await this.pruneJsonFiles(path.join(this.dataDir, 'trash', 'pages'), MAX_TRASHED_PAGES, MAX_TRASH_BYTES);
+    await fs.unlink(this.mergePagesJournalPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+    await syncDirectory(this.dataDir);
   }
 
   private async loadMetaUnlocked(): Promise<Meta> {

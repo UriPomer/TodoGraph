@@ -2,6 +2,15 @@ import type { Task } from './schema.js';
 
 export const MAX_HIERARCHY_DEPTH = 3;
 
+/** A parent may only be completed after all of its direct children are complete. */
+export function hasIncompleteDirectChild(nodes: readonly Task[], parentId: string): boolean {
+  return nodes.some((node) => node.parentId === parentId && node.status !== 'done');
+}
+
+export function findCompletedParentWithIncompleteChild(nodes: readonly Task[]): Task | undefined {
+  return nodes.find((node) => node.status === 'done' && hasIncompleteDirectChild(nodes, node.id));
+}
+
 export type HierarchyValidationResult =
   | { valid: true }
   | {

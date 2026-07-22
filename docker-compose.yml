@@ -7,11 +7,13 @@ services:
     volumes:
       # Persist data directory so container removal does not lose data
       - ./data:/app/data
-    env_file:
-      - .env
     environment:
       - PORT=3000
       - HOST=0.0.0.0
       - DATA_DIR=/app/data
       - STATIC_DIR=/app/packages/app/dist
+      - SESSION_SECRET=${SESSION_SECRET:?copy .env.example to .env and replace SESSION_SECRET}
+      - REGISTRATION_KEY=${REGISTRATION_KEY:-}
+      # Loopback HTTP needs non-secure cookies. Set true only behind HTTPS.
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
     restart: unless-stopped

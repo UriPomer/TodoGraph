@@ -2,6 +2,7 @@ import {
   MAX_PAGE_TITLE_LENGTH,
   MAX_TASK_TITLE_LENGTH,
   PageDataSchema,
+  findCompletedParentWithIncompleteChild,
   validateDependencyEdges,
   validateNoSiblingOverlaps,
   validateTaskHierarchy,
@@ -76,6 +77,12 @@ export function parseValidPageData(
   const hierarchy = validateTaskHierarchy(page.nodes);
   if (!hierarchy.valid) {
     throw new Error(`page contains invalid hierarchy (${hierarchy.reason}, task ${hierarchy.taskId}): ${pageId}`);
+  }
+  if (enforceTitleLimit) {
+    const invalidParent = findCompletedParentWithIncompleteChild(page.nodes);
+    if (invalidParent) {
+      throw new Error(`completed parent has incomplete child: ${invalidParent.id}`);
+    }
   }
   return page;
 }

@@ -62,8 +62,12 @@ pnpm dev              # 同时起 Fastify(5173) + Vite(5174)
 Docker 部署：
 
 ```bash
+cp .env.example .env
+# 把 .env 中的 SESSION_SECRET 换成你自己的 32 字节随机值
 docker compose up -d  # 监听 127.0.0.1:3000，数据持久化在 ./data
 ```
+
+PowerShell 可用 `Copy-Item .env.example .env`。默认回环地址使用 HTTP，因此 `COOKIE_SECURE=false`；放到 HTTPS 反向代理后应改为 `true`。
 
 文件存储模式会用跨进程锁串行化同一台机器上对 `DATA_DIR` 的写入；不要把数据目录放在网络文件系统上。需要跨主机多实例部署时应先切换到支持事务的数据库存储。
 
