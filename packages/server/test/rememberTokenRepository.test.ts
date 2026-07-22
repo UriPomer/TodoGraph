@@ -51,4 +51,17 @@ describe('FileRememberTokenRepository', () => {
     expect(stored[0]?.currentSecretHashes).toHaveLength(1);
     expect(stored[0]?.previousSecretHashes).toHaveLength(2);
   });
+
+  it('verifies native credentials without rotating them or accepting them as browser cookies', async () => {
+    const repo = new FileRememberTokenRepository(dataDir);
+    const token = await repo.issue('native-user', 3, { purpose: 'native', lifetimeMs: 60_000 });
+
+    await expect(repo.verify(token, 'native')).resolves.toMatchObject({
+      status: 'valid',
+      userId: 'native-user',
+      sessionVersion: 3,
+    });
+    await expect(repo.verify(token, 'native')).resolves.toMatchObject({ status: 'valid' });
+    await expect(repo.consume(token)).resolves.toEqual({ status: 'invalid' });
+  });
 });

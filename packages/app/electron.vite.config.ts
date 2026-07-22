@@ -2,6 +2,8 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 
+process.env.VITE_API_BASE ??= '';
+
 /**
  * electron-vite 三段构建：
  * - main:    主进程（启动 Fastify、创建 BrowserWindow）

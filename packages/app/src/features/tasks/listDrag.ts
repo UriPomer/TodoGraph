@@ -10,6 +10,13 @@ export type ListDropIntent =
   | { kind: 'unparent' };
 const UNPARENT_DRAG_X = 20;
 
+export function listDropIntentKey(intent: ListDropIntent): string | null {
+  if (intent.kind === 'none') return null;
+  if (intent.kind === 'nest') return `nest:${intent.targetId}`;
+  if (intent.kind === 'unparent') return 'unparent';
+  return `${intent.kind}:${intent.anchorId}:${intent.position}`;
+}
+
 interface DropIntentInput {
   startX: number;
   clientX: number;

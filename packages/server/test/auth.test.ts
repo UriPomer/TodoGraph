@@ -88,6 +88,14 @@ describe('auth routes', () => {
     });
     expect(meta.statusCode).toBe(200);
 
+    const nativeWithoutToken = await app.inject({
+      method: 'GET',
+      url: '/api/meta',
+      headers: { 'x-todograph-client': 'native' },
+      cookies,
+    });
+    expect(nativeWithoutToken.statusCode).toBe(401);
+
     const rejected = await app.inject({
       method: 'OPTIONS',
       url: '/api/auth/me',
@@ -107,6 +115,91 @@ describe('auth routes', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ ok: true, username: 'alice' });
+  });
+
+  it('authenticates a packaged native client without weakening browser or MCP auth', async () => {
+    const registration = await app.inject({
+      method: 'POST',
+      url: '/api/auth/native/register',
+      payload: { username: 'native-user', password: 'secret123', registrationKey: '', remember: true },
+    });
+    expect(registration.statusCode).toBe(200);
+    const registered = registration.json() as { token: string; user: { id: string; username: string } };
+    expect(registered.token).toMatch(/^tdg-native-/);
+    expect(registered.user.username).toBe('native-user');
+
+    const nativeHeaders = { authorization: `Bearer ${registered.token}` };
+    const me = await app.inject({ method: 'GET', url: '/api/auth/native/me', headers: nativeHeaders });
+    expect(me.json()).toMatchObject({ ok: true, user: { username: 'native-user' } });
+    expect((await app.inject({ method: 'GET', url: '/api/meta', headers: nativeHeaders })).statusCode).toBe(200);
+
+    expect((await app.inject({ method: 'GET', url: '/api/meta' })).statusCode).toBe(401);
+    const mcpLike = await app.inject({
+      method: 'GET', url: '/api/meta', headers: { authorization: 'Bearer tdg-not-a-native-token' },
+    });
+    expect(mcpLike.statusCode).toBe(401);
+
+    expect((await app.inject({ method: 'POST', url: '/api/auth/native/logout', headers: nativeHeaders })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/meta', headers: nativeHeaders })).statusCode).toBe(401);
+  });
+
+  it('revokes older native credentials when the password changes', async () => {
+    const registration = await app.inject({
+      method: 'POST',
+      url: '/api/auth/native/register',
+      payload: { username: 'native-password', password: 'secret123', registrationKey: '', remember: true },
+    });
+    const firstToken = (registration.json() as { token: string }).token;
+    const changed = await app.inject({
+      method: 'POST',
+      url: '/api/auth/native/change-password',
+      headers: { authorization: `Bearer ${firstToken}` },
+      payload: { currentPassword: 'secret123', newPassword: 'secret456', remember: true },
+    });
+    expect(changed.statusCode).toBe(200);
+    const replacement = (changed.json() as { token: string }).token;
+    expect(replacement).toMatch(/^tdg-native-/);
+    expect(replacement).not.toBe(firstToken);
+    expect((await app.inject({
+      method: 'GET', url: '/api/meta', headers: { authorization: `Bearer ${firstToken}` },
+    })).statusCode).toBe(401);
+    expect((await app.inject({
+      method: 'GET', url: '/api/meta', headers: { authorization: `Bearer ${replacement}` },
+    })).statusCode).toBe(200);
+  });
+
+  it('applies the same password validation rules to browser and native sessions', async () => {
+    const registration = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'password-rules', password: 'secret123' },
+    });
+    const cookies = Object.fromEntries(
+      (registration.cookies as unknown as { name: string; value: string }[]).map((cookie) => [
+        cookie.name,
+        cookie.value,
+      ]),
+    );
+    const nativeLogin = await app.inject({
+      method: 'POST',
+      url: '/api/auth/native/login',
+      payload: { username: 'password-rules', password: 'secret123', remember: false },
+    });
+    const nativeToken = (nativeLogin.json() as { token: string }).token;
+    const payload = { currentPassword: 'wrong-password', newPassword: 'short' };
+
+    const browser = await app.inject({
+      method: 'POST', url: '/api/auth/change-password', cookies, payload,
+    });
+    const native = await app.inject({
+      method: 'POST',
+      url: '/api/auth/native/change-password',
+      headers: { authorization: `Bearer ${nativeToken}` },
+      payload,
+    });
+
+    expect(native.statusCode).toBe(browser.statusCode);
+    expect(native.json()).toEqual(browser.json());
   });
 
   it('rejects second registration without key', async () => {

@@ -5,6 +5,7 @@ import {
   MobileBottomNav,
   MobileMoreHeader,
   MobileMorePanel,
+  takePreviousMobileTab,
 } from '../src/features/workspace/WorkspaceApp';
 import { ThemeProvider } from '../src/features/theme/ThemeProvider';
 
@@ -29,6 +30,19 @@ describe('mobile shell', () => {
     );
 
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-label="依赖图"/);
+  });
+
+  it('removes the bottom navigation while the system keyboard is visible', () => {
+    expect(renderToStaticMarkup(
+      <MobileBottomNav tab="list" hidden onTab={vi.fn()} />,
+    )).toBe('');
+  });
+
+  it('skips dependency-graph history when the current page cannot show it', () => {
+    const history = ['list', 'graph'] as const;
+    const mutableHistory = [...history];
+    expect(takePreviousMobileTab(mutableHistory, false)).toBe('list');
+    expect(mutableHistory).toEqual([]);
   });
 
   it('puts account, data, and MCP controls directly on the more page', () => {

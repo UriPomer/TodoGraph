@@ -52,6 +52,9 @@ describe('mobile task list', () => {
     );
     const descriptionButton = taskHtml.match(/<button[^>]*data-task-action="description"[^>]*>/)?.[0];
     expect(descriptionButton).toBeDefined();
+    expect(taskHtml).toContain('mobile-task-row');
+    expect(taskHtml).toContain('max-lg:-mx-5');
+    expect(taskHtml).toContain('max-lg:px-5');
     expect(descriptionButton).not.toContain('max-lg:hidden');
     expect(descriptionButton).not.toMatch(/(?:^|\s)hover:/);
     expect(taskHtml).not.toContain('data-mobile-task-open="true"');

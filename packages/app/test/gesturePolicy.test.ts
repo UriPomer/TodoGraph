@@ -19,8 +19,8 @@ describe('list gesture policy', () => {
       doubleTapMs: 320,
       longPressMs: 400,
       tapSlopPx: 8,
-      swipeStartPx: 18,
-      swipeCommitPx: 96,
+      swipeStartPx: 12,
+      swipeCommitPx: 72,
     });
   });
 });

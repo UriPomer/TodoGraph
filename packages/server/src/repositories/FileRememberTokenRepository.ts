@@ -7,6 +7,8 @@ import { z } from 'zod';
 import type {
   ConsumeRememberTokenResult,
   RememberTokenRepository,
+  RememberTokenPurpose,
+  VerifyRememberTokenResult,
 } from './RememberTokenRepository.js';
 
 const MAX_TOKENS_PER_USER = 20;
@@ -23,6 +25,7 @@ const RememberTokenSchema = z.object({
   createdAt: z.string().datetime(),
   lastUsedAt: z.string().datetime(),
   expiresAt: z.string().datetime(),
+  purpose: z.enum(['browser', 'native']).default('browser'),
 });
 
 type RememberToken = z.infer<typeof RememberTokenSchema>;
@@ -58,7 +61,11 @@ export class FileRememberTokenRepository implements RememberTokenRepository {
     this.filePath = path.join(dataDir, 'users', 'remember-tokens.json');
   }
 
-  async issue(userId: string, sessionVersion: number): Promise<string> {
+  async issue(
+    userId: string,
+    sessionVersion: number,
+    options: { purpose?: RememberTokenPurpose; lifetimeMs?: number } = {},
+  ): Promise<string> {
     return this.withWriteLock(async () => {
       const now = new Date();
       const tokens = (await this.readTokens()).filter((token) => new Date(token.expiresAt) > now);
@@ -79,7 +86,8 @@ export class FileRememberTokenRepository implements RememberTokenRepository {
         sessionVersion,
         createdAt: nowIso,
         lastUsedAt: nowIso,
-        expiresAt: new Date(now.getTime() + REMEMBER_LIFETIME_MS).toISOString(),
+        expiresAt: new Date(now.getTime() + (options.lifetimeMs ?? REMEMBER_LIFETIME_MS)).toISOString(),
+        purpose: options.purpose ?? 'browser',
       });
       await this.writeTokens(tokens.filter((token) => !idsToRemove.has(token.id)));
       return encodeToken(id, secret);
@@ -96,6 +104,7 @@ export class FileRememberTokenRepository implements RememberTokenRepository {
       if (index < 0) return { status: 'invalid' };
 
       const record = tokens[index]!;
+      if (record.purpose !== 'browser') return { status: 'invalid' };
       const now = new Date();
       if (new Date(record.expiresAt) <= now) {
         tokens.splice(index, 1);
@@ -138,6 +147,27 @@ export class FileRememberTokenRepository implements RememberTokenRepository {
         expiresAt: record.expiresAt,
       };
     });
+  }
+
+  async verify(rawToken: string, purpose: RememberTokenPurpose): Promise<VerifyRememberTokenResult> {
+    const parsed = parseToken(rawToken);
+    if (!parsed) return { status: 'invalid' };
+    // The file is replaced atomically, so authentication reads do not need the
+    // cross-process writer lock. Expired records are pruned by the next issue.
+    const tokens = await this.readTokens();
+    const record = tokens.find((token) => token.id === parsed.id);
+    if (
+      !record
+      || record.purpose !== purpose
+      || new Date(record.expiresAt) <= new Date()
+      || !includesHash(record.currentSecretHashes, hashSecret(parsed.secret))
+    ) return { status: 'invalid' };
+    return {
+      status: 'valid',
+      userId: record.userId,
+      sessionVersion: record.sessionVersion,
+      expiresAt: record.expiresAt,
+    };
   }
 
   async revoke(rawToken: string): Promise<void> {

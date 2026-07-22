@@ -368,8 +368,14 @@ body {
   [data-task-id]:hover {
     background-color: transparent !important;
   }
-  [data-task-id]:active {
-    background-color: hsl(var(--accent) / 0.25) !important;
+  .mobile-task-row:active {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--accent) / 0.18),
+      hsl(var(--accent) / 0.3) 18%,
+      hsl(var(--accent) / 0.3) 82%,
+      hsl(var(--accent) / 0.18)
+    ) !important;
   }
 }
 

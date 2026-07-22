@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "packageManager": "pnpm@10.33.2",
   "scripts": {
     "predev": "pnpm --filter @todograph/shared build && pnpm --filter @todograph/core build",

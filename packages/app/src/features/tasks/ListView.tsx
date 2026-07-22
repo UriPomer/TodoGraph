@@ -11,7 +11,8 @@ import { CrossPageReady, selectCrossPageReadyTasks } from './CrossPageReady';
 import { TaskInput } from './TaskInput';
 import { TaskItem, type TaskDragPoint, type TaskDragStart } from './TaskItem';
 import { buildTaskListModel, type DepInfo, type FlatItem } from './listModel';
-import { applyDragAutoScroll, dragAutoScrollDelta, resolveListDropIntent, type ListDropIntent } from './listDrag';
+import { applyDragAutoScroll, dragAutoScrollDelta, listDropIntentKey, resolveListDropIntent, type ListDropIntent } from './listDrag';
+import { nativeFeedback } from '@/platform/nativeInteractions';
 type DragState =
   | { taskId: string; pointerId: number; pointerType: string; width: number; offsetX: number; offsetY: number; startX: number; startY: number; active: false }
   | { taskId: string; pointerId: number; pointerType: string; width: number; offsetX: number; offsetY: number; startX: number; startY: number; active: true; x: number; y: number; intent: ListDropIntent }
@@ -137,6 +138,7 @@ export function ListView() {
       startX: event.clientX,
       startY: event.clientY,
     };
+    if (event.activateImmediately) nativeFeedback.dragLift(event.pointerType);
     updateDrag(event.activateImmediately
       ? { ...base, active: true, x: event.clientX, y: event.clientY, intent: { kind: 'none' } }
       : { ...base, active: false });
@@ -185,11 +187,13 @@ export function ListView() {
     const delta = dragAutoScrollDelta(point.clientY, scroller.getBoundingClientRect());
     if (!delta) return;
     if (!applyDragAutoScroll(scroller, delta)) return;
+    const intent = stableIntentAt(current, point.clientX, point.clientY);
+    nativeFeedback.dropTargetChanged(listDropIntentKey(intent));
     updateDrag({
       ...current,
       x: point.clientX,
       y: point.clientY,
-      intent: stableIntentAt(current, point.clientX, point.clientY),
+      intent,
     });
     autoScrollFrameRef.current = requestAnimationFrame(tick);
   }, [stableIntentAt, updateDrag]);
@@ -221,11 +225,16 @@ export function ListView() {
         y: clientY,
         intent: { kind: 'none' },
       };
-      updateDrag({ ...activated, intent: intentAt(activated, clientX, clientY) });
+      const intent = intentAt(activated, clientX, clientY);
+      nativeFeedback.dragLift(current.pointerType);
+      nativeFeedback.dropTargetChanged(listDropIntentKey(intent));
+      updateDrag({ ...activated, intent });
       scheduleAutoScroll(point);
       return;
     }
-    updateDrag({ ...current, x: clientX, y: clientY, intent: stableIntentAt(current, clientX, clientY) });
+    const intent = stableIntentAt(current, clientX, clientY);
+    nativeFeedback.dropTargetChanged(listDropIntentKey(intent));
+    updateDrag({ ...current, x: clientX, y: clientY, intent });
     scheduleAutoScroll(point);
   }, [intentAt, scheduleAutoScroll, stableIntentAt, updateDrag]);
 
@@ -236,6 +245,10 @@ export function ListView() {
     if (!current.active) {
       updateDrag(null);
       return;
+    }
+    if (current.pointerType === 'touch') {
+      if (current.intent.kind === 'none') nativeFeedback.dropInvalid();
+      else nativeFeedback.dropSuccess();
     }
     const finishMoveAnimation = current.intent.kind !== 'none'
       ? prepareTaskMoveAnimation(scrollRef.current, current.taskId)
@@ -258,6 +271,7 @@ export function ListView() {
   const cancelDrag = useCallback((pointerId: number) => {
     if (dragRef.current?.pointerId !== pointerId) return;
     stopAutoScroll();
+    if (dragRef.current?.pointerType === 'touch') nativeFeedback.dragCancel();
     updateDrag(null);
   }, [stopAutoScroll, updateDrag]);
 
@@ -509,12 +523,12 @@ export function ListView() {
         <div
           className="fixed pointer-events-none z-50"
           style={{
-            left: drag.x - drag.offsetX,
+            left: drag.pointerType === 'touch' ? 0 : drag.x - drag.offsetX,
             top: drag.y - drag.offsetY,
-            width: drag.width,
+            width: drag.pointerType === 'touch' ? '100vw' : drag.width,
           }}
         >
-          <div className="scale-[1.015] rounded-md border border-border bg-card opacity-95 shadow-2xl">
+          <div className="border-y border-[hsl(var(--primary)/0.28)] bg-card/90 px-5 opacity-95 shadow-[0_12px_36px_hsl(var(--background)/0.38)] backdrop-blur-xl lg:scale-[1.015] lg:rounded-md lg:border lg:border-border lg:bg-card lg:px-0 lg:shadow-2xl">
             <TaskItem task={dragTask} depth={hierarchyMetrics.depthById.get(dragTask.id) ?? 0} />
           </div>
         </div>,

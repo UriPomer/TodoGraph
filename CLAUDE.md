@@ -13,6 +13,7 @@ pnpm typecheck        # Type-check every workspace package
 pnpm --filter @todograph/server test     # Run server tests
 pnpm --filter @todograph/app test        # Run frontend tests
 pnpm package          # Build Windows portable EXE (electron-builder)
+pnpm --filter @todograph/app build:mobile  # Build/sync Capacitor; requires HTTPS VITE_API_BASE
 ```
 
 **Single test**: `pnpm --filter <pkg> exec vitest run -t "test name"`
@@ -26,7 +27,7 @@ This is a **pnpm monorepo** with six packages. See [`ARCHITECTURE.md`](./ARCHITE
 | `@todograph/core` | Pure DAG algorithms. Reuses canonical domain types from shared. `buildAdj`, `topoSort`, `wouldCreateCycle`, `readyTasks`, `recommend`. |
 | `@todograph/shared` | Canonical Zod schemas, hierarchy validation, limits, and geometry helpers shared by frontend and backend. |
 | `@todograph/server` | Fastify 5 backend. Serves REST API and optionally static frontend files. |
-| `@todograph/app` | React 18 + Vite frontend + Electron shell. React Flow graph editor, Zustand stores, shadcn/ui components. |
+| `@todograph/app` | React 18 + Vite frontend + Electron/Capacitor shells. React Flow graph editor, Zustand stores, shadcn/ui components. |
 | `@todograph/mcp` | Independently published MCP server and TodoGraph tools. |
 | `@todograph/desktop-host` | Owns the loopback Fastify lifecycle and session secret used by Electron. |
 
@@ -43,6 +44,7 @@ This is a **pnpm monorepo** with six packages. See [`ARCHITECTURE.md`](./ARCHITE
 
 - 在列表视图中，“节点”或“任务”默认指列表里的任务行；“父节点、子节点、同级节点、嵌套、层级”均指列表的父子嵌套关系。
 - 在依赖图视图中，“节点”或“任务”默认指依赖图里的图节点。依赖连线使用“前置依赖、后续依赖”等术语，不与父子层级混为一谈。
+- **active 高亮**：移动端按住列表任务、尚未正式拖起时出现的整行按压高亮。它不是拖拽浮层、预计落位提示或推荐任务的紫色语义高亮。
 - 模式切换必须同时保留离开前的具体页面和该页面的视图；从清单模式返回页面模式时，恢复原页面及原视图。
 - 用户可见行为以 `docs/behavior/` 中的行为书为准；修改导航、手势或层级时必须同时更新对应行为 ID 的测试。
 
@@ -64,6 +66,7 @@ This is a **pnpm monorepo** with six packages. See [`ARCHITECTURE.md`](./ARCHITE
 - **Multi-user data layout**: `data/users/{userId}/meta.json`, `data/users/{userId}/pages/{pageId}.json`. Each user gets a separate `WorkspaceRepository` instance.
 - **Migration**: On first `loadMeta()` with no `meta.json`, `FileWorkspaceRepository` auto-migrates legacy `tasks.json` (v1) → page-per-user layout, or seeds demo data if no data exists.
 - **Electron**: Main process starts Fastify on a random port, preload injects `__API_BASE__` via `contextBridge`. Portable mode redirects `userData` to exe-adjacent `data/` folder.
+- **Capacitor**: Android/iOS use a build-time public HTTPS `VITE_API_BASE`, native bearer auth, platform secure storage, keyboard/back/system-bar integration, and semantic (not per-frame) haptics. User-visible rules live in `docs/behavior/native-platform.md`.
 - **Vite dev proxy**: `vite.config.ts` proxies `/api` to `http://127.0.0.1:5173` (the Fastify dev server).
 - **MCP compatibility releases**: `packages/mcp/package.json` is the MCP runtime version and must match `LATEST_MCP_VERSION` (enforced by test). npm, Docker, and desktop release workflows share the exact-pack/latest-version guard; server distributions publish that package before advertising it.
 - **Themes**: All colors as HSL CSS custom properties (`hsl(var(--xxx))`). 6 套主题（glass-dark/light、default-dark/light、muted-warm/cool）。每套主题一个独立 CSS 文件在 `styles/themes/`。`ThemeDef` 接口在 `features/theme/themes.ts`，包含 `id/label/mode/icon/preview`。新增主题只需：1) 创建 `styles/themes/<name>.css`，2) 在 `THEMES` 数组中加一条，3) 在 `globals.css` 顶部 `@import`。

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '@todograph/shared';
-import { applyDragAutoScroll, dragAutoScrollDelta, resolveListDropIntent } from '../src/features/tasks/listDrag';
+import { applyDragAutoScroll, dragAutoScrollDelta, listDropIntentKey, resolveListDropIntent } from '../src/features/tasks/listDrag';
 
 const task = (id: string, parentId?: string): Task => ({
   id,
@@ -10,6 +10,13 @@ const task = (id: string, parentId?: string): Task => ({
 });
 
 describe('list drag intent', () => {
+  it('uses a stable semantic key for haptic target changes', () => {
+    expect(listDropIntentKey({ kind: 'none' })).toBeNull();
+    expect(listDropIntentKey({ kind: 'nest', targetId: 'parent' })).toBe('nest:parent');
+    expect(listDropIntentKey({ kind: 'unparent' })).toBe('unparent');
+    expect(listDropIntentKey({ kind: 'reorder', anchorId: 'task', position: 'after', storageOrder: 'forward' }))
+      .toBe('reorder:task:after');
+  });
   it('prefers sibling ordering at row edges and nesting at the center', () => {
     const dragged = task('dragged');
     const target = task('target');

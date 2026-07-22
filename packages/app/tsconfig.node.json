@@ -7,5 +7,5 @@
     "outDir": "dist-node",
     "noEmit": true
   },
-  "include": ["electron.vite.config.ts", "vite.config.ts", "tailwind.config.ts", "postcss.config.js"]
+  "include": ["electron.vite.config.ts", "vite.config.ts", "capacitor.config.ts", "tailwind.config.ts", "postcss.config.js"]
 }

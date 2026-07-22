@@ -25,12 +25,21 @@ interface DialogStore {
   dialogs: DialogItem[];
   enqueue: (d: DialogItem) => void;
   dequeue: (id: string) => void;
+  dismissCurrent: () => boolean;
 }
 
 export const useDialogStore = create<DialogStore>((set) => ({
   dialogs: [],
   enqueue: (d) => set((s) => ({ dialogs: [...s.dialogs, d] })),
   dequeue: (id) => set((s) => ({ dialogs: s.dialogs.filter((d) => d.id !== id) })),
+  dismissCurrent: () => {
+    const current = useDialogStore.getState().dialogs[0];
+    if (!current) return false;
+    if (current.type === 'confirm') current.resolve(false);
+    else current.resolve(null);
+    set((state) => ({ dialogs: state.dialogs.filter((dialog) => dialog.id !== current.id) }));
+    return true;
+  },
 }));
 
 /** 命令式 API：任意位置调用，返回 Promise */

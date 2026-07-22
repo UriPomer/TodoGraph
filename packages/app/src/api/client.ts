@@ -10,6 +10,13 @@ import {
   type PageData,
   type PageInfo,
 } from '@todograph/shared';
+import {
+  clearNativeSessionToken,
+  getNativeSessionToken,
+  isNativeRuntime,
+  isNativeSessionPersisted,
+  replaceNativeSessionToken,
+} from '@/platform/nativeSession';
 export interface McpKeyInfo {
   id: string;
   prefix: string;
@@ -52,7 +59,8 @@ export interface WorkspaceExport {
 export function getApiBase(): string {
   // @ts-expect-error 运行时注入
   const injected: string | undefined = typeof window !== 'undefined' ? window.__API_BASE__ : undefined;
-  return injected ?? '';
+  const configured = import.meta.env.VITE_API_BASE as string | undefined;
+  return injected ?? configured?.replace(/\/$/, '') ?? '';
 }
 
 const unauthorizedListeners = new Set<() => void>();
@@ -81,7 +89,22 @@ function requestPath(input: RequestInfo | URL): string {
   }
 }
 
-function fetchWithCredentials(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+async function fetchWithCredentials(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (isNativeRuntime()) {
+    const apiBase = getApiBase();
+    if (!apiBase.startsWith('https://')) throw new Error('原生应用必须配置 HTTPS API 地址');
+    const inputValue =
+      typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const target = new URL(inputValue, `${apiBase}/`);
+    if (target.origin !== new URL(apiBase).origin || !target.pathname.startsWith('/api/')) {
+      throw new Error('原生 API 请求目标不受信任');
+    }
+    const token = await getNativeSessionToken();
+    const headers = new Headers(init?.headers);
+    headers.set('X-TodoGraph-Client', 'native');
+    if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+    return globalThis.fetch(input, { ...init, headers });
+  }
   if (!getApiBase()) {
     return init === undefined ? globalThis.fetch(input) : globalThis.fetch(input, init);
   }
@@ -124,7 +147,14 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
   }
 
   const path = requestPath(input);
-  if (response.status === 401 && path.startsWith('/api/') && !path.startsWith('/api/auth/')) {
+  const nativeSessionExpired =
+    path === '/api/auth/native/me'
+    || !path.startsWith('/api/auth/')
+    || response.headers.get('x-session-expired') === '1';
+  if (response.status === 401 && isNativeRuntime() && nativeSessionExpired) {
+    await clearNativeSessionToken();
+    notifyUnauthorized();
+  } else if (response.status === 401 && path.startsWith('/api/') && !path.startsWith('/api/auth/')) {
     const restored = await restoreBrowserSession(generation);
     if (generation !== apiSessionGeneration) {
       throw Object.assign(new Error('API session changed'), { name: 'AbortError' });
@@ -373,6 +403,16 @@ export const api = {
     await jsonOk(res);
   },
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    if (isNativeRuntime()) {
+      const res = await request('/api/auth/native/change-password', 'POST', {
+        currentPassword,
+        newPassword,
+        remember: isNativeSessionPersisted(),
+      });
+      const body = await json<{ ok: boolean; token: string }>(res);
+      await replaceNativeSessionToken(body.token);
+      return;
+    }
     const res = await request('/api/auth/change-password', 'POST', {
       currentPassword,
       newPassword,

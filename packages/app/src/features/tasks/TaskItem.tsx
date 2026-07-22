@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Check, ChevronRight, ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
 import { MAX_HIERARCHY_DEPTH, type Task } from '@todograph/shared';
 import { cn } from '@/lib/utils';
@@ -14,6 +14,8 @@ import {
   LIST_SWIPE_START_PX,
   LIST_TAP_SLOP_PX,
 } from './gesturePolicy';
+
+const useBrowserLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 export interface TaskDragStart {
   pointerId: number;
@@ -155,6 +157,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
   // 因此手机滚动、滑动、双触和长按拖拽不能再分散到 Pointer handlers。
   const swipeLayerRef = useRef<HTMLDivElement>(null);
   const bgRightRef = useRef<HTMLDivElement>(null);
+  const bgLeftRef = useRef<HTMLDivElement>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mobileGestureRef = useRef<
     | { kind: 'idle' }
@@ -174,22 +177,34 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       bgRightRef.current.style.backgroundColor = 'transparent';
       bgRightRef.current.textContent = '完成';
     }
+    if (bgLeftRef.current) {
+      bgLeftRef.current.style.opacity = '0';
+      bgLeftRef.current.style.backgroundColor = 'transparent';
+      bgLeftRef.current.textContent = '删除';
+    }
   }, []);
 
   const renderSwipe = useCallback((dx: number) => {
-    const mag = Math.max(0, dx);
-    const clamped = mag > 100 ? 100 + (mag - 100) * 0.3 : mag;
+    const direction = Math.sign(dx);
+    const mag = Math.abs(dx);
+    const resisted = mag > 88 ? 88 + (mag - 88) * 0.3 : mag;
+    const offset = direction * resisted;
     const el = swipeLayerRef.current;
-    if (el) el.style.transform = `translateX(${clamped}px)`;
+    if (el) el.style.transform = `translateX(${offset}px)`;
 
-    const armed = clamped >= LIST_SWIPE_COMMIT_PX;
-    const opacity = Math.min(1, Math.max(0, (clamped - 36) / 60));
+    const armed = resisted >= LIST_SWIPE_COMMIT_PX;
+    const opacity = Math.min(1, Math.max(0, (resisted - LIST_SWIPE_START_PX) / 44));
     if (bgRightRef.current) {
       bgRightRef.current.style.opacity = String(dx > 0 ? opacity : 0);
       bgRightRef.current.style.backgroundColor = armed && dx > 0 ? 'hsl(var(--success) / 0.12)' : 'transparent';
       bgRightRef.current.textContent = armed && dx > 0 ? '松手完成' : '完成';
     }
-    return clamped;
+    if (bgLeftRef.current) {
+      bgLeftRef.current.style.opacity = String(dx < 0 ? opacity : 0);
+      bgLeftRef.current.style.backgroundColor = armed && dx < 0 ? 'hsl(var(--destructive) / 0.12)' : 'transparent';
+      bgLeftRef.current.textContent = armed && dx < 0 ? '松手删除' : '删除';
+    }
+    return offset;
   }, []);
 
   const finishSwipe = useCallback((offset: number) => {
@@ -203,15 +218,41 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
           toast.info('无法完成', '该任务下还有未完成的子任务');
         }
       }, 220);
+    } else if (offset <= -LIST_SWIPE_COMMIT_PX) {
+      setTimeout(() => {
+        deleteTask(task.id);
+        toast.action('已删除', '撤销', () => useTaskStore.getState().undo(), task.title);
+      }, 220);
     }
-  }, [cancelSwipeDOM, completeTask, task.id, task.status, task.title]);
+  }, [cancelSwipeDOM, completeTask, deleteTask, task.id, task.status, task.title]);
 
   const cancelLongPress = useCallback(() => {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = null;
   }, []);
 
-  useEffect(() => {
+  // 原生触摸监听必须在一次触摸会话中保持稳定。后台刷新可能替换 task 对象；
+  // 若 effect 因此重绑，旧监听的清理会取消正在等待的首次长按，而新监听收不到已发生的 touchstart。
+  const mobileGestureActionsRef = useRef({
+    task,
+    beginTitleEditing,
+    finishSwipe,
+    onDragStart,
+    onDragMove,
+    onDragEnd,
+    onDragCancel,
+  });
+  mobileGestureActionsRef.current = {
+    task,
+    beginTitleEditing,
+    finishSwipe,
+    onDragStart,
+    onDragMove,
+    onDragEnd,
+    onDragCancel,
+  };
+
+  useBrowserLayoutEffect(() => {
     const row = rowRef.current;
     if (!row || typeof row.addEventListener !== 'function') return;
     const resetGesture = () => {
@@ -223,7 +264,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
     const onTouchStart = (event: TouchEvent) => {
       if (event.touches.length !== 1) {
         const current = mobileGestureRef.current;
-        if (current.kind === 'dragging') onDragCancel?.(current.touchId);
+        if (current.kind === 'dragging') mobileGestureActionsRef.current.onDragCancel?.(current.touchId);
         resetGesture();
         cancelSwipeDOM();
         return;
@@ -243,21 +284,22 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
         sourceElement: row,
       };
       mobileGestureRef.current = pending;
-      if (!onDragStart) return;
+      if (!mobileGestureActionsRef.current.onDragStart) return;
       longPressTimerRef.current = setTimeout(() => {
         const current = mobileGestureRef.current;
         if (current.kind !== 'pending' || current.touchId !== pending.touchId) return;
         longPressTimerRef.current = null;
         cancelSwipeDOM();
         mobileGestureRef.current = { kind: 'dragging', touchId: current.touchId };
-        onDragStart({
+        const actions = mobileGestureActionsRef.current;
+        actions.onDragStart?.({
           pointerId: current.touchId,
           pointerType: 'touch',
           clientX: current.lastX,
           clientY: current.lastY,
           sourceElement: current.sourceElement,
           activateImmediately: true,
-        }, task);
+        }, actions.task);
       }, LIST_LONG_PRESS_MS);
     };
     const onTouchMove = (event: TouchEvent) => {
@@ -267,7 +309,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       if (!touch) return;
       if (current.kind === 'dragging') {
         if (event.cancelable) event.preventDefault();
-        onDragMove?.({ pointerId: current.touchId, clientX: touch.clientX, clientY: touch.clientY });
+        mobileGestureActionsRef.current.onDragMove?.({ pointerId: current.touchId, clientX: touch.clientX, clientY: touch.clientY });
         return;
       }
       if (current.kind === 'swiping') {
@@ -279,7 +321,13 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       if (current.kind === 'scrolling') return;
       const dx = touch.clientX - current.startX;
       const dy = touch.clientY - current.startY;
-      if (dx > LIST_SWIPE_START_PX && dx > Math.abs(dy) * 1.35) {
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      if (Math.hypot(dx, dy) > LIST_TAP_SLOP_PX) {
+        cancelLongPress();
+        lastTitleTapRef.current = null;
+      }
+      if (absX >= LIST_SWIPE_START_PX && absX > absY * 1.1) {
         cancelLongPress();
         const el = swipeLayerRef.current;
         if (el) el.style.transition = 'none';
@@ -288,8 +336,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
         if (event.cancelable) event.preventDefault();
         return;
       }
-      if (Math.hypot(dx, dy) > LIST_TAP_SLOP_PX) {
-        cancelLongPress();
+      if (absY >= LIST_SWIPE_START_PX && absY > absX * 1.1) {
         mobileGestureRef.current = { kind: 'scrolling', touchId: current.touchId };
         return;
       }
@@ -301,15 +348,19 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       cancelLongPress();
       if (current.kind === 'dragging') {
         if (event.cancelable) event.preventDefault();
-        onDragEnd?.(current.touchId);
+        mobileGestureActionsRef.current.onDragEnd?.(current.touchId);
       } else if (current.kind === 'swiping') {
-        finishSwipe(current.offset);
-      } else if (current.kind === 'pending' && current.titleElement) {
+        mobileGestureActionsRef.current.finishSwipe(current.offset);
+      } else if (
+        current.kind === 'pending'
+        && current.titleElement
+        && Math.hypot(current.lastX - current.startX, current.lastY - current.startY) <= LIST_TAP_SLOP_PX
+      ) {
         const now = Date.now();
         const previous = lastTitleTapRef.current;
         if (previous && now - previous.at <= LIST_DOUBLE_TAP_MS) {
           lastTitleTapRef.current = null;
-          beginTitleEditing(current.titleElement, current.lastX, current.lastY);
+          mobileGestureActionsRef.current.beginTitleEditing(current.titleElement, current.lastX, current.lastY);
         } else {
           lastTitleTapRef.current = { at: now };
         }
@@ -318,7 +369,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
     };
     const onTouchCancel = () => {
       const current = mobileGestureRef.current;
-      if (current.kind === 'dragging') onDragCancel?.(current.touchId);
+      if (current.kind === 'dragging') mobileGestureActionsRef.current.onDragCancel?.(current.touchId);
       cancelSwipeDOM();
       resetGesture();
     };
@@ -328,14 +379,14 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
     row.addEventListener('touchcancel', onTouchCancel);
     return () => {
       const current = mobileGestureRef.current;
-      if (current.kind === 'dragging') onDragCancel?.(current.touchId);
+      if (current.kind === 'dragging') mobileGestureActionsRef.current.onDragCancel?.(current.touchId);
       cancelLongPress();
       row.removeEventListener('touchstart', onTouchStart);
       row.removeEventListener('touchmove', onTouchMove);
       row.removeEventListener('touchend', onTouchEnd);
       row.removeEventListener('touchcancel', onTouchCancel);
     };
-  }, [beginTitleEditing, cancelLongPress, cancelSwipeDOM, finishSwipe, onDragCancel, onDragEnd, onDragMove, onDragStart, renderSwipe, task]);
+  }, [cancelLongPress, cancelSwipeDOM, renderSwipe]);
 
   const onRowPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!onDragStart || !event.isPrimary || event.pointerType !== 'mouse' || event.button !== 0) return;
@@ -390,16 +441,19 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       }}
       data-lens
       className={cn(
-        'group relative flex flex-col select-none [content-visibility:auto] [contain-intrinsic-size:auto_52px]',
+        'mobile-task-row group relative flex flex-col select-none max-lg:-mx-5 max-lg:px-5 [content-visibility:auto] [contain-intrinsic-size:auto_52px]',
         'transition-colors duration-200',
         'lg:hover:bg-foreground/[0.035]',
-        isDragging && 'opacity-30 scale-[0.98]',
+        isDragging && 'opacity-25 lg:scale-[0.98]',
         task.status === 'done' && !isDragging && 'text-muted-foreground',
       )}
     >
       {/* 滑动手势背景指示 — 由 ref 直接操作 DOM，不经过 React */}
       <div ref={bgRightRef} className="absolute inset-y-0 left-0 flex items-center pl-4 text-sm font-semibold text-[hsl(var(--success))] pointer-events-none" style={{ opacity: 0 }}>
         完成
+      </div>
+      <div ref={bgLeftRef} className="absolute inset-y-0 right-0 flex items-center pr-4 text-sm font-semibold text-destructive pointer-events-none" style={{ opacity: 0 }}>
+        删除
       </div>
       <div
         ref={swipeLayerRef}

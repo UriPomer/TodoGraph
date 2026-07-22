@@ -19,6 +19,9 @@ const DUMMY_PASSWORD_HASH = `${'00'.repeat(SALT_LEN)}:${'00'.repeat(KEY_LEN)}`;
 const REMEMBER_COOKIE = 'todograph_remember';
 const REMEMBER_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
 const SESSION_ABSOLUTE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const NATIVE_EPHEMERAL_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const NATIVE_PERSISTENT_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
+const NATIVE_TOKEN_PREFIX = 'tdg-native-';
 
 function secureStringEqual(left: string, right: string): boolean {
   const leftHash = createHash('sha256').update(left, 'utf8').digest();
@@ -97,6 +100,133 @@ interface AuthRouteOpts {
 type SessionValidationResult =
   | { ok: true; user: StoredUser }
   | { ok: false; error: 'unauthenticated' | 'expired' | 'invalidated' | 'missing-user' };
+
+type AccountResult =
+  | { ok: true; user: StoredUser }
+  | { ok: false; status: number; error: string };
+
+async function authenticateCredentials(body: unknown, userRepo: UserRepository): Promise<AccountResult> {
+  const value = body as Record<string, unknown> | null;
+  if (typeof value?.username !== 'string' || typeof value.password !== 'string') {
+    return { ok: false, status: 400, error: '用户名和密码不能为空' };
+  }
+  const username = value.username.trim();
+  const password = value.password;
+  if (!username || !password) return { ok: false, status: 400, error: '用户名和密码不能为空' };
+  if (username.length > 32 || password.length > 200) {
+    return { ok: false, status: 401, error: '用户名或密码错误' };
+  }
+  const user = await userRepo.findByUsername(username);
+  const valid = (await verifyPassword(password, user?.passwordHash ?? DUMMY_PASSWORD_HASH)) && user !== null;
+  return valid ? { ok: true, user: user! } : { ok: false, status: 401, error: '用户名或密码错误' };
+}
+
+async function registerAccount(
+  body: unknown,
+  userRepo: UserRepository,
+  registrationKey: string,
+): Promise<AccountResult> {
+  const value = body as Record<string, unknown> | null;
+  if (
+    typeof value?.username !== 'string'
+    || typeof value.password !== 'string'
+    || (value.registrationKey !== undefined && typeof value.registrationKey !== 'string')
+  ) return { ok: false, status: 400, error: '注册信息格式错误' };
+  const username = value.username.trim();
+  const password = value.password;
+  if (!username || !password) return { ok: false, status: 400, error: '用户名和密码不能为空' };
+  if (username.length < 2 || username.length > 32) {
+    return { ok: false, status: 400, error: '用户名长度 2-32 字符' };
+  }
+  const passwordError = validatePassword(password);
+  if (passwordError) return { ok: false, status: 400, error: passwordError };
+  const submittedKey = typeof value.registrationKey === 'string' ? value.registrationKey : '';
+  const allowAdditional = Boolean(registrationKey && secureStringEqual(submittedKey, registrationKey));
+  const id = 'u' + Date.now().toString(36) + randomBytes(8).toString('base64url');
+  const result = await userRepo.register({
+    id,
+    username,
+    passwordHash: await hashPassword(password),
+    sessionVersion: 0,
+    createdAt: new Date().toISOString(),
+  }, allowAdditional);
+  if (result === 'closed') {
+    return { ok: false, status: 403, error: registrationKey ? '邀请码错误' : '注册已关闭' };
+  }
+  if (result === 'duplicate') return { ok: false, status: 409, error: '用户名已存在' };
+  const user = await userRepo.findById(id);
+  if (!user) throw new Error('newly registered user missing');
+  return { ok: true, user };
+}
+
+async function changeAccountPassword(
+  body: unknown,
+  user: StoredUser,
+  userRepo: UserRepository,
+  rememberTokenStore: RememberTokenRepository,
+): Promise<AccountResult> {
+  const value = body as Record<string, unknown> | null;
+  if (typeof value?.currentPassword !== 'string' || typeof value.newPassword !== 'string') {
+    return { ok: false, status: 400, error: '当前密码和新密码不能为空' };
+  }
+  const currentPassword = value.currentPassword;
+  const newPassword = value.newPassword;
+  if (!currentPassword || !newPassword) {
+    return { ok: false, status: 400, error: '当前密码和新密码不能为空' };
+  }
+  if (currentPassword.length > 200) {
+    return { ok: false, status: 401, error: '当前密码错误' };
+  }
+  const passwordError = validatePassword(newPassword);
+  if (passwordError) return { ok: false, status: 400, error: passwordError };
+  if (!(await verifyPassword(currentPassword, user.passwordHash))) {
+    return { ok: false, status: 401, error: '当前密码错误' };
+  }
+  if (await verifyPassword(newPassword, user.passwordHash)) {
+    return { ok: false, status: 400, error: '新密码不能与当前密码相同' };
+  }
+
+  const nextUser = { ...user, sessionVersion: user.sessionVersion + 1 };
+  await userRepo.updatePasswordHash(
+    user.id,
+    await hashPassword(newPassword),
+    nextUser.sessionVersion,
+  );
+  await rememberTokenStore.revokeUser(user.id);
+  return { ok: true, user: nextUser };
+}
+
+function nativeRawToken(authorization: string | undefined): string | null {
+  if (!authorization?.startsWith(`Bearer ${NATIVE_TOKEN_PREFIX}`)) return null;
+  return authorization.slice(`Bearer ${NATIVE_TOKEN_PREFIX}`.length) || null;
+}
+
+async function validateNativeUser(
+  authorization: string | undefined,
+  userRepo: UserRepository,
+  rememberTokenStore: RememberTokenRepository,
+): Promise<(SessionValidationResult & { rawToken?: string })> {
+  const rawToken = nativeRawToken(authorization);
+  if (!rawToken) return { ok: false, error: 'unauthenticated' };
+  const credential = await rememberTokenStore.verify(rawToken, 'native');
+  if (credential.status !== 'valid') return { ok: false, error: 'invalidated' };
+  const user = await userRepo.findById(credential.userId);
+  if (!user) return { ok: false, error: 'missing-user' };
+  if (user.sessionVersion !== credential.sessionVersion) return { ok: false, error: 'invalidated' };
+  return { ok: true, user, rawToken };
+}
+
+async function issueNativeToken(
+  store: RememberTokenRepository,
+  user: StoredUser,
+  remember: boolean,
+): Promise<string> {
+  const raw = await store.issue(user.id, user.sessionVersion, {
+    purpose: 'native',
+    lifetimeMs: remember ? NATIVE_PERSISTENT_LIFETIME_MS : NATIVE_EPHEMERAL_LIFETIME_MS,
+  });
+  return NATIVE_TOKEN_PREFIX + raw;
+}
 
 function establishSession(req: FastifyRequest, user: StoredUser): void {
   req.session.regenerate();
@@ -206,103 +336,38 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
   app.post('/api/auth/login', {
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
   }, async (req: FastifyRequest, reply: FastifyReply) => {
-    const body = req.body as Record<string, unknown> | null;
-    if (typeof body?.username !== 'string' || typeof body.password !== 'string') {
-      reply.status(400);
-      return { ok: false, error: '用户名和密码不能为空' };
-    }
-    const username = body.username.trim();
-    const password = body.password;
-    if (!username || !password) {
-      reply.status(400);
-      return { ok: false, error: '用户名和密码不能为空' };
-    }
-    if (username.length > 32 || password.length > 200) {
-      reply.status(401);
-      return { ok: false, error: '用户名或密码错误' };
-    }
-    const user = await userRepo.findByUsername(username);
-    // Always run scrypt to prevent timing-based user enumeration.
-    // When user doesn't exist, verify against a synthetic hash with identical cost.
-    const hash = user?.passwordHash ?? DUMMY_PASSWORD_HASH;
-    const ok = (await verifyPassword(password, hash)) && user !== null;
-    if (!ok) {
-      reply.status(401);
-      return { ok: false, error: '用户名或密码错误' };
-    }
+    const result = await authenticateCredentials(req.body, userRepo);
+    if (!result.ok) return reply.status(result.status).send({ ok: false, error: result.error });
+    const user = result.user;
+    const body = req.body as Record<string, unknown>;
     const existingRememberToken = req.cookies[REMEMBER_COOKIE];
     if (existingRememberToken) await rememberTokenStore.revoke(existingRememberToken);
-    establishSession(req, user!);
+    establishSession(req, user);
     if (body.remember === true) {
       setRememberCookie(
         reply,
-        await rememberTokenStore.issue(user!.id, user!.sessionVersion),
+        await rememberTokenStore.issue(user.id, user.sessionVersion),
         cookieSecure,
       );
     } else {
       clearRememberCookie(reply, cookieSecure);
     }
-    return { ok: true, username: user!.username };
+    return { ok: true, username: user.username };
   });
 
   // POST /api/auth/register
   app.post('/api/auth/register', {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
   }, async (req: FastifyRequest, reply: FastifyReply) => {
-    const body = req.body as Record<string, unknown> | null;
-    if (
-      typeof body?.username !== 'string' ||
-      typeof body.password !== 'string' ||
-      (body.registrationKey !== undefined && typeof body.registrationKey !== 'string')
-    ) {
-      reply.status(400);
-      return { ok: false, error: '注册信息格式错误' };
-    }
-    const username = body.username.trim();
-    const password = body.password;
-    const submittedRegistrationKey = body.registrationKey ?? '';
-    if (!username || !password) {
-      reply.status(400);
-      return { ok: false, error: '用户名和密码不能为空' };
-    }
-    if (username.length < 2 || username.length > 32) {
-      reply.status(400);
-      return { ok: false, error: '用户名长度 2-32 字符' };
-    }
-    const passwordError = validatePassword(password);
-    if (passwordError) {
-      reply.status(400);
-      return { ok: false, error: passwordError };
-    }
-    const additionalUsersAllowed = Boolean(
-      registrationKey && secureStringEqual(submittedRegistrationKey, registrationKey),
-    );
-    const id = 'u' + Date.now().toString(36) + randomBytes(8).toString('base64url');
-    const result = await userRepo.register(
-      {
-        id,
-        username,
-        passwordHash: await hashPassword(password),
-        sessionVersion: 0,
-        createdAt: new Date().toISOString(),
-      },
-      additionalUsersAllowed,
-    );
-    if (result === 'closed') {
-      reply.status(403);
-      return { ok: false, error: registrationKey ? '邀请码错误' : '注册已关闭' };
-    }
-    if (result === 'duplicate') {
-      reply.status(409);
-      return { ok: false, error: '用户名已存在' };
-    }
-    const createdUser = await userRepo.findById(id);
-    if (!createdUser) throw new Error('newly registered user missing');
+    const result = await registerAccount(req.body, userRepo, registrationKey);
+    if (!result.ok) return reply.status(result.status).send({ ok: false, error: result.error });
+    const createdUser = result.user;
+    const body = req.body as Record<string, unknown>;
     establishSession(req, createdUser);
     if (body.remember === true) {
-      setRememberCookie(reply, await rememberTokenStore.issue(id, 0), cookieSecure);
+      setRememberCookie(reply, await rememberTokenStore.issue(createdUser.id, 0), cookieSecure);
     }
-    return { ok: true, username };
+    return { ok: true, username: createdUser.username };
   });
 
   app.post('/api/auth/change-password', {
@@ -317,51 +382,13 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
       return { ok: false, error: session.error === 'unauthenticated' ? '请先登录' : '会话已失效，请重新登录' };
     }
 
-    const body = req.body as Record<string, unknown> | null;
-    if (typeof body?.currentPassword !== 'string' || typeof body.newPassword !== 'string') {
-      reply.status(400);
-      return { ok: false, error: '当前密码和新密码不能为空' };
-    }
-    const currentPassword = body.currentPassword;
-    const newPassword = body.newPassword;
-    if (!currentPassword || !newPassword) {
-      reply.status(400);
-      return { ok: false, error: '当前密码和新密码不能为空' };
-    }
-
-    if (currentPassword.length > 200) {
-      reply.status(401);
-      return { ok: false, error: '当前密码错误' };
-    }
-
-    const passwordError = validatePassword(newPassword);
-    if (passwordError) {
-      reply.status(400);
-      return { ok: false, error: passwordError };
-    }
-
-    if (!(await verifyPassword(currentPassword, session.user.passwordHash))) {
-      reply.status(401);
-      return { ok: false, error: '当前密码错误' };
-    }
-
-    if (await verifyPassword(newPassword, session.user.passwordHash)) {
-      reply.status(400);
-      return { ok: false, error: '新密码不能与当前密码相同' };
-    }
-
-    const nextSessionVersion = session.user.sessionVersion + 1;
-    await userRepo.updatePasswordHash(
-      session.user.id,
-      await hashPassword(newPassword),
-      nextSessionVersion,
-    );
-    await rememberTokenStore.revokeUser(session.user.id);
-    establishSession(req, { ...session.user, sessionVersion: nextSessionVersion });
+    const changed = await changeAccountPassword(req.body, session.user, userRepo, rememberTokenStore);
+    if (!changed.ok) return reply.status(changed.status).send({ ok: false, error: changed.error });
+    establishSession(req, changed.user);
     if (hadRememberToken) {
       setRememberCookie(
         reply,
-        await rememberTokenStore.issue(session.user.id, nextSessionVersion),
+        await rememberTokenStore.issue(changed.user.id, changed.user.sessionVersion),
         cookieSecure,
       );
     } else {
@@ -384,6 +411,58 @@ export async function authRoutes(app: FastifyInstance, opts: AuthRouteOpts) {
     const session = await authenticateBrowser(req, reply, userRepo, rememberTokenStore, cookieSecure);
     if (!session.ok) return { ok: false };
     return { ok: true, id: session.user.id, username: session.user.username };
+  });
+
+  app.post('/api/auth/native/login', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const result = await authenticateCredentials(req.body, userRepo);
+    if (!result.ok) return reply.status(result.status).send({ ok: false, error: result.error });
+    const remember = (req.body as Record<string, unknown>).remember === true;
+    return {
+      ok: true,
+      user: { id: result.user.id, username: result.user.username },
+      token: await issueNativeToken(rememberTokenStore, result.user, remember),
+    };
+  });
+
+  app.post('/api/auth/native/register', {
+    config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
+  }, async (req, reply) => {
+    const result = await registerAccount(req.body, userRepo, registrationKey);
+    if (!result.ok) return reply.status(result.status).send({ ok: false, error: result.error });
+    const remember = (req.body as Record<string, unknown>).remember === true;
+    return {
+      ok: true,
+      user: { id: result.user.id, username: result.user.username },
+      token: await issueNativeToken(rememberTokenStore, result.user, remember),
+    };
+  });
+
+  app.get('/api/auth/native/me', async (req, reply) => {
+    const result = await validateNativeUser(req.headers.authorization, userRepo, rememberTokenStore);
+    if (!result.ok) return reply.status(401).send({ ok: false });
+    return { ok: true, user: { id: result.user.id, username: result.user.username } };
+  });
+
+  app.post('/api/auth/native/logout', async (req) => {
+    const raw = nativeRawToken(req.headers.authorization);
+    if (raw) await rememberTokenStore.revoke(raw);
+    return { ok: true };
+  });
+
+  app.post('/api/auth/native/change-password', {
+    config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
+  }, async (req, reply) => {
+    const auth = await validateNativeUser(req.headers.authorization, userRepo, rememberTokenStore);
+    if (!auth.ok) {
+      reply.header('X-Session-Expired', '1');
+      return reply.status(401).send({ ok: false, error: '会话已失效，请重新登录' });
+    }
+    const changed = await changeAccountPassword(req.body, auth.user, userRepo, rememberTokenStore);
+    if (!changed.ok) return reply.status(changed.status).send({ ok: false, error: changed.error });
+    const remember = (req.body as Record<string, unknown>).remember === true;
+    return { ok: true, token: await issueNativeToken(rememberTokenStore, changed.user, remember) };
   });
 }
 
@@ -442,9 +521,10 @@ export async function resolveMcpPrincipal(
 /** 全局 onRequest hook：保护所有 /api/* （除了 /api/auth/*）。
  *
  *  认证优先级：
- *  1. env MCP_API_KEYS（多用户）或 MCP_API_KEY（单用户）
- *  2. 动态 key 文件（用户在 UI 里生成）
- *  3. Session cookie（浏览器登录态）
+ *  1. 原生设备 token（完整用户权限）
+ *  2. env MCP_API_KEYS（多用户）或 MCP_API_KEY（单用户）
+ *  3. 动态 key 文件（用户在 UI 里生成）
+ *  4. Session cookie（浏览器登录态）
  *
  *  API key 认证只能访问 MCP 工具所需的白名单端点；
  *  禁止直接访问全量 REST API，防止 AI 绕过 MCP 的保护层
@@ -453,10 +533,25 @@ export async function resolveMcpPrincipal(
 export function authHook(
   userRepo: UserRepository,
   keyStore: McpKeyStore | null,
+  rememberTokenStore: RememberTokenRepository,
 ) {
   return async function (req: FastifyRequest, reply: FastifyReply) {
     if (req.url.startsWith('/api/auth/')) return;
     if (!req.url.startsWith('/api/')) return;
+
+    const nativeToken = nativeRawToken(req.headers.authorization);
+    const nativeClient = req.headers['x-todograph-client'] === 'native';
+    if (nativeToken || nativeClient) {
+      if (!nativeToken) {
+        return reply.status(401).send({ ok: false, error: '请先登录' });
+      }
+      const native = await validateNativeUser(req.headers.authorization, userRepo, rememberTokenStore);
+      if (!native.ok) {
+        return reply.status(401).send({ ok: false, error: '会话已失效，请重新登录' });
+      }
+      req.authUserId = native.user.id;
+      return;
+    }
 
     // API key 优先：env 配置或动态 key 文件
     const mcpPrincipal = await resolveMcpPrincipal(req.headers.authorization, keyStore);

@@ -7,6 +7,9 @@ import { cn } from '@/lib/utils';
 
 export const ToastProvider = ToastPrimitives.Provider;
 
+export const TOAST_VIEWPORT_CLASSNAME =
+  'fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom))] left-1/2 z-[100] flex max-h-screen w-[calc(100%-1rem)] max-w-sm -translate-x-1/2 flex-col-reverse gap-2 p-0 sm:bottom-4 sm:left-auto sm:right-4 sm:w-full sm:max-w-[380px] sm:translate-x-0 sm:p-0';
+
 export const ToastViewport = React.forwardRef<
   React.ElementRef<typeof ToastPrimitives.Viewport>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitives.Viewport>
@@ -14,7 +17,7 @@ export const ToastViewport = React.forwardRef<
   <ToastPrimitives.Viewport
     ref={ref}
     className={cn(
-      'fixed bottom-0 right-0 z-[100] flex max-h-screen w-full flex-col-reverse gap-2 p-4 sm:bottom-4 sm:right-4 sm:max-w-[380px]',
+      TOAST_VIEWPORT_CLASSNAME,
       className,
     )}
     {...props}
@@ -22,8 +25,11 @@ export const ToastViewport = React.forwardRef<
 ));
 ToastViewport.displayName = 'ToastViewport';
 
+export const TOAST_BASE_CLASSNAME =
+  'group pointer-events-auto relative flex w-full items-center justify-between gap-2 overflow-hidden rounded-xl border p-3 pr-8 shadow-lg backdrop-blur-xl transition-all';
+
 const toastVariants = cva(
-  'group pointer-events-auto relative flex w-full items-center justify-between space-x-2 overflow-hidden rounded-md border p-4 pr-6 shadow-lg transition-all',
+  TOAST_BASE_CLASSNAME,
   {
     variants: {
       variant: {

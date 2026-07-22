@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">TodoGraph</string>
+    <string name="title_activity_main">TodoGraph</string>
+    <string name="package_name">com.todograph.app</string>
+    <string name="custom_url_scheme">com.todograph.app</string>
+</resources>

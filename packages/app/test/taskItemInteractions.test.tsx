@@ -182,9 +182,10 @@ describe('task list row interactions', () => {
     const firstMove = touchMove(rowTouchListeners, 26, 20);
     const movedGhost = renderer.root.findByProps({ className: 'fixed pointer-events-none z-50' });
     const movedGhostLeft = movedGhost.props.style.left;
+    const movedGhostWidth = movedGhost.props.style.width;
     const draggingClassName = renderer.root
       .findAllByProps({ 'data-task-id': task.id })
-      .find((item) => item.props.className.includes('opacity-30'))?.props.className;
+      .find((item) => item.props.className.includes('opacity-25'))?.props.className;
 
     touchEnd(rowTouchListeners);
     expect(renderer.root.findAllByProps({ className: 'fixed pointer-events-none z-50' })).toHaveLength(0);
@@ -194,9 +195,10 @@ describe('task list row interactions', () => {
     touchEnd(rowTouchListeners);
     renderer.unmount();
 
-    expect(draggingClassName).toContain('scale-[0.98]');
+    expect(draggingClassName).toContain('lg:scale-[0.98]');
     expect(firstMove.preventDefault).toHaveBeenCalledOnce();
-    expect(movedGhostLeft).toBe(6);
+    expect(movedGhostLeft).toBe(0);
+    expect(movedGhostWidth).toBe('100vw');
   });
 
   it('cancels pull-to-create when a long press becomes task dragging', () => {
@@ -289,7 +291,7 @@ describe('task list row interactions', () => {
     touchMove(rowTouchListeners, 340, 92);
 
     const ghost = renderer.root.findByProps({ className: 'fixed pointer-events-none z-50' });
-    expect(ghost.props.style).toMatchObject({ left: 40, top: 70, width: 320 });
+    expect(ghost.props.style).toMatchObject({ left: 0, top: 70, width: '100vw' });
     expect(requestFrame).not.toHaveBeenCalled();
     renderer.unmount();
   });
@@ -873,6 +875,28 @@ describe('task list row interactions', () => {
     renderer.unmount();
   });
 
+  it('GEST-010 keeps the first long-press session alive when background refresh replaces the task object', () => {
+    vi.useFakeTimers();
+    const rowTouchListeners = new Map<string, TouchListener>();
+    const onDragStart = vi.fn();
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(<TaskItem task={task} onDragStart={onDragStart} />, {
+        createNodeMock: (element) => element.type === 'li'
+          ? taskRowNode(rowTouchListeners, { left: 0, top: 0, bottom: 44, width: 320, height: 44 })
+          : null,
+      });
+    });
+
+    touchStart(rowTouchListeners, 50, 20);
+    act(() => renderer.update(<TaskItem task={{ ...task }} onDragStart={onDragStart} />));
+    act(() => vi.advanceTimersByTime(LIST_LONG_PRESS_MS));
+
+    expect(onDragStart).toHaveBeenCalledOnce();
+    touchEnd(rowTouchListeners);
+    renderer.unmount();
+  });
+
   it('treats movement before the long-press deadline as scrolling', () => {
     vi.useFakeTimers();
     const rowTouchListeners = new Map<string, TouchListener>();
@@ -1033,7 +1057,7 @@ describe('task list row interactions', () => {
     renderer.unmount();
   });
 
-  it('requires a deliberate full swipe and includes the task name in undo feedback', () => {
+  it('arbitrates direction before locking scroll and completes with an accessible right swipe', () => {
     vi.useFakeTimers();
     const rowTouchListeners = new Map<string, TouchListener>();
     let renderer!: ReturnType<typeof create>;
@@ -1046,16 +1070,19 @@ describe('task list row interactions', () => {
     });
 
     touchStart(rowTouchListeners, 0, 0);
-    touchMove(rowTouchListeners, 75, 0);
+    touchMove(rowTouchListeners, 55, 1);
     touchEnd(rowTouchListeners);
     act(() => vi.advanceTimersByTime(221));
     expect(useTaskStore.getState().nodes[0]?.status).toBe('todo');
 
     touchStart(rowTouchListeners, 0, 0);
-    touchMove(rowTouchListeners, 120, 0);
+    const undecidedMove = touchMove(rowTouchListeners, 9, 1);
+    const committedMove = touchMove(rowTouchListeners, 78, 2);
     touchEnd(rowTouchListeners);
     act(() => vi.advanceTimersByTime(221));
 
+    expect(undecidedMove.preventDefault).not.toHaveBeenCalled();
+    expect(committedMove.preventDefault).toHaveBeenCalledOnce();
     expect(useTaskStore.getState().nodes[0]?.status).toBe('done');
     expect(useToastStore.getState().toasts.at(-1)).toMatchObject({
       title: '已完成',
@@ -1063,6 +1090,33 @@ describe('task list row interactions', () => {
     });
     act(() => useTaskStore.getState().undo());
     expect(useTaskStore.getState().nodes[0]?.status).toBe('todo');
+    renderer.unmount();
+  });
+
+  it('deletes with a deliberate left swipe and offers undo feedback', () => {
+    vi.useFakeTimers();
+    const rowTouchListeners = new Map<string, TouchListener>();
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(<TaskItem task={task} />, {
+        createNodeMock: (element) => element.type === 'li'
+          ? taskRowNode(rowTouchListeners, { left: 0, top: 0, bottom: 44, width: 320, height: 44 })
+          : null,
+      });
+    });
+
+    touchStart(rowTouchListeners, 160, 0);
+    touchMove(rowTouchListeners, 82, 2);
+    touchEnd(rowTouchListeners);
+    act(() => vi.advanceTimersByTime(221));
+
+    expect(useTaskStore.getState().nodes).toHaveLength(0);
+    expect(useToastStore.getState().toasts.at(-1)).toMatchObject({
+      title: '已删除',
+      description: task.title,
+    });
+    act(() => useTaskStore.getState().undo());
+    expect(useTaskStore.getState().nodes[0]?.id).toBe(task.id);
     renderer.unmount();
   });
 

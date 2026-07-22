@@ -49,7 +49,7 @@
 
 ## 快速开始
 
-需要 Node.js ≥ 20 和 pnpm。
+需要 Node.js ≥ 22 和 pnpm。
 
 ```bash
 git clone https://github.com/UriPomer/TodoGraph.git
@@ -70,6 +70,17 @@ docker compose up -d  # 监听 127.0.0.1:3000，数据持久化在 ./data
 打包 Windows 便携版 EXE：双击 `build.bat`，产物在 `Build/`，拷到任何 Win10/11 机器双击即用。
 
 Electron 开发模式：`pnpm dev:electron`
+
+原生移动壳使用 Capacitor，并连接已部署的 HTTPS 服务：
+
+```bash
+# PowerShell 示例；构建会拒绝 HTTP、路径或缺失的 origin
+$env:VITE_API_BASE='https://todo.example.com'
+pnpm --filter @todograph/app build:mobile
+pnpm --filter @todograph/app mobile:android
+```
+
+Android 工程可在 Windows/Android Studio 构建，Capacitor 8 的原生编译需要 JDK 21；iOS 工程需在 macOS/Xcode 中编译和签名。浏览器 cookie 与原生安全 token 相互隔离，持久原生会话分别保存在 Android Keystore 和 iOS Keychain。
 
 ---
 
@@ -133,6 +144,7 @@ packages/
 | `pnpm test` | 构建依赖并运行所有包测试 |
 | `pnpm typecheck` | 运行所有包 TypeScript 检查 |
 | `pnpm package` | 打 Windows portable exe |
+| `pnpm --filter @todograph/app build:mobile` | 用 `VITE_API_BASE` 构建并同步 iOS/Android |
 
 改 `packages/shared/src/schema.ts` 后先 `pnpm --filter @todograph/shared build`，前端/后端才能拿到新类型。
 

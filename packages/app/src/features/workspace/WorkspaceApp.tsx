@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { Download, ListChecks, LogOut, MoreHorizontal, Network, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Download, ListChecks, LogOut, MoreHorizontal, Network, Smartphone, Sparkles } from 'lucide-react';
 import { api } from '@/api/client';
 import { DialogContainer } from '@/components/ui/dialog-container';
 import { Toaster } from '@/components/ui/toaster';
@@ -14,8 +14,18 @@ import { useDerived } from '@/hooks/useRecommendation';
 import { cn } from '@/lib/utils';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
+import { useDialogStore } from '@/components/ui/dialog-store';
+import { isNativeRuntime } from '@/platform/nativeSession';
+import { isHapticsEnabled, setHapticsEnabled } from '@/platform/nativeInteractions';
+import { useKeyboardVisible, useNativeBackButton, useNativeSystemBars } from '@/platform/useNativeShell';
 
 type MobileTab = 'list' | 'graph' | 'more';
+
+export function takePreviousMobileTab(history: MobileTab[], graphEnabled: boolean): MobileTab | undefined {
+  let previous = history.pop();
+  while (previous === 'graph' && !graphEnabled) previous = history.pop();
+  return previous;
+}
 
 export function DesktopHeaderShell({ children }: { children: ReactNode }) {
   return <header data-desktop-header="true" className="hidden h-12 shrink-0 items-center gap-4 border-b border-border bg-card px-4 text-foreground lg:flex">{children}</header>;
@@ -66,12 +76,19 @@ export function MobileMoreHeader({ username }: { username: string }) {
 }
 
 export function MobileMorePanel({ onLogout, username }: { onLogout: () => void; username?: string }) {
-  return <div data-mobile-surface="dark" className="h-full overflow-auto bg-[#151317]/60 px-5 text-[#e5e7eb] backdrop-blur-sm"><div className="mx-auto max-w-lg divide-y divide-white/10"><SecurityDialog open embedded username={username} /><McpSetupDialog open embedded /><button type="button" onClick={onLogout} className="flex w-full items-center gap-2 py-6 text-sm text-red-300 transition-colors active:text-red-200"><LogOut className="h-4 w-4" />退出登录</button></div></div>;
+  const [haptics, setHaptics] = useState(isHapticsEnabled);
+  const toggleHaptics = () => {
+    const next = !haptics;
+    setHaptics(next);
+    setHapticsEnabled(next);
+  };
+  return <div data-mobile-surface="dark" className="h-full overflow-auto bg-[#151317]/60 px-5 text-[#e5e7eb] backdrop-blur-sm"><div className="mx-auto max-w-lg divide-y divide-white/10"><SecurityDialog open embedded username={username} /><McpSetupDialog open embedded />{isNativeRuntime() && <section className="py-5"><button type="button" role="switch" aria-checked={haptics} onClick={toggleHaptics} className="flex min-h-11 w-full items-center gap-3 text-left"><Smartphone className="h-4 w-4 text-muted-foreground" /><span className="flex-1 text-sm">触觉反馈</span><span className={cn('relative h-6 w-11 rounded-full transition-colors', haptics ? 'bg-[hsl(var(--primary))]' : 'bg-white/15')}><span className={cn('absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow-sm transition-transform', haptics ? 'translate-x-6' : 'translate-x-1')} /></span></button></section>}<button type="button" onClick={onLogout} className="flex w-full items-center gap-2 py-6 text-sm text-red-300 transition-colors active:text-red-200"><LogOut className="h-4 w-4" />退出登录</button></div></div>;
 }
 
 const navItems = [['list', ListChecks, '任务'], ['graph', Network, '依赖图'], ['more', MoreHorizontal, '更多']] as const;
-export function MobileBottomNav({ tab, onTab, graphEnabled = true }: { tab: MobileTab; onTab: (tab: MobileTab) => void; graphEnabled?: boolean }) {
-  return <nav data-mobile-chrome="dark" className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-[#312d35] bg-[#17151a]/95 shadow-[0_-10px_30px_rgba(0,0,0,0.28)] backdrop-blur lg:hidden" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>{navItems.map(([value, Icon, label]) => { const disabled = value === 'graph' && !graphEnabled; return <button key={value} type="button" disabled={disabled} onClick={() => !disabled && onTab(value)} className={cn('flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px]', disabled ? 'text-[#5f5964]' : tab === value ? 'text-[#20d1aa]' : 'text-[#8b8491]')} aria-label={label}><Icon className="h-5 w-5" />{label}</button>; })}</nav>;
+export function MobileBottomNav({ tab, onTab, graphEnabled = true, hidden = false }: { tab: MobileTab; onTab: (tab: MobileTab) => void; graphEnabled?: boolean; hidden?: boolean }) {
+  if (hidden) return null;
+  return <nav data-mobile-chrome="dark" className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-[#312d35] bg-[#17151a]/95 shadow-[0_-10px_30px_rgba(0,0,0,0.28)] backdrop-blur lg:hidden" style={{ paddingBottom: 'var(--safe-area-inset-bottom, env(safe-area-inset-bottom))' }}>{navItems.map(([value, Icon, label]) => { const disabled = value === 'graph' && !graphEnabled; return <button key={value} type="button" disabled={disabled} onClick={() => !disabled && onTab(value)} className={cn('flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px]', disabled ? 'text-[#5f5964]' : tab === value ? 'text-[#20d1aa]' : 'text-[#8b8491]')} aria-label={label}><Icon className="h-5 w-5" />{label}</button>; })}</nav>;
 }
 
 function useWorkspaceEffects() {
@@ -149,10 +166,10 @@ function useDesktopLayout() {
   return isDesktop;
 }
 
-export function WorkspaceContent({ isDesktop, tab, onLogout, graphEnabled = true, username }: { isDesktop: boolean; tab: MobileTab; onLogout: () => void; graphEnabled?: boolean; username?: string }) {
+export function WorkspaceContent({ isDesktop, tab, onLogout, graphEnabled = true, username, keyboardVisible = false }: { isDesktop: boolean; tab: MobileTab; onLogout: () => void; graphEnabled?: boolean; username?: string; keyboardVisible?: boolean }) {
   const visibleTab = !graphEnabled && tab === 'graph' ? 'list' : tab;
   if (isDesktop) return <div className="min-h-0 flex-1"><div key={visibleTab} className="workspace-mode-enter h-full">{visibleTab === 'graph' ? <SplitPane storageKey="todograph.splitLeftWidth" defaultLeftWidth={360} minLeft={260} maxLeft={720} left={<ListView />} right={<GraphView viewportScope="desktop" />} /> : <ListView />}</div></div>;
-  return <main data-mobile-tab={visibleTab} className="mobile-frosted-bg min-h-0 flex-1" style={{ paddingBottom: 'calc(3rem + env(safe-area-inset-bottom))' }}><div key={visibleTab} className="workspace-mode-enter h-full">{visibleTab === 'list' && <div className="h-full overflow-auto"><ListView /></div>}{visibleTab === 'graph' && <div className="h-full"><GraphView viewportScope="mobile" /></div>}{visibleTab === 'more' && <MobileMorePanel onLogout={onLogout} username={username} />}</div></main>;
+  return <main data-mobile-tab={visibleTab} className="mobile-frosted-bg min-h-0 flex-1" style={{ paddingBottom: keyboardVisible ? 0 : 'calc(3rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)))' }}><div key={visibleTab} className="workspace-mode-enter h-full">{visibleTab === 'list' && <div className="h-full overflow-auto"><ListView /></div>}{visibleTab === 'graph' && <div className="h-full"><GraphView viewportScope="mobile" /></div>}{visibleTab === 'more' && <MobileMorePanel onLogout={onLogout} username={username} />}</div></main>;
 }
 
 function LoadingState() {
@@ -168,20 +185,42 @@ export default function WorkspaceApp({ user, logout }: {
   const loaded = useWorkspaceStore((state) => state.loaded);
   const meta = useWorkspaceStore((state) => state.meta);
   const [tab, setTab] = useState<MobileTab>('list');
+  const tabHistory = useRef<MobileTab[]>([]);
   const [securityOpen, setSecurityOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
   const isDesktop = useDesktopLayout();
+  const keyboardVisible = useKeyboardVisible();
   const graphEnabled = meta?.pages.find((page) => page.id === meta.activePageId)?.kind !== 'hierarchy';
   useWorkspaceEffects();
+  useNativeSystemBars();
+  const changeTab = useCallback((next: MobileTab) => {
+    setTab((current) => {
+      if (current === next) return current;
+      tabHistory.current.push(current);
+      return next;
+    });
+  }, []);
+  useNativeBackButton(() => {
+    if (securityOpen) { setSecurityOpen(false); return true; }
+    if (mcpOpen) { setMcpOpen(false); return true; }
+    if (useDialogStore.getState().dismissCurrent()) return true;
+    const previous = takePreviousMobileTab(tabHistory.current, graphEnabled);
+    if (previous) { setTab(previous); return true; }
+    if (tab !== 'list') { setTab('list'); return true; }
+    return false;
+  });
   useEffect(() => {
     if (workspaceUserId !== user.id) void bootstrap(user.id);
   }, [bootstrap, user.id, workspaceUserId]);
   useEffect(() => {
-    if (!graphEnabled && tab === 'graph') setTab('list');
+    if (!graphEnabled) {
+      tabHistory.current = tabHistory.current.filter((entry) => entry !== 'graph');
+      if (tab === 'graph') setTab('list');
+    }
   }, [graphEnabled, tab]);
   const logoutSafely = async () => {
     try { await useTaskStore.getState().flush(); await logout(); } catch { /* save error is already shown */ }
   };
   const ready = loaded && workspaceUserId === user.id;
-  return <><div className="flex h-full flex-col"><Header onTab={setTab} user={user} onLogout={() => void logoutSafely()} onOpenSecurity={() => setSecurityOpen(true)} onOpenMcp={() => setMcpOpen(true)} /><div className={tab === 'more' ? 'hidden lg:block' : undefined}><PageBar mode={tab === 'graph' ? 'graph' : 'list'} onModeChange={setTab} /></div>{tab === 'more' && <MobileMoreHeader username={user.username} />}{ready ? <WorkspaceContent isDesktop={isDesktop} tab={tab} graphEnabled={graphEnabled} username={user.username} onLogout={() => void logoutSafely()} /> : <LoadingState />}<Toaster /><DialogContainer /><SecurityDialog open={securityOpen} username={user.username} onClose={() => setSecurityOpen(false)} /><McpSetupDialog open={mcpOpen} onClose={() => setMcpOpen(false)} /></div><MobileBottomNav tab={tab} graphEnabled={graphEnabled} onTab={setTab} /></>;
+  return <><div className="flex h-full flex-col"><Header onTab={changeTab} user={user} onLogout={() => void logoutSafely()} onOpenSecurity={() => setSecurityOpen(true)} onOpenMcp={() => setMcpOpen(true)} /><div className={tab === 'more' ? 'hidden lg:block' : undefined}><PageBar mode={tab === 'graph' ? 'graph' : 'list'} onModeChange={changeTab} /></div>{tab === 'more' && <MobileMoreHeader username={user.username} />}{ready ? <WorkspaceContent isDesktop={isDesktop} tab={tab} graphEnabled={graphEnabled} username={user.username} keyboardVisible={keyboardVisible} onLogout={() => void logoutSafely()} /> : <LoadingState />}<Toaster /><DialogContainer /><SecurityDialog open={securityOpen} username={user.username} onClose={() => setSecurityOpen(false)} /><McpSetupDialog open={mcpOpen} onClose={() => setMcpOpen(false)} /></div><MobileBottomNav tab={tab} graphEnabled={graphEnabled} onTab={changeTab} hidden={keyboardVisible} /></>;
 }

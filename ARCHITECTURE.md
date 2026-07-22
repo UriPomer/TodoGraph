@@ -1,6 +1,6 @@
 # TodoGraph Architecture
 
-TodoGraph is a TypeScript/pnpm monorepo delivered as a browser application, a portable Electron application, an HTTP server, and an MCP server. The canonical domain schemas live in `@todograph/shared`; DAG algorithms remain transport- and storage-independent in `@todograph/core`.
+TodoGraph is a TypeScript/pnpm monorepo delivered as a browser application, portable Electron application, Capacitor mobile application, HTTP server, and MCP server. The canonical domain schemas live in `@todograph/shared`; DAG algorithms remain transport- and storage-independent in `@todograph/core`.
 
 Product behavior is specified in [`docs/behavior/`](./docs/behavior/). Architecture describes ownership and boundaries; behavior documents define user-visible transitions and gesture priority.
 
@@ -14,12 +14,15 @@ Mode and view are independent concepts. Checklist mode can only render the list 
 flowchart LR
   Browser[Browser entry] --> React[React UI]
   Electron[Electron main/preload] --> React
+  Mobile[Capacitor iOS / Android] --> React
+  Mobile --> Native[Keyboard, system bars,<br/>haptics and secure session]
   Electron --> Host[desktop-host]
   MCP[MCP stdio entry] --> MCPDispatch[Registered-tool lookup<br/>and input validation]
   MCPDispatch --> McpTools[MCP tools]
   MCPDispatch -->|tool absent| MCPError[MCP tool-not-found result]
 
   React -->|commands only| Zustand[Zustand stores\nmutation boundary]
+  React -->|HTTPS + native bearer| HTTP
   Zustand --> PageCache[Session page-data LRU\nread-through switch cache]
   PageCache --> Zustand
   Zustand --> Draft[Durable local draft]
@@ -101,6 +104,14 @@ When a page version conflicts, the server version remains authoritative for the 
 
 Page switching follows `flush current page -> remember bounded session snapshot -> paint cached target when present -> refresh target from server -> poll active version`. The cache is cleared on session reset and never replaces server version checks; it only removes the blank/network wait when revisiting a page.
 
+## Mobile runtime boundary
+
+The Capacitor bundle contains the same Vite application but must be built with one explicit public HTTPS server origin. Browser and Electron authentication continue to use encrypted, `SameSite=Strict` cookies. Native login/register endpoints issue a separate opaque bearer token whose hash and purpose are stored server-side. A native token is never accepted as an MCP key or browser remember token.
+
+Persistent native tokens live only in the platform secure-session plugin: Android encrypts the value with an Android Keystore AES-GCM key and disables application backup; iOS stores it in Keychain with `AfterFirstUnlockThisDeviceOnly`. Non-persistent native sessions remain in JavaScript memory. Logout and password changes revoke server-side tokens; password change returns one replacement token for the current native session.
+
+Native interaction calls are owned by `src/platform/`, not task components. They are optional enhancements: failure of haptics, keyboard, system-bar, or secure-storage bridges must not corrupt task state. The behavior contract is [`docs/behavior/native-platform.md`](./docs/behavior/native-platform.md).
+
 ## Package ownership
 
 | Package | Ownership |
@@ -108,7 +119,7 @@ Page switching follows `flush current page -> remember bounded session snapshot 
 | `@todograph/shared` | Canonical schemas, hierarchy validation, geometry and limits |
 | `@todograph/core` | Pure DAG and recommendation algorithms |
 | `@todograph/server` | Authentication, HTTP validation/orchestration, repositories |
-| `@todograph/app` | React UI, Electron shell, Zustand mutation and draft lifecycle |
+| `@todograph/app` | React UI, Electron/Capacitor shells, Zustand mutation and draft lifecycle |
 | `@todograph/desktop-host` | Loopback Fastify lifecycle and Electron session-secret ownership |
 | `@todograph/mcp` | MCP transport and TodoGraph tool orchestration |
 

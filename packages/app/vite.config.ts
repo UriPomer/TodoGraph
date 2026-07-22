@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 
+process.env.VITE_API_BASE ??= '';
+
 /**
  * 浏览器模式（`pnpm --filter @todograph/app dev`）下用此配置。
  * Electron 模式使用 electron.vite.config.ts。
