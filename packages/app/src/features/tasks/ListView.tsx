@@ -11,7 +11,7 @@ import { CrossPageReady, selectCrossPageReadyTasks } from './CrossPageReady';
 import { TaskInput } from './TaskInput';
 import { TaskItem, type TaskDragPoint, type TaskDragStart } from './TaskItem';
 import { buildTaskListModel, type DepInfo, type FlatItem } from './listModel';
-import { dragAutoScrollDelta, resolveListDropIntent, type ListDropIntent } from './listDrag';
+import { applyDragAutoScroll, dragAutoScrollDelta, resolveListDropIntent, type ListDropIntent } from './listDrag';
 type DragState =
   | { taskId: string; pointerId: number; pointerType: string; width: number; offsetX: number; offsetY: number; startX: number; startY: number; active: false }
   | { taskId: string; pointerId: number; pointerType: string; width: number; offsetX: number; offsetY: number; startX: number; startY: number; active: true; x: number; y: number; intent: ListDropIntent }
@@ -184,7 +184,7 @@ export function ListView() {
     if (!current?.active || !point || !scroller) return;
     const delta = dragAutoScrollDelta(point.clientY, scroller.getBoundingClientRect());
     if (!delta) return;
-    scroller.scrollTop += delta;
+    if (!applyDragAutoScroll(scroller, delta)) return;
     updateDrag({
       ...current,
       x: point.clientX,

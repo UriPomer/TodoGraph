@@ -173,7 +173,8 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
   const [dragId, setDragId] = useState<string | null>(null);
   const [isSwitching, setIsSwitching] = useState(false);
   const switchingRef = useRef(false);
-  const lastGraphPageIdRef = useRef<string | null>(null);
+  const lastWorkspacePageIdRef = useRef<string | null>(null);
+  const lastWorkspaceModeRef = useRef<'list' | 'graph'>('graph');
 
   const pages = useMemo(
     () => [...(meta?.pages ?? [])]
@@ -182,13 +183,14 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
     [meta],
   );
   const systemPage = meta?.pages.find((page) => page.id === SYSTEM_HIERARCHY_PAGE_ID);
-  const isListMode = mode ? mode === 'list' : meta?.activePageId === SYSTEM_HIERARCHY_PAGE_ID;
+  const isListMode = meta?.activePageId === SYSTEM_HIERARCHY_PAGE_ID;
 
   useEffect(() => {
     if (meta?.activePageId && meta.activePageId !== SYSTEM_HIERARCHY_PAGE_ID) {
-      lastGraphPageIdRef.current = meta.activePageId;
+      lastWorkspacePageIdRef.current = meta.activePageId;
+      if (mode) lastWorkspaceModeRef.current = mode;
     }
-  }, [meta?.activePageId]);
+  }, [meta?.activePageId, mode]);
 
   const switchModePage = useCallback(async (pageId: string, nextMode?: 'list' | 'graph') => {
     if (switchingRef.current) return;
@@ -207,15 +209,17 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
 
   const handleToggleMode = useCallback(async () => {
     if (!meta || !systemPage) return;
-    if (!isListMode) {
+    const isHierarchyPage = meta.activePageId === SYSTEM_HIERARCHY_PAGE_ID;
+    if (!isHierarchyPage) {
+      if (mode) lastWorkspaceModeRef.current = mode;
       await switchModePage(systemPage.id, 'list');
       return;
     }
-    const target = pages.find((page) => page.id === lastGraphPageIdRef.current) ?? pages[0];
+    const target = pages.find((page) => page.id === lastWorkspacePageIdRef.current) ?? pages[0];
     if (target) {
-      await switchModePage(target.id, 'graph');
+      await switchModePage(target.id, lastWorkspaceModeRef.current);
     }
-  }, [isListMode, meta, pages, switchModePage, systemPage]);
+  }, [meta, mode, pages, switchModePage, systemPage]);
 
   const handleDragStart = useCallback((e: React.DragEvent, id: string) => {
     setDragId(id);

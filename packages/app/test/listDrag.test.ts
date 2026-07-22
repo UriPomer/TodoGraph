@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '@todograph/shared';
-import { dragAutoScrollDelta, resolveListDropIntent } from '../src/features/tasks/listDrag';
+import { applyDragAutoScroll, dragAutoScrollDelta, resolveListDropIntent } from '../src/features/tasks/listDrag';
 
 const task = (id: string, parentId?: string): Task => ({
   id,
@@ -96,5 +96,18 @@ describe('list drag intent', () => {
     expect(dragAutoScrollDelta(300, bounds)).toBe(0);
     expect(dragAutoScrollDelta(110, bounds)).toBeLessThan(0);
     expect(dragAutoScrollDelta(490, bounds)).toBeGreaterThan(0);
+  });
+
+  it('stops auto-scroll when the list is already clamped at an edge', () => {
+    let scrollTop = 0;
+    const scroller = {
+      get scrollTop() { return scrollTop; },
+      set scrollTop(value: number) { scrollTop = Math.max(0, value); },
+    };
+
+    expect(applyDragAutoScroll(scroller, -10)).toBe(false);
+    expect(scrollTop).toBe(0);
+    expect(applyDragAutoScroll(scroller, 10)).toBe(true);
+    expect(scrollTop).toBe(10);
   });
 });

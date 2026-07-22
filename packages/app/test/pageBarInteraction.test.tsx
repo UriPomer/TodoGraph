@@ -39,6 +39,20 @@ function installDeferredSwitch() {
   return { finishSwitch, switchFinished, switchPage };
 }
 
+function installImmediateSwitch(activePageId = 'today') {
+  const switchPage = vi.fn(async (pageId: string) => {
+    useWorkspaceStore.setState((state) => ({
+      meta: state.meta ? { ...state.meta, activePageId: pageId } : state.meta,
+    }));
+  });
+  useWorkspaceStore.setState({
+    ...useWorkspaceStore.getInitialState(),
+    meta: { version: 2, revision: 0, activePageId, pages },
+    switchPage,
+  }, true);
+  return switchPage;
+}
+
 describe('PageBar mode switching', () => {
   it('ignores repeated clicks and restores the graph tab after leaving list mode', async () => {
     const deferred = installDeferredSwitch();
@@ -68,7 +82,28 @@ describe('PageBar mode switching', () => {
 
     await act(async () => { deferred.finishSwitch(); await deferred.switchFinished; });
     expect(onModeChange).not.toHaveBeenCalled();
-    expect(renderer.root.findAllByProps({ 'data-workspace-mode-toggle': 'true' })[0]!.props['data-mode']).toBe('list');
+    expect(renderer.root.findAllByProps({ 'data-workspace-mode-toggle': 'true' })[0]!.props['data-mode']).toBe('graph');
+    act(() => renderer.unmount());
+  });
+
+  it('returns from the hierarchy list to the workspace mode it left', async () => {
+    const switchPage = installImmediateSwitch();
+    const onModeChange = vi.fn();
+    let renderer: ReturnType<typeof create>;
+
+    await act(async () => { renderer = create(<PageBar mode="list" onModeChange={onModeChange} />); });
+    await act(async () => {
+      renderer.root.findAllByProps({ 'data-workspace-mode-toggle': 'true' })[0]!.props.onClick();
+    });
+    expect(switchPage).toHaveBeenLastCalledWith(SYSTEM_HIERARCHY_PAGE_ID);
+
+    await act(async () => { renderer.update(<PageBar mode="list" onModeChange={onModeChange} />); });
+    await act(async () => {
+      renderer.root.findAllByProps({ 'data-workspace-mode-toggle': 'true' })[0]!.props.onClick();
+    });
+
+    expect(switchPage).toHaveBeenLastCalledWith('today');
+    expect(onModeChange).toHaveBeenLastCalledWith('list');
     act(() => renderer.unmount());
   });
 });

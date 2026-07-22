@@ -327,6 +327,61 @@ describe('task list row interactions', () => {
     renderer.unmount();
   });
 
+  it('does not lock the first drag in auto-scroll at the top boundary', () => {
+    const first = { id: 'first-drag', title: '首次拖动', status: 'todo' as const };
+    useTaskStore.setState({ nodes: [first], listRevision: 1 });
+    const animationFrames: FrameRequestCallback[] = [];
+    let scrollTop = 0;
+    const scrollNode = {
+      get scrollTop() { return scrollTop; },
+      set scrollTop(value: number) { scrollTop = Math.max(0, value); },
+      getBoundingClientRect: () => ({ top: 100, bottom: 500 }),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      querySelectorAll: () => [],
+    };
+    vi.stubGlobal('window', {
+      matchMedia: () => ({ matches: true }),
+      getSelection: () => ({ removeAllRanges: vi.fn() }),
+    });
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    }));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    vi.stubGlobal('document', {
+      elementFromPoint: () => null,
+      querySelector: () => null,
+      body: {},
+    });
+
+    const renderer = create(<ListView />, {
+      createNodeMock: (element) => element.props.style?.overscrollBehaviorY === 'contain'
+        ? scrollNode
+        : null,
+    });
+    const surface = renderer.root
+      .findByProps({ 'data-task-id': first.id })
+      .findByProps({ 'data-task-drag-surface': 'true' });
+    const down = pointerDown({
+      getBoundingClientRect: () => ({ left: 0, top: 100, width: 320, height: 44 }),
+    }, 100, 130);
+
+    act(() => surface.props.onPointerDown(down));
+    act(() => surface.props.onPointerMove(pointerEvent(down, 100, 110)));
+    expect(renderer.root.findAllByProps({ className: 'fixed pointer-events-none z-50' })).toHaveLength(1);
+    expect(animationFrames).toHaveLength(1);
+
+    act(() => animationFrames[0]!(0));
+    expect(animationFrames).toHaveLength(1);
+    expect(scrollTop).toBe(0);
+
+    act(() => surface.props.onPointerUp(pointerEvent(down, 100, 110)));
+    expect(renderer.root.findAllByProps({ className: 'fixed pointer-events-none z-50' })).toHaveLength(0);
+    renderer.unmount();
+  });
+
   it('reorders siblings from a row edge without nesting them', () => {
     const parent = { id: 'group', title: '父节点', status: 'todo' as const };
     const first = { id: 'first', title: '第一个', status: 'todo' as const, parentId: parent.id };

@@ -76,3 +76,12 @@ export function dragAutoScrollDelta(
   }
   return 0;
 }
+
+export function applyDragAutoScroll(
+  scroller: Pick<HTMLElement, 'scrollTop'>,
+  delta: number,
+): boolean {
+  const before = scroller.scrollTop;
+  scroller.scrollTop += delta;
+  return scroller.scrollTop !== before;
+}
