@@ -34,6 +34,7 @@ function installDeferredSwitch() {
   useWorkspaceStore.setState({
     ...useWorkspaceStore.getInitialState(),
     meta,
+    pageModeContext: { pageId: 'today', view: 'graph' },
     switchPage,
   }, true);
   return { finishSwitch, switchFinished, switchPage };
@@ -54,7 +55,7 @@ function installImmediateSwitch(activePageId = 'today') {
 }
 
 describe('PageBar mode switching', () => {
-  it('ignores repeated clicks and restores the graph tab after leaving list mode', async () => {
+  it('NAV-006 ignores repeated clicks while restoring a remembered graph view', async () => {
     const deferred = installDeferredSwitch();
     const onModeChange = vi.fn();
     let renderer: ReturnType<typeof create>;
@@ -70,6 +71,28 @@ describe('PageBar mode switching', () => {
     act(() => renderer.unmount());
   });
 
+  it('NAV-001/NAV-002 restores graph after an actual page → checklist → page round trip', async () => {
+    const switchPage = installImmediateSwitch();
+    const onModeChange = vi.fn();
+    let renderer: ReturnType<typeof create>;
+
+    await act(async () => { renderer = create(<PageBar mode="graph" onModeChange={onModeChange} />); });
+    await act(async () => {
+      renderer.root.findAllByProps({ 'data-workspace-mode-toggle': 'true' })[0]!.props.onClick();
+    });
+    expect(switchPage).toHaveBeenLastCalledWith(SYSTEM_HIERARCHY_PAGE_ID);
+    expect(onModeChange).toHaveBeenLastCalledWith('list');
+
+    await act(async () => { renderer.update(<PageBar mode="list" onModeChange={onModeChange} />); });
+    await act(async () => {
+      renderer.root.findAllByProps({ 'data-workspace-mode-toggle': 'true' })[0]!.props.onClick();
+    });
+
+    expect(switchPage).toHaveBeenLastCalledWith('today');
+    expect(onModeChange).toHaveBeenLastCalledWith('graph');
+    act(() => renderer.unmount());
+  });
+
   it('keeps the current tab when selecting another page', async () => {
     const deferred = installDeferredSwitch();
     const onModeChange = vi.fn();
@@ -82,7 +105,7 @@ describe('PageBar mode switching', () => {
 
     await act(async () => { deferred.finishSwitch(); await deferred.switchFinished; });
     expect(onModeChange).not.toHaveBeenCalled();
-    expect(renderer.root.findAllByProps({ 'data-workspace-mode-toggle': 'true' })[0]!.props['data-mode']).toBe('graph');
+    expect(renderer.root.findAllByProps({ 'data-workspace-mode-toggle': 'true' })[0]!.props['data-mode']).toBe('page');
     act(() => renderer.unmount());
   });
 

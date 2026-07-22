@@ -329,11 +329,19 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
         const selectedIds = new Set(selected.map((n) => n.id));
         const translationById = new Map<string, { dx: number; dy: number }>();
         const selectedByParent = new Map<string, RFTaskNode[]>();
+        const unselectedByParent = new Map<string, RFTaskNode[]>();
         for (const node of selected) {
           const key = node.parentId ?? '';
           const group = selectedByParent.get(key);
           if (group) group.push(node);
           else selectedByParent.set(key, [node]);
+        }
+        for (const node of rfNodes) {
+          if (selectedIds.has(node.id)) continue;
+          const key = node.parentId ?? '';
+          const group = unselectedByParent.get(key);
+          if (group) group.push(node);
+          else unselectedByParent.set(key, [node]);
         }
         for (const group of selectedByParent.values()) {
           const parentId = group[0]?.parentId;
@@ -344,13 +352,7 @@ function GraphViewInner({ viewportScope }: { viewportScope: 'desktop' | 'mobile'
             w: node.measured?.width ?? node.width ?? (node.type === 'group' ? GROUP_MIN_W : CHILD_DEFAULT_W),
             h: node.measured?.height ?? node.height ?? (node.type === 'group' ? GROUP_MIN_H : CHILD_DEFAULT_H),
           });
-          const occupied = rfNodes
-            .filter(
-              (node) =>
-                !selectedIds.has(node.id) &&
-                (node.parentId ?? '') === (parentId ?? ''),
-            )
-            .map(toRect);
+          const occupied = (unselectedByParent.get(parentId ?? '') ?? []).map(toRect);
           const translation = resolveClusterTranslationAvoidingOccupied(group.map(toRect), occupied);
           for (const node of group) translationById.set(node.id, translation);
         }

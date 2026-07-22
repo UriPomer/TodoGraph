@@ -2,6 +2,12 @@
 
 TodoGraph is a TypeScript/pnpm monorepo delivered as a browser application, a portable Electron application, an HTTP server, and an MCP server. The canonical domain schemas live in `@todograph/shared`; DAG algorithms remain transport- and storage-independent in `@todograph/core`.
 
+Product behavior is specified in [`docs/behavior/`](./docs/behavior/). Architecture describes ownership and boundaries; behavior documents define user-visible transitions and gesture priority.
+
+## Workspace navigation state
+
+Mode and view are independent concepts. Checklist mode can only render the list view. Page mode can render list or dependency-graph view and retains a session-scoped `{ pageId, view }` return context. The system hierarchy page is the checklist data source, not the storage location for page-mode navigation history.
+
 ## Whole-system flow
 
 ```mermaid
@@ -77,11 +83,13 @@ UI command
 ## List drag pipeline
 
 ```text
-drag-handle pointer input
-  -> movement threshold
+mouse movement or touch long-press arbitration
+  -> one gesture state (scroll / swipe / drag / edit)
+  -> drag activation and page-scroll lock
   -> pure drop-intent classification (reorder / nest / unparent / none)
   -> insertion or nesting feedback + edge auto-scroll
-  -> one Zustand command on pointer release
+  -> one Zustand command on release
+  -> terminal-state cleanup on release / cancel / lost input / unmount
   -> one undo snapshot + scheduled persistence
 ```
 

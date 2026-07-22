@@ -109,6 +109,7 @@ describe('workspace/task store conflict handling', () => {
       sessionUserId: 'u1',
       meta: makeMeta(1, 'p-1', [makePage('p-1', '第一页', 0)]),
       loaded: true,
+      pageModeContext: { pageId: 'p-1', view: 'graph' },
       allTasks: [{
         id: 'all-1',
         title: '其他页任务',
@@ -135,6 +136,7 @@ describe('workspace/task store conflict handling', () => {
       meta: null,
       loaded: false,
       allTasks: [],
+      pageModeContext: { pageId: null, view: 'list' },
     });
     expect(useTaskStore.getState()).toMatchObject({
       activePageId: null,

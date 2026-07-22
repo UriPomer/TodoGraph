@@ -1,0 +1,18 @@
+{
+  "name": "TodoGraph",
+  "short_name": "TodoGraph",
+  "description": "用列表层级和依赖图组织任务",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#1d1b20",
+  "theme_color": "#1d1b20",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    }
+  ]
+}

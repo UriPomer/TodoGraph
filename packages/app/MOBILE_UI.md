@@ -57,3 +57,12 @@ The mobile redesign applies mainly to the shell around that core:
   mobile unless a specific interaction requires it.
 - Tests should assert the mobile shell keeps the dark product surface and does
   not regress the More page entry points.
+- Interactive targets are at least 44px. Safe-area insets must be applied to
+  fixed top and bottom chrome.
+- `touch-action`, text selection, and system callout suppression are scoped to
+  draggable surfaces; inputs keep native editing behavior.
+- Web haptics are optional enhancement only. Unsupported iOS browsers silently
+  use visual feedback; Android vibration must never produce console warnings.
+- Gesture timing and priority are defined in `../../docs/behavior/task-gestures.md`.
+- Release acceptance includes current iPhone Safari/Home Screen Web App and
+  Android Chrome/PWA on physical devices; emulation is not sufficient alone.

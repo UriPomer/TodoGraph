@@ -30,6 +30,22 @@ This is a **pnpm monorepo** with six packages. See [`ARCHITECTURE.md`](./ARCHITE
 | `@todograph/mcp` | Independently published MCP server and TodoGraph tools. |
 | `@todograph/desktop-host` | Owns the loopback Fastify lifecycle and session secret used by Electron. |
 
+## Product terminology
+
+模式和视图是两个不同概念，禁止混用：
+
+- **清单模式**：系统级清单模式，目前只支持列表视图，不支持依赖图视图。
+- **页面模式**：进入某个具体页面；页面模式支持列表视图和依赖图视图，并可在二者之间切换。
+- **列表视图**：以任务行和嵌套层级呈现任务。
+- **依赖图视图**：以图节点和依赖连线呈现当前页面任务。
+
+术语按当前视图解析：
+
+- 在列表视图中，“节点”或“任务”默认指列表里的任务行；“父节点、子节点、同级节点、嵌套、层级”均指列表的父子嵌套关系。
+- 在依赖图视图中，“节点”或“任务”默认指依赖图里的图节点。依赖连线使用“前置依赖、后续依赖”等术语，不与父子层级混为一谈。
+- 模式切换必须同时保留离开前的具体页面和该页面的视图；从清单模式返回页面模式时，恢复原页面及原视图。
+- 用户可见行为以 `docs/behavior/` 中的行为书为准；修改导航、手势或层级时必须同时更新对应行为 ID 的测试。
+
 ## Data flow
 
 1. **TaskStore** (`useTaskStore`) is the single source of truth for the current page's nodes/edges. All writes go through it → 250ms debounced save to server → server validates DAG (cycle check) → writes JSON. A bounded session-only page cache paints revisited pages immediately, then refreshes them from the server; session reset clears it.

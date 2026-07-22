@@ -57,3 +57,10 @@ docs/
 !docs/
 docs/*
 !docs/architecture.md
+!docs/behavior/
+!docs/behavior/**
+!docs/reviews/
+!docs/reviews/**
+packages/app/.e2e-data/
+packages/app/test-results/
+packages/app/playwright-report/

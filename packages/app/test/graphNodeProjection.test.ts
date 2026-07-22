@@ -52,4 +52,36 @@ describe('graph node projection', () => {
     expect(node.data.nodeWidth).toBe(180);
     expect(node.style).toMatchObject({ width: 180 });
   });
+
+  it('HIER-003 keeps ten children visible and hides descendants starting with the eleventh', () => {
+    const project = (childCount: number) => {
+      const nodes: Task[] = [
+        { id: 'parent', title: 'Parent', status: 'todo' },
+        ...Array.from({ length: childCount }, (_, index) => ({
+          id: `child-${index}`,
+          title: `Child ${index}`,
+          status: 'todo' as const,
+          parentId: 'parent',
+          x: 24,
+          y: 60 + index * 68,
+        })),
+      ];
+      return buildGraphNodeProjection({
+        nodes,
+        hierarchy: buildHierarchyMetrics(nodes),
+        geometryById: computeNodeGeometryMap(nodes),
+        readySet: new Set(),
+      });
+    };
+
+    const ten = project(10);
+    expect(ten.nodes.find((node) => node.id === 'parent')?.data.isHeightCollapsed).toBe(false);
+    expect(ten.nodes.filter((node) => node.parentId === 'parent').every((node) => !node.hidden)).toBe(true);
+
+    const eleven = project(11);
+    const parent = eleven.nodes.find((node) => node.id === 'parent')!;
+    expect(parent.data.isHeightCollapsed).toBe(true);
+    expect(parent.data.descendants).toHaveLength(11);
+    expect(eleven.nodes.filter((node) => node.parentId === 'parent').every((node) => node.hidden)).toBe(true);
+  });
 });

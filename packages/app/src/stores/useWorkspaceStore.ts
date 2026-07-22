@@ -9,6 +9,12 @@ import { toast } from '@/components/ui/toaster-store';
 import { useTaskStore } from './useTaskStore';
 import { subscribeAllTasksInvalidated, subscribeWorkspaceMetaUpdated } from './workspaceEvents';
 import type { PageViewportCache } from '@/features/graph/pageViewportCache';
+import {
+  DEFAULT_PAGE_MODE_CONTEXT,
+  rememberPageModeContext as nextPageModeContext,
+  type PageModeContext,
+  type WorkspaceView,
+} from '@/features/workspace/workspaceNavigation';
 
 interface WorkspaceStore {
   sessionUserId: string | null;
@@ -19,10 +25,13 @@ interface WorkspaceStore {
   allTasksLoading: boolean;
   /** Session-scoped graph viewports; mutated by the graph controller as an LRU. */
   pageViewportCache: PageViewportCache;
+  /** Session-only return target when leaving checklist mode. */
+  pageModeContext: PageModeContext;
 
   // ---- lifecycle ----
   bootstrap: (userId: string) => Promise<void>;
   resetSession: () => void;
+  rememberPageModeContext: (pageId: string | null | undefined, view: WorkspaceView) => void;
 
   // ---- pages ----
   switchPage: (pageId: string) => Promise<void>;
@@ -161,6 +170,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       allTasks: [],
       allTasksLoading: false,
       pageViewportCache: new Map(),
+      pageModeContext: DEFAULT_PAGE_MODE_CONTEXT,
     });
   };
 
@@ -171,8 +181,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     allTasks: [],
     allTasksLoading: false,
     pageViewportCache: new Map(),
+    pageModeContext: DEFAULT_PAGE_MODE_CONTEXT,
 
     resetSession,
+    rememberPageModeContext: (pageId, view) => set((state) => ({
+      pageModeContext: nextPageModeContext(state.pageModeContext, pageId, view),
+    })),
 
     bootstrap: async (userId) => {
       resetSession();
@@ -182,7 +196,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
       try {
         const meta = await api.loadMeta();
         if (!isCurrentSession(generation)) return;
-        set({ meta });
+        set({
+          meta,
+          pageModeContext: nextPageModeContext(
+            DEFAULT_PAGE_MODE_CONTEXT,
+            meta.activePageId,
+            'list',
+          ),
+        });
         const active =
           meta.pages.find((p) => p.id === meta.activePageId)?.id ?? meta.pages[0]?.id;
         if (!active) {

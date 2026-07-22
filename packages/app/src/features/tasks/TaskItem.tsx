@@ -7,6 +7,13 @@ import { MAX_TITLE_LENGTH } from '@/lib/measureText';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { toast } from '@/components/ui/toaster-store';
 import { dialog } from '@/components/ui/dialog-store';
+import {
+  LIST_DOUBLE_TAP_MS,
+  LIST_LONG_PRESS_MS,
+  LIST_SWIPE_COMMIT_PX,
+  LIST_SWIPE_START_PX,
+  LIST_TAP_SLOP_PX,
+} from './gesturePolicy';
 
 export interface TaskDragStart {
   pointerId: number;
@@ -156,11 +163,6 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
     | { kind: 'swiping'; touchId: number; startX: number; offset: number }
     | { kind: 'dragging'; touchId: number }
   >({ kind: 'idle' });
-  const SWIPE_START_THRESHOLD = 18;
-  const SWIPE_COMMIT_THRESHOLD = 96;
-  const LONG_PRESS_DELAY_MS = 240;
-  const TAP_SLOP_PX = 8;
-
   const cancelSwipeDOM = useCallback(() => {
     const el = swipeLayerRef.current;
     if (el) {
@@ -180,7 +182,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
     const el = swipeLayerRef.current;
     if (el) el.style.transform = `translateX(${clamped}px)`;
 
-    const armed = clamped >= SWIPE_COMMIT_THRESHOLD;
+    const armed = clamped >= LIST_SWIPE_COMMIT_PX;
     const opacity = Math.min(1, Math.max(0, (clamped - 36) / 60));
     if (bgRightRef.current) {
       bgRightRef.current.style.opacity = String(dx > 0 ? opacity : 0);
@@ -192,7 +194,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
 
   const finishSwipe = useCallback((offset: number) => {
     cancelSwipeDOM();
-    if (offset >= SWIPE_COMMIT_THRESHOLD) {
+    if (offset >= LIST_SWIPE_COMMIT_PX) {
       setTimeout(() => {
         if (task.status === 'done') return;
         if (completeTask(task.id)) {
@@ -256,7 +258,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
           sourceElement: current.sourceElement,
           activateImmediately: true,
         }, task);
-      }, LONG_PRESS_DELAY_MS);
+      }, LIST_LONG_PRESS_MS);
     };
     const onTouchMove = (event: TouchEvent) => {
       const current = mobileGestureRef.current;
@@ -277,7 +279,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       if (current.kind === 'scrolling') return;
       const dx = touch.clientX - current.startX;
       const dy = touch.clientY - current.startY;
-      if (dx > SWIPE_START_THRESHOLD && dx > Math.abs(dy) * 1.35) {
+      if (dx > LIST_SWIPE_START_PX && dx > Math.abs(dy) * 1.35) {
         cancelLongPress();
         const el = swipeLayerRef.current;
         if (el) el.style.transition = 'none';
@@ -286,7 +288,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
         if (event.cancelable) event.preventDefault();
         return;
       }
-      if (Math.hypot(dx, dy) > TAP_SLOP_PX) {
+      if (Math.hypot(dx, dy) > LIST_TAP_SLOP_PX) {
         cancelLongPress();
         mobileGestureRef.current = { kind: 'scrolling', touchId: current.touchId };
         return;
@@ -305,7 +307,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       } else if (current.kind === 'pending' && current.titleElement) {
         const now = Date.now();
         const previous = lastTitleTapRef.current;
-        if (previous && now - previous.at <= 320) {
+        if (previous && now - previous.at <= LIST_DOUBLE_TAP_MS) {
           lastTitleTapRef.current = null;
           beginTitleEditing(current.titleElement, current.lastX, current.lastY);
         } else {

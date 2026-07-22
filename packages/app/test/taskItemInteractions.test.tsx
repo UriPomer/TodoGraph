@@ -12,6 +12,7 @@ import { useTaskStore } from '../src/stores/useTaskStore';
 import { useWorkspaceStore } from '../src/stores/useWorkspaceStore';
 import { useToastStore } from '../src/components/ui/toaster-store';
 import { useHistoryStore } from '../src/stores/useHistoryStore';
+import { LIST_LONG_PRESS_MS } from '../src/features/tasks/gesturePolicy';
 
 const task = { id: 'parent', title: '需要推进的父任务', status: 'todo' as const };
 const POINTER_ID = 7;
@@ -174,7 +175,7 @@ describe('task list row interactions', () => {
       });
     });
     touchStart(rowTouchListeners, 20, 20);
-    act(() => vi.advanceTimersByTime(239));
+    act(() => vi.advanceTimersByTime(LIST_LONG_PRESS_MS - 1));
     expect(renderer.root.findAllByProps({ className: 'fixed pointer-events-none z-50' })).toHaveLength(0);
     act(() => vi.advanceTimersByTime(1));
     expect(renderer.root.findAllByProps({ className: 'fixed pointer-events-none z-50' })).toHaveLength(1);
@@ -188,7 +189,7 @@ describe('task list row interactions', () => {
     touchEnd(rowTouchListeners);
     expect(renderer.root.findAllByProps({ className: 'fixed pointer-events-none z-50' })).toHaveLength(0);
     touchStart(rowTouchListeners, 20, 20);
-    act(() => vi.advanceTimersByTime(240));
+    act(() => vi.advanceTimersByTime(LIST_LONG_PRESS_MS));
     expect(renderer.root.findAllByProps({ className: 'fixed pointer-events-none z-50' })).toHaveLength(1);
     touchEnd(rowTouchListeners);
     renderer.unmount();
@@ -239,7 +240,7 @@ describe('task list row interactions', () => {
       target: { closest: () => null },
       touches: [touchPoint(100, 40)],
     }));
-    act(() => vi.advanceTimersByTime(240));
+    act(() => vi.advanceTimersByTime(LIST_LONG_PRESS_MS));
     const dragMove = touchMove(rowTouchListeners, 100, 120);
     const pullPreventDefault = vi.fn();
     act(() => scrollTouchListeners.get('touchmove')?.({ touches: [touchPoint(100, 120)], preventDefault: pullPreventDefault }));
@@ -284,7 +285,7 @@ describe('task list row interactions', () => {
       });
     });
     touchStart(rowTouchListeners, 330, 82);
-    act(() => vi.advanceTimersByTime(240));
+    act(() => vi.advanceTimersByTime(LIST_LONG_PRESS_MS));
     touchMove(rowTouchListeners, 340, 92);
 
     const ghost = renderer.root.findByProps({ className: 'fixed pointer-events-none z-50' });
@@ -615,7 +616,7 @@ describe('task list row interactions', () => {
     });
 
     touchStart(rowTouchListeners, 100, 100);
-    act(() => vi.advanceTimersByTime(240));
+    act(() => vi.advanceTimersByTime(LIST_LONG_PRESS_MS));
     touchMove(rowTouchListeners, 76, 100);
     touchMove(rowTouchListeners, 92, 70);
     touchEnd(rowTouchListeners);
@@ -709,7 +710,7 @@ describe('task list row interactions', () => {
       });
     });
     touchStart(rowTouchListeners, 160, 120);
-    act(() => vi.advanceTimersByTime(240));
+    act(() => vi.advanceTimersByTime(LIST_LONG_PRESS_MS));
     touchMove(rowTouchListeners, 136, 160);
     touchMove(rowTouchListeners, 120, 202);
 
@@ -864,7 +865,7 @@ describe('task list row interactions', () => {
     });
 
     touchStart(rowTouchListeners, 50, 20, touchTarget(titleElement));
-    act(() => vi.advanceTimersByTime(240));
+    act(() => vi.advanceTimersByTime(LIST_LONG_PRESS_MS));
 
     expect(renderer.root.findAllByType('input')).toHaveLength(0);
     expect(onDragStart).toHaveBeenCalledOnce();
@@ -914,7 +915,7 @@ describe('task list row interactions', () => {
     });
 
     touchStart(rowTouchListeners, 0, 0);
-    act(() => vi.advanceTimersByTime(240));
+    act(() => vi.advanceTimersByTime(LIST_LONG_PRESS_MS));
     const move = touchMove(rowTouchListeners, 120, 0);
     touchEnd(rowTouchListeners);
     act(() => vi.advanceTimersByTime(221));
@@ -947,7 +948,7 @@ describe('task list row interactions', () => {
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       touchStart(rowTouchListeners, 20, 20);
-      act(() => vi.advanceTimersByTime(240));
+      act(() => vi.advanceTimersByTime(LIST_LONG_PRESS_MS));
       touchMove(rowTouchListeners, 20, 60);
       touchEnd(rowTouchListeners);
     }
@@ -975,7 +976,7 @@ describe('task list row interactions', () => {
     });
 
     touchStart(rowTouchListeners, 20, 20);
-    act(() => vi.advanceTimersByTime(240));
+    act(() => vi.advanceTimersByTime(LIST_LONG_PRESS_MS));
     act(() => rowTouchListeners.get('touchstart')?.({
       target: touchTarget(),
       touches: [touchPoint(20, 20), touchPoint(30, 20, POINTER_ID + 1)],

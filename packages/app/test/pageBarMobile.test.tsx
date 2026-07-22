@@ -18,14 +18,14 @@ describe('MobilePageSelectorView', () => {
         activePageId="today"
         onSwitchPage={vi.fn()}
         onCreatePage={vi.fn()}
-        isListMode={false}
+        isChecklistMode={false}
         onToggleMode={vi.fn()}
       />,
     );
 
     expect(html).toContain('aria-label="选择页面"');
     expect(html).toContain('data-mobile-page-trigger="true"');
-    expect(html).toContain('data-selector-mode="graph"');
+    expect(html).toContain('data-selector-mode="page"');
     expect(html).toContain('max-w-[calc(100%-2.75rem)]');
     expect(html).not.toContain('min-w-0 flex-1 items-center');
     expect(html).toContain('bg-card');
@@ -35,7 +35,7 @@ describe('MobilePageSelectorView', () => {
     expect(html).not.toContain('<select');
     expect(html).not.toContain('draggable="true"');
     expect(html).toContain('data-workspace-mode-toggle="true"');
-    expect(html).toContain('aria-label="切换到纯清单模式"');
+    expect(html).toContain('aria-label="切换到清单模式"');
     expect(html.indexOf('data-workspace-mode-toggle="true"')).toBeLessThan(
       html.indexOf('data-mobile-page-trigger="true"'),
     );
@@ -49,15 +49,15 @@ describe('MobilePageSelectorView', () => {
         activePageId={SYSTEM_HIERARCHY_PAGE_ID}
         onSwitchPage={vi.fn()}
         onCreatePage={vi.fn()}
-        isListMode
+        isChecklistMode
         onToggleMode={vi.fn()}
       />,
     );
 
-    expect(html).toContain('aria-label="切换到依赖图模式"');
-    expect(html).toContain('data-mode="list"');
-    expect(html).toContain('data-selector-mode="list"');
-    expect(html).toContain('仅清单');
+    expect(html).toContain('aria-label="切换到页面模式"');
+    expect(html).toContain('data-mode="checklist"');
+    expect(html).toContain('data-selector-mode="checklist"');
+    expect(html).toContain('清单模式');
     expect(html).toContain('border-[hsl(var(--success)/0.55)]');
     expect(html.indexOf('data-workspace-mode-toggle="true"')).toBeLessThan(
       html.indexOf('data-mobile-page-trigger="true"'),

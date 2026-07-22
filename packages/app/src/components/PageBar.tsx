@@ -11,22 +11,23 @@ import {
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { dialog } from '@/components/ui/dialog-store';
+import { resolvePageModeReturn } from '@/features/workspace/workspaceNavigation';
 
 export function WorkspaceModeButton({
-  isListMode,
+  isChecklistMode,
   disabled = false,
   onToggle,
 }: {
-  isListMode: boolean;
+  isChecklistMode: boolean;
   disabled?: boolean;
   onToggle: () => void;
 }) {
-  const label = isListMode ? '切换到依赖图模式' : '切换到纯清单模式';
+  const label = isChecklistMode ? '切换到页面模式' : '切换到清单模式';
   return (
     <button
       type="button"
       data-workspace-mode-toggle="true"
-      data-mode={isListMode ? 'list' : 'graph'}
+      data-mode={isChecklistMode ? 'checklist' : 'page'}
       aria-label={label}
       title={label}
       disabled={disabled}
@@ -34,18 +35,18 @@ export function WorkspaceModeButton({
       className={cn(
         'relative h-9 w-9 shrink-0 overflow-hidden rounded-lg border',
         'transition-[background-color,border-color,color,transform,box-shadow] duration-200 active:scale-95 disabled:opacity-40',
-        isListMode
+        isChecklistMode
           ? 'border-[hsl(var(--success)/0.55)] bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success))] shadow-[0_0_12px_hsl(var(--success)/0.1)]'
           : 'border-[hsl(var(--primary)/0.45)] bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]',
       )}
     >
       <ListTree className={cn(
         'absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 transition-all duration-200',
-        isListMode ? 'rotate-0 scale-100 opacity-100' : '-rotate-90 scale-50 opacity-0',
+        isChecklistMode ? 'rotate-0 scale-100 opacity-100' : '-rotate-90 scale-50 opacity-0',
       )} />
       <Network className={cn(
         'absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 transition-all duration-200',
-        isListMode ? 'rotate-90 scale-50 opacity-0' : 'rotate-0 scale-100 opacity-100',
+        isChecklistMode ? 'rotate-90 scale-50 opacity-0' : 'rotate-0 scale-100 opacity-100',
       )} />
     </button>
   );
@@ -56,7 +57,7 @@ export function MobilePageSelectorView({
   activePageId,
   onSwitchPage,
   onCreatePage,
-  isListMode,
+  isChecklistMode,
   onToggleMode,
   isSwitching = false,
 }: {
@@ -64,7 +65,7 @@ export function MobilePageSelectorView({
   activePageId: string;
   onSwitchPage: (pageId: string) => void;
   onCreatePage: () => void;
-  isListMode: boolean;
+  isChecklistMode: boolean;
   onToggleMode: () => void;
   isSwitching?: boolean;
 }) {
@@ -79,7 +80,7 @@ export function MobilePageSelectorView({
   return (
     <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-2 lg:hidden">
       <div data-mobile-page-controls="true" className="flex min-w-0 items-center gap-2">
-        <WorkspaceModeButton isListMode={isListMode} disabled={isSwitching} onToggle={onToggleMode} />
+        <WorkspaceModeButton isChecklistMode={isChecklistMode} disabled={isSwitching} onToggle={onToggleMode} />
         <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -87,34 +88,34 @@ export function MobilePageSelectorView({
             disabled={isSwitching}
             aria-label="选择页面"
             data-mobile-page-trigger="true"
-            data-selector-mode={isListMode ? 'list' : 'graph'}
+            data-selector-mode={isChecklistMode ? 'checklist' : 'page'}
             className={cn(
               'group inline-flex h-9 min-w-0 max-w-[calc(100%-2.75rem)] items-center gap-2 rounded-lg border px-2.5 text-left',
               'shadow-sm',
               'transition-[background-color,border-color,box-shadow,transform] duration-150 ease-out',
               'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-              isListMode
+              isChecklistMode
                 ? 'border-[hsl(var(--success)/0.55)] bg-[hsl(var(--success)/0.12)] hover:bg-[hsl(var(--success)/0.16)] active:scale-[0.98]'
                 : 'border-border bg-background hover:border-[hsl(var(--primary)/0.42)] hover:bg-accent/45 active:scale-[0.98]',
             )}
           >
             <span className={cn(
               'flex h-5 w-5 shrink-0 items-center justify-center rounded-md',
-              isListMode
+              isChecklistMode
                 ? 'bg-[hsl(var(--success)/0.14)] text-[hsl(var(--success))]'
                 : 'bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]',
             )}>
-              {isListMode ? <ListTree className="h-3.5 w-3.5" /> : <SquareStack className="h-3.5 w-3.5" />}
+              {isChecklistMode ? <ListTree className="h-3.5 w-3.5" /> : <SquareStack className="h-3.5 w-3.5" />}
             </span>
             <span className={cn(
               'min-w-0 truncate text-sm font-medium',
-              isListMode ? 'text-[hsl(var(--success))]' : 'text-foreground',
+              isChecklistMode ? 'text-[hsl(var(--success))]' : 'text-foreground',
             )}>
-              {isListMode ? '仅清单' : activePage?.title ?? '选择页面'}
+              {isChecklistMode ? '清单模式' : activePage?.title ?? '选择页面'}
             </span>
             <ChevronDown className={cn(
               'h-3.5 w-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-180',
-              isListMode ? 'text-[hsl(var(--success)/0.75)]' : 'text-muted-foreground',
+              isChecklistMode ? 'text-[hsl(var(--success)/0.75)]' : 'text-muted-foreground',
             )} />
           </button>
         </DropdownMenuTrigger>
@@ -173,8 +174,8 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
   const [dragId, setDragId] = useState<string | null>(null);
   const [isSwitching, setIsSwitching] = useState(false);
   const switchingRef = useRef(false);
-  const lastWorkspacePageIdRef = useRef<string | null>(null);
-  const lastWorkspaceModeRef = useRef<'list' | 'graph'>('graph');
+  const pageModeContext = useWorkspaceStore((s) => s.pageModeContext);
+  const rememberPageModeContext = useWorkspaceStore((s) => s.rememberPageModeContext);
 
   const pages = useMemo(
     () => [...(meta?.pages ?? [])]
@@ -183,14 +184,13 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
     [meta],
   );
   const systemPage = meta?.pages.find((page) => page.id === SYSTEM_HIERARCHY_PAGE_ID);
-  const isListMode = meta?.activePageId === SYSTEM_HIERARCHY_PAGE_ID;
+  const isChecklistMode = meta?.activePageId === SYSTEM_HIERARCHY_PAGE_ID;
 
   useEffect(() => {
     if (meta?.activePageId && meta.activePageId !== SYSTEM_HIERARCHY_PAGE_ID) {
-      lastWorkspacePageIdRef.current = meta.activePageId;
-      if (mode) lastWorkspaceModeRef.current = mode;
+      rememberPageModeContext(meta.activePageId, mode ?? 'list');
     }
-  }, [meta?.activePageId, mode]);
+  }, [meta?.activePageId, mode, rememberPageModeContext]);
 
   const switchModePage = useCallback(async (pageId: string, nextMode?: 'list' | 'graph') => {
     if (switchingRef.current) return;
@@ -211,15 +211,15 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
     if (!meta || !systemPage) return;
     const isHierarchyPage = meta.activePageId === SYSTEM_HIERARCHY_PAGE_ID;
     if (!isHierarchyPage) {
-      if (mode) lastWorkspaceModeRef.current = mode;
+      rememberPageModeContext(meta.activePageId, mode ?? 'list');
       await switchModePage(systemPage.id, 'list');
       return;
     }
-    const target = pages.find((page) => page.id === lastWorkspacePageIdRef.current) ?? pages[0];
-    if (target) {
-      await switchModePage(target.id, lastWorkspaceModeRef.current);
+    const target = resolvePageModeReturn(meta, pageModeContext);
+    if (target?.pageId) {
+      await switchModePage(target.pageId, target.view);
     }
-  }, [meta, mode, pages, switchModePage, systemPage]);
+  }, [meta, mode, pageModeContext, rememberPageModeContext, switchModePage, systemPage]);
 
   const handleDragStart = useCallback((e: React.DragEvent, id: string) => {
     setDragId(id);
@@ -266,7 +266,10 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
     });
     if (title === null) return;
     const info = await createPage(title.trim() || fallbackTitle);
-    if (info) await switchModePage(info.id);
+    if (info) {
+      rememberPageModeContext(info.id, 'list');
+      await switchModePage(info.id, 'list');
+    }
   };
 
   return (
@@ -276,15 +279,15 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
         activePageId={meta.activePageId}
         onSwitchPage={(pageId) => void switchModePage(pageId)}
         onCreatePage={() => void handleCreatePage()}
-        isListMode={isListMode}
+        isChecklistMode={isChecklistMode}
         onToggleMode={() => void handleToggleMode()}
         isSwitching={isSwitching}
       />
 
       <div className="hidden items-center gap-2 overflow-x-auto px-3 py-2 lg:flex">
         <WorkspaceModeButton
-          isListMode={isListMode}
-          disabled={isSwitching || !systemPage || (isListMode && pages.length === 0)}
+          isChecklistMode={isChecklistMode}
+          disabled={isSwitching || !systemPage || (isChecklistMode && pages.length === 0)}
           onToggle={() => void handleToggleMode()}
         />
         {pages.map((page) => {
