@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { SYSTEM_HIERARCHY_PAGE_ID } from '@todograph/shared';
 import { ListView } from '../src/features/tasks/ListView';
 import { TaskItem } from '../src/features/tasks/TaskItem';
 import { ThemeProvider } from '../src/features/theme/ThemeProvider';
@@ -59,6 +60,29 @@ describe('mobile task list', () => {
     expect(descriptionButton).not.toMatch(/(?:^|\s)hover:/);
     expect(taskHtml).not.toContain('data-mobile-task-open="true"');
     expect(taskHtml).toMatch(/data-mobile-hidden-action="delete"[^>]*class="[^"]*max-lg:hidden/);
+  });
+
+  it('NAV-008 omits the blocked section in checklist mode', () => {
+    useTaskStore.setState({
+      activePageId: SYSTEM_HIERARCHY_PAGE_ID,
+      loaded: true,
+      nodes: [
+        { id: 'todo-1', title: '整理清单', status: 'todo' },
+        { id: 'done-1', title: '完成事项', status: 'done' },
+      ],
+      edges: [],
+    });
+
+    let renderer: ReactTestRenderer;
+    act(() => {
+      renderer = create(<ListView />);
+    });
+    expect(renderer.root.findByProps({ 'data-mobile-task-section': 'ready' })).toBeTruthy();
+    expect(renderer.root.findByProps({ 'data-mobile-task-section': 'done' })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ 'data-mobile-task-section': 'blocked' })).toHaveLength(0);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Blocked');
+
+    act(() => renderer.unmount());
   });
 
   it('moves the split bar to the bottom when no other page has ready tasks', () => {

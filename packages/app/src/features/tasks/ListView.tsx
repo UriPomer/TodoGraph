@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useCallback, useEffect, useLayoutEffect } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { MAX_HIERARCHY_DEPTH, type Task } from '@todograph/shared';
+import { MAX_HIERARCHY_DEPTH, SYSTEM_HIERARCHY_PAGE_ID, type Task } from '@todograph/shared';
 import { buildHierarchyMetrics, useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useDerived } from '@/hooks/useRecommendation';
@@ -50,7 +50,7 @@ export function prepareTaskMoveAnimation(root: ParentNode | null, taskId: string
 
 /**
  * 极简列表视图（无外层卡片）：
- * - 三段分组：Ready / Blocked / Done
+ * - 页面模式分为 Ready / Blocked / Done；清单模式不显示 Blocked
  * - 每一段只靠一个小标题区分，没有框
  * - 任务行本身也没有卡片边框（见 TaskItem）
  * - 支持父子节点层级：子任务缩进显示在其父任务下方，父任务可折叠
@@ -62,6 +62,7 @@ export function ListView() {
   const nodes = useTaskStore((s) => s.nodes);
   const listRevision = useTaskStore((s) => s.listRevision);
   const activePageId = useTaskStore((s) => s.activePageId);
+  const isChecklistMode = activePageId === SYSTEM_HIERARCHY_PAGE_ID;
   const allTasks = useWorkspaceStore((s) => s.allTasks);
   const setParent = useTaskStore((s) => s.setParent);
   const ascendOneLevel = useTaskStore((s) => s.ascendOneLevel);
@@ -449,22 +450,24 @@ export function ListView() {
             onAddChild={handleAddChild}
             empty="暂无可执行任务"
           />
-          <Section
-            title="Blocked"
-            mobileKey="blocked"
-            hint="有未完成的前置"
-            items={blockedArr}
-            depInfo={depInfo}
-            childMap={childMap}
-            collapsed={collapsed}
-            onToggleCollapse={toggleCollapse}
-            dragTaskId={drag?.active ? drag.taskId : null}
-            onDragStart={handleDragStart}
-            onDragMove={moveDrag}
-            onDragEnd={finishDrag}
-            onDragCancel={cancelDrag}
-            onAddChild={handleAddChild}
-          />
+          {!isChecklistMode && (
+            <Section
+              title="Blocked"
+              mobileKey="blocked"
+              hint="有未完成的前置"
+              items={blockedArr}
+              depInfo={depInfo}
+              childMap={childMap}
+              collapsed={collapsed}
+              onToggleCollapse={toggleCollapse}
+              dragTaskId={drag?.active ? drag.taskId : null}
+              onDragStart={handleDragStart}
+              onDragMove={moveDrag}
+              onDragEnd={finishDrag}
+              onDragCancel={cancelDrag}
+              onAddChild={handleAddChild}
+            />
+          )}
           <Section
             title="Done"
             mobileKey="done"
