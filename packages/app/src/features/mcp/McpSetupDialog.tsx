@@ -94,9 +94,9 @@ export function McpSetupDialog({ open, onClose, embedded = false }: Props) {
             <span>允许 AI 删除、恢复和跨页面移动数据</span>
             <span
               aria-hidden="true"
-              className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors duration-200 ${allowDestructive ? 'border-[hsl(var(--primary))] bg-[hsl(var(--primary))]' : 'border-border bg-muted'}`}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border p-0.5 transition-colors duration-200 ${allowDestructive ? 'border-[hsl(var(--primary))] bg-[hsl(var(--primary))]' : 'border-border bg-muted'}`}
             >
-              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${allowDestructive ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              <span className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${allowDestructive ? 'translate-x-5' : 'translate-x-0'}`} />
             </span>
           </button>
           {generated && (

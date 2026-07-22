@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState, useCallback, useEffect } from 'react';
+import { useMemo, useRef, useState, useCallback, useEffect, useLayoutEffect } from 'react';
+import { createPortal, flushSync } from 'react-dom';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { MAX_HIERARCHY_DEPTH, type Task } from '@todograph/shared';
 import { buildHierarchyMetrics, useTaskStore } from '@/stores/useTaskStore';
@@ -8,14 +9,44 @@ import { toast } from '@/components/ui/toaster-store';
 import { defaultPositionFor } from '@/lib/defaultPosition';
 import { CrossPageReady, selectCrossPageReadyTasks } from './CrossPageReady';
 import { TaskInput } from './TaskInput';
-import { TaskItem } from './TaskItem';
+import { TaskItem, type TaskDragPoint, type TaskDragStart } from './TaskItem';
 import { buildTaskListModel, type DepInfo, type FlatItem } from './listModel';
 import { dragAutoScrollDelta, resolveListDropIntent, type ListDropIntent } from './listDrag';
 type DragState =
-  | { taskId: string; pointerId: number; offsetX: number; offsetY: number; startX: number; startY: number; active: false }
-  | { taskId: string; pointerId: number; offsetX: number; offsetY: number; startX: number; startY: number; active: true; x: number; y: number; intent: ListDropIntent }
+  | { taskId: string; pointerId: number; pointerType: string; width: number; offsetX: number; offsetY: number; startX: number; startY: number; active: false }
+  | { taskId: string; pointerId: number; pointerType: string; width: number; offsetX: number; offsetY: number; startX: number; startY: number; active: true; x: number; y: number; intent: ListDropIntent }
   | null;
 const DRAG_THRESHOLD_PX = 8;
+const LIST_MOVE_ANIMATION_MS = 220;
+
+function findTaskRow(root: ParentNode, taskId: string) {
+  if (typeof root.querySelectorAll !== 'function') return null;
+  return Array.from(root.querySelectorAll<HTMLElement>('[data-task-id]'))
+    .find((row) => row.getAttribute('data-task-id') === taskId) ?? null;
+}
+
+export function prepareTaskMoveAnimation(root: ParentNode | null, taskId: string) {
+  if (!root || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {};
+  const before = findTaskRow(root, taskId)?.getBoundingClientRect();
+  if (!before) return () => {};
+
+  return () => requestAnimationFrame(() => {
+    const row = findTaskRow(root, taskId);
+    if (!row) return;
+    const current = row.getBoundingClientRect();
+    const deltaX = before.left - current.left;
+    const deltaY = before.top - current.top;
+    if (deltaX === 0 && deltaY === 0) return;
+    row.animate(
+      [
+        { transform: `translate(${deltaX}px, ${deltaY}px)` },
+        { transform: 'translate(0, 0)' },
+      ],
+      { duration: LIST_MOVE_ANIMATION_MS, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+    );
+  });
+}
+
 /**
  * 极简列表视图（无外层卡片）：
  * - 三段分组：Ready / Blocked / Done
@@ -32,7 +63,9 @@ export function ListView() {
   const activePageId = useTaskStore((s) => s.activePageId);
   const allTasks = useWorkspaceStore((s) => s.allTasks);
   const setParent = useTaskStore((s) => s.setParent);
+  const ascendOneLevel = useTaskStore((s) => s.ascendOneLevel);
   const reorderTask = useTaskStore((s) => s.reorderTask);
+  const moveTaskToSibling = useTaskStore((s) => s.moveTaskToSibling);
   const addTask = useTaskStore((s) => s.addTask);
   const { graph, readySet } = useDerived();
   // Deliberately retain the last semantic snapshot during coordinate-only node updates.
@@ -90,34 +123,27 @@ export function ListView() {
     },
     [addTask, hierarchyMetrics],
   );
-  const handleDragStart = useCallback((e: React.PointerEvent, task: Task) => {
-    if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
-    e.preventDefault();
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-    const row = e.currentTarget.closest('[data-task-id]') as HTMLElement | null;
-    const rect = row?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
-    const offsetX = e.clientX - rect.left;
-    const offsetY = e.clientY - rect.top;
-    const initial: DragState = {
+  const handleDragStart = useCallback((event: TaskDragStart, task: Task) => {
+    const rect = event.sourceElement.getBoundingClientRect();
+    const offsetX = event.clientX - rect.left;
+    const offsetY = event.clientY - rect.top;
+    const base = {
       taskId: task.id,
-      pointerId: e.pointerId,
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      width: rect.width,
       offsetX,
       offsetY,
-      startX: e.clientX,
-      startY: e.clientY,
-      active: false,
+      startX: event.clientX,
+      startY: event.clientY,
     };
-    updateDrag(initial);
+    updateDrag(event.activateImmediately
+      ? { ...base, active: true, x: event.clientX, y: event.clientY, intent: { kind: 'none' } }
+      : { ...base, active: false });
   }, [updateDrag]);
   const scrollRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!drag) return;
-    const eventDocument = document;
-    let autoScrollFrame = 0;
-    let latestPointer: { x: number; y: number } | null = null;
-
-    const intentAt = (current: Extract<DragState, { active: true }>, clientX: number, clientY: number) => {
-      const targetLi = eventDocument.elementFromPoint(clientX, clientY)?.closest('[data-task-id]') as HTMLElement | null;
+  const intentAt = useCallback((current: Extract<DragState, { active: true }>, clientX: number, clientY: number) => {
+      const targetLi = document.elementFromPoint(clientX, clientY)?.closest('[data-task-id]') as HTMLElement | null;
       const targetId = targetLi?.getAttribute('data-task-id') ?? null;
       const dragged = hierarchyMetrics.byId.get(current.taskId);
       if (!dragged) return { kind: 'none' } as const;
@@ -132,69 +158,111 @@ export function ListView() {
         depthById: hierarchyMetrics.depthById,
         subtreeHeightById: hierarchyMetrics.subtreeHeightById,
       });
-    };
+  }, [hierarchyMetrics]);
+  const stableIntentAt = useCallback((current: Extract<DragState, { active: true }>, clientX: number, clientY: number) => {
+    const nextIntent = intentAt(current, clientX, clientY);
+    if (
+      current.intent.kind === 'unparent'
+      && nextIntent.kind !== 'reorder'
+      && nextIntent.kind !== 'reparent-reorder'
+    ) return current.intent;
+    return nextIntent;
+  }, [intentAt]);
 
-    const autoScroll = () => {
-      autoScrollFrame = 0;
-      const current = dragRef.current;
-      const scroller = scrollRef.current;
-      if (!current?.active || !latestPointer || !scroller) return;
-      const delta = dragAutoScrollDelta(latestPointer.y, scroller.getBoundingClientRect());
-      if (!delta) return;
-      scroller.scrollTop += delta;
-      updateDrag({
+  const autoScrollFrameRef = useRef(0);
+  const latestDragPointRef = useRef<TaskDragPoint | null>(null);
+  const stopAutoScroll = useCallback(() => {
+    if (autoScrollFrameRef.current) cancelAnimationFrame(autoScrollFrameRef.current);
+    autoScrollFrameRef.current = 0;
+    latestDragPointRef.current = null;
+  }, []);
+  const runAutoScroll = useCallback(function tick() {
+    autoScrollFrameRef.current = 0;
+    const current = dragRef.current;
+    const point = latestDragPointRef.current;
+    const scroller = scrollRef.current;
+    if (!current?.active || !point || !scroller) return;
+    const delta = dragAutoScrollDelta(point.clientY, scroller.getBoundingClientRect());
+    if (!delta) return;
+    scroller.scrollTop += delta;
+    updateDrag({
+      ...current,
+      x: point.clientX,
+      y: point.clientY,
+      intent: stableIntentAt(current, point.clientX, point.clientY),
+    });
+    autoScrollFrameRef.current = requestAnimationFrame(tick);
+  }, [stableIntentAt, updateDrag]);
+  const scheduleAutoScroll = useCallback((point: TaskDragPoint) => {
+    latestDragPointRef.current = point;
+    const scroller = scrollRef.current;
+    if (
+      autoScrollFrameRef.current
+      || typeof requestAnimationFrame !== 'function'
+      || !scroller
+      || typeof scroller.getBoundingClientRect !== 'function'
+      || !dragAutoScrollDelta(point.clientY, scroller.getBoundingClientRect())
+    ) return;
+    autoScrollFrameRef.current = requestAnimationFrame(runAutoScroll);
+  }, [runAutoScroll]);
+
+  const moveDrag = useCallback((point: TaskDragPoint) => {
+    const { pointerId, clientX, clientY } = point;
+    const current = dragRef.current;
+    if (!current || current.pointerId !== pointerId) return;
+    const dx = clientX - current.startX;
+    const dy = clientY - current.startY;
+    if (!current.active) {
+      if (Math.hypot(dx, dy) <= DRAG_THRESHOLD_PX) return;
+      const activated: Extract<DragState, { active: true }> = {
         ...current,
-        x: latestPointer.x,
-        y: latestPointer.y,
-        intent: intentAt(current, latestPointer.x, latestPointer.y),
-      });
-      autoScrollFrame = requestAnimationFrame(autoScroll);
-    };
+        active: true,
+        x: clientX,
+        y: clientY,
+        intent: { kind: 'none' },
+      };
+      updateDrag({ ...activated, intent: intentAt(activated, clientX, clientY) });
+      scheduleAutoScroll(point);
+      return;
+    }
+    updateDrag({ ...current, x: clientX, y: clientY, intent: stableIntentAt(current, clientX, clientY) });
+    scheduleAutoScroll(point);
+  }, [intentAt, scheduleAutoScroll, stableIntentAt, updateDrag]);
 
-    const onPointerMove = (e: PointerEvent) => {
-      const current = dragRef.current;
-      if (!current || e.pointerId !== current.pointerId) return;
-      const dx = e.clientX - current.startX;
-      const dy = e.clientY - current.startY;
-      if (!current.active) {
-        if (Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD_PX) {
-          updateDrag({ ...current, active: true, x: e.clientX, y: e.clientY, intent: { kind: 'none' } });
-        }
-        return;
-      }
-      e.preventDefault();
-      latestPointer = { x: e.clientX, y: e.clientY };
-      updateDrag({ ...current, x: e.clientX, y: e.clientY, intent: intentAt(current, e.clientX, e.clientY) });
-      if (!autoScrollFrame && typeof requestAnimationFrame === 'function') {
-        autoScrollFrame = requestAnimationFrame(autoScroll);
-      }
-    };
-    const onPointerUp = (e: PointerEvent) => {
-      const current = dragRef.current;
-      if (!current || e.pointerId !== current.pointerId) return;
+  const finishDrag = useCallback((pointerId: number) => {
+    const current = dragRef.current;
+    if (!current || current.pointerId !== pointerId) return;
+    stopAutoScroll();
+    if (!current.active) {
       updateDrag(null);
-      if (!current.active) return;
+      return;
+    }
+    const finishMoveAnimation = current.intent.kind !== 'none'
+      ? prepareTaskMoveAnimation(scrollRef.current, current.taskId)
+      : null;
+    flushSync(() => {
+      updateDrag(null);
       if (current.intent.kind === 'nest') {
         setParent(current.taskId, current.intent.targetId);
       } else if (current.intent.kind === 'reorder') {
         reorderTask(current.taskId, current.intent.anchorId, current.intent.position, current.intent.storageOrder);
+      } else if (current.intent.kind === 'reparent-reorder') {
+        moveTaskToSibling(current.taskId, current.intent.anchorId, current.intent.position, current.intent.storageOrder);
       } else if (current.intent.kind === 'unparent') {
-        setParent(current.taskId, null);
+        ascendOneLevel(current.taskId);
       }
-    };
-    const onPointerCancel = (e: PointerEvent) => {
-      if (dragRef.current?.pointerId === e.pointerId) updateDrag(null);
-    };
-    eventDocument.addEventListener('pointermove', onPointerMove);
-    eventDocument.addEventListener('pointerup', onPointerUp);
-    eventDocument.addEventListener('pointercancel', onPointerCancel);
-    return () => {
-      if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
-      eventDocument.removeEventListener('pointermove', onPointerMove);
-      eventDocument.removeEventListener('pointerup', onPointerUp);
-      eventDocument.removeEventListener('pointercancel', onPointerCancel);
-    };
-  }, [drag?.taskId, setParent, reorderTask, updateDrag, hierarchyMetrics]);
+    });
+    finishMoveAnimation?.();
+  }, [ascendOneLevel, moveTaskToSibling, reorderTask, setParent, stopAutoScroll, updateDrag]);
+
+  const cancelDrag = useCallback((pointerId: number) => {
+    if (dragRef.current?.pointerId !== pointerId) return;
+    stopAutoScroll();
+    updateDrag(null);
+  }, [stopAutoScroll, updateDrag]);
+
+  useEffect(() => stopAutoScroll, [stopAutoScroll]);
+
   const pullRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [pullReady, setPullReady] = useState(false);
@@ -217,6 +285,10 @@ export function ListView() {
       }
     };
     const onTouchMove = (e: TouchEvent) => {
+      if (dragRef.current) {
+        finishPull(false);
+        return;
+      }
       if (!pulling) return;
       const dy = e.touches[0]!.clientY - startY;
       if (dy > 0 && el.scrollTop <= 0) {
@@ -286,12 +358,14 @@ export function ListView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const splitPctRef = useRef(topPct);
   const splitRectRef = useRef<DOMRect | null>(null);
+  const [splitDragging, setSplitDragging] = useState(false);
   const onSplitPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const container = containerRef.current;
     if (!container) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     splitRectRef.current = container.getBoundingClientRect();
+    setSplitDragging(true);
   }, []);
   const onSplitPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const rect = splitRectRef.current;
@@ -301,16 +375,23 @@ export function ListView() {
     setTopPct(pct);
   }, []);
   const onSplitPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-    e.currentTarget.releasePointerCapture(e.pointerId);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+      localStorage.setItem('todograph.listSplitTopPct', String(Math.round(splitPctRef.current)));
+    }
     splitRectRef.current = null;
-    localStorage.setItem('todograph.listSplitTopPct', String(Math.round(splitPctRef.current)));
+    setSplitDragging(false);
   }, []);
   const onSplitPointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
     splitRectRef.current = null;
+    setSplitDragging(false);
+  }, []);
+  const onSplitLostPointerCapture = useCallback(() => {
+    splitRectRef.current = null;
+    setSplitDragging(false);
   }, []);
   return (
     <div ref={containerRef} className="mobile-list-glass relative h-full flex flex-col">
@@ -347,10 +428,10 @@ export function ListView() {
             collapsed={collapsed}
             onToggleCollapse={toggleCollapse}
             dragTaskId={drag?.active ? drag.taskId : null}
-            dropTargetId={drag?.active && drag.intent.kind === 'nest' ? drag.intent.targetId : null}
-            reorderTargetId={drag?.active && drag.intent.kind === 'reorder' ? drag.intent.anchorId : null}
-            reorderPosition={drag?.active && drag.intent.kind === 'reorder' ? drag.intent.position : undefined}
             onDragStart={handleDragStart}
+            onDragMove={moveDrag}
+            onDragEnd={finishDrag}
+            onDragCancel={cancelDrag}
             onAddChild={handleAddChild}
             empty="暂无可执行任务"
           />
@@ -364,10 +445,10 @@ export function ListView() {
             collapsed={collapsed}
             onToggleCollapse={toggleCollapse}
             dragTaskId={drag?.active ? drag.taskId : null}
-            dropTargetId={drag?.active && drag.intent.kind === 'nest' ? drag.intent.targetId : null}
-            reorderTargetId={drag?.active && drag.intent.kind === 'reorder' ? drag.intent.anchorId : null}
-            reorderPosition={drag?.active && drag.intent.kind === 'reorder' ? drag.intent.position : undefined}
             onDragStart={handleDragStart}
+            onDragMove={moveDrag}
+            onDragEnd={finishDrag}
+            onDragCancel={cancelDrag}
             onAddChild={handleAddChild}
           />
           <Section
@@ -379,10 +460,10 @@ export function ListView() {
             collapsed={collapsed}
             onToggleCollapse={toggleCollapse}
             dragTaskId={drag?.active ? drag.taskId : null}
-            dropTargetId={drag?.active && drag.intent.kind === 'nest' ? drag.intent.targetId : null}
-            reorderTargetId={drag?.active && drag.intent.kind === 'reorder' ? drag.intent.anchorId : null}
-            reorderPosition={drag?.active && drag.intent.kind === 'reorder' ? drag.intent.position : undefined}
             onDragStart={handleDragStart}
+            onDragMove={moveDrag}
+            onDragEnd={finishDrag}
+            onDragCancel={cancelDrag}
             onAddChild={handleAddChild}
             sectionCollapsed={doneSectionCollapsed}
             onToggleSection={() => setDoneSectionCollapsed((value) => !value)}
@@ -393,19 +474,27 @@ export function ListView() {
       {/* 拖动分隔条：移动端可见手柄（12px高 + 中间把手），桌面端细线 */}
       <div
         data-list-split={hasCrossPageReady ? 'adjustable' : 'bottom'}
+        data-list-split-dragging={splitDragging ? 'true' : undefined}
         onPointerDown={hasCrossPageReady ? onSplitPointerDown : undefined}
         onPointerMove={hasCrossPageReady ? onSplitPointerMove : undefined}
         onPointerUp={hasCrossPageReady ? onSplitPointerUp : undefined}
         onPointerCancel={hasCrossPageReady ? onSplitPointerCancel : undefined}
-        className={`shrink-0 h-3 lg:h-[5px] flex items-center justify-center bg-border/30 transition-colors relative group touch-none select-none ${
+        onLostPointerCapture={hasCrossPageReady ? onSplitLostPointerCapture : undefined}
+        className={`shrink-0 h-px lg:h-[5px] flex items-center justify-center transition-colors relative group touch-none select-none ${
+          splitDragging ? 'bg-[hsl(var(--primary))]' : 'bg-border/30'
+        } ${
           hasCrossPageReady
-            ? 'cursor-row-resize hover:bg-[hsl(var(--primary))] active:bg-[hsl(var(--primary))]'
+            ? 'cursor-row-resize lg:hover:bg-[hsl(var(--primary))]'
             : 'cursor-default'
         }`}
         title={hasCrossPageReady ? '拖动调整上下高度' : undefined}
       >
         {/* 中间拖拽把手，仅移动端显示 */}
-        <span className="lg:hidden w-8 h-1 rounded-full bg-muted-foreground/30 group-active:bg-[hsl(var(--primary))] transition-colors" />
+        {hasCrossPageReady && (
+          <span className="absolute right-2 top-1/2 flex h-8 w-10 -translate-y-1/2 items-center justify-center rounded-xl border border-border/70 bg-card/85 shadow-md backdrop-blur lg:hidden">
+            <span className={`h-1 w-5 rounded-full transition-colors ${splitDragging ? 'bg-[hsl(var(--primary))]' : 'bg-muted-foreground/45'}`} />
+          </span>
+        )}
       </div>
 
       {/* 下半部分：其他页面可做（可滚动） */}
@@ -416,26 +505,70 @@ export function ListView() {
       </div>
 
       {/* Ghost overlay：拖拽激活后跟随鼠标 */}
-      {drag?.active && dragTask && (
+      {drag?.active && dragTask && createPortal(
         <div
           className="fixed pointer-events-none z-50"
           style={{
             left: drag.x - drag.offsetX,
             top: drag.y - drag.offsetY,
-            width: '360px', // 匹配 max-w-md + padding
+            width: drag.width,
           }}
         >
-          <div className="rounded-md bg-card border border-border shadow-lg px-2.5 py-2 opacity-90">
-            <TaskItem task={dragTask} depth={0} isDragging />
+          <div className="scale-[1.015] rounded-md border border-border bg-card opacity-95 shadow-2xl">
+            <TaskItem task={dragTask} depth={hierarchyMetrics.depthById.get(dragTask.id) ?? 0} />
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {/* Ungroup 指示线：拖拽激活 + 落点不合法 + 被拖节点原本有父 → 在被拖行左侧画一条蓝色竖线，
-          代表"松手后会脱离父节点，移到顶层（depth=0）"。放到最外层 fixed 覆盖层，
+      {drag?.active && (drag.intent.kind === 'reorder' || drag.intent.kind === 'reparent-reorder' || drag.intent.kind === 'nest') && (
+        <DropIndicator intent={drag.intent} />
+      )}
+
+      {/* Ungroup 指示线：拖拽激活 + 向左退出当前父节点 → 在被拖行左侧画一条蓝色竖线，
+          代表"松手后会上移一个层级"。放到最外层 fixed 覆盖层，
           避免被被拖行的 opacity-30 继承变淡。 */}
       {drag?.active && drag.intent.kind === 'unparent' && <UnparentIndicator taskId={drag.taskId} />}
     </div>
+  );
+}
+
+function DropIndicator({ intent }: { intent: Extract<ListDropIntent, { kind: 'reorder' | 'reparent-reorder' | 'nest' }> }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const targetId = intent.kind === 'nest' ? intent.targetId : intent.anchorId;
+    const target = findTaskRow(document, targetId);
+    const indicator = ref.current;
+    if (!indicator) return;
+    if (!target) {
+      indicator.style.display = 'none';
+      return;
+    }
+    const rect = target.getBoundingClientRect();
+    if (intent.kind === 'nest') {
+      indicator.style.left = `${rect.left + 2}px`;
+      indicator.style.top = `${rect.top + 2}px`;
+      indicator.style.width = `${Math.max(0, rect.width - 4)}px`;
+      indicator.style.height = `${Math.max(0, rect.height - 4)}px`;
+    } else {
+      indicator.style.left = `${rect.left + 8}px`;
+      indicator.style.top = `${intent.position === 'before' ? rect.top - 2 : rect.bottom - 2}px`;
+      indicator.style.width = `${Math.max(0, rect.width - 16)}px`;
+      indicator.style.height = '4px';
+    }
+    indicator.style.display = '';
+  });
+
+  return createPortal(
+    <div
+      ref={ref}
+      data-list-drop-indicator={intent.kind}
+      className={intent.kind === 'nest'
+        ? 'fixed pointer-events-none z-[60] rounded-xl ring-2 ring-inset ring-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.12)] shadow-[0_0_12px_hsl(var(--primary)/0.45)]'
+        : 'fixed pointer-events-none z-[60] rounded-full bg-[hsl(var(--primary))] shadow-[0_0_10px_hsl(var(--primary)/0.8)]'}
+      style={{ display: 'none' }}
+    />,
+    document.body,
   );
 }
 
@@ -480,17 +613,17 @@ interface SectionProps {
   collapsed: Record<string, boolean>;
   onToggleCollapse: (id: string) => void;
   dragTaskId: string | null;
-  dropTargetId: string | null;
-  reorderTargetId: string | null;
-  reorderPosition?: 'before' | 'after';
-  onDragStart: (e: React.PointerEvent, task: Task) => void;
+  onDragStart: (event: TaskDragStart, task: Task) => void;
+  onDragMove: (event: TaskDragPoint) => void;
+  onDragEnd: (pointerId: number) => void;
+  onDragCancel: (pointerId: number) => void;
   onAddChild?: (parentId: string, title: string) => boolean;
   empty?: string;
   sectionCollapsed?: boolean;
   onToggleSection?: () => void;
 }
 
-function Section({ title, mobileKey, hint, items, depInfo, childMap, collapsed, onToggleCollapse, dragTaskId, dropTargetId, reorderTargetId, reorderPosition, onDragStart, onAddChild, empty, sectionCollapsed = false, onToggleSection }: SectionProps) {
+function Section({ title, mobileKey, hint, items, depInfo, childMap, collapsed, onToggleCollapse, dragTaskId, onDragStart, onDragMove, onDragEnd, onDragCancel, onAddChild, empty, sectionCollapsed = false, onToggleSection }: SectionProps) {
   const visibleIds = new Set(items.map(({ task }) => task.id));
   const heading = (
     <>
@@ -540,9 +673,10 @@ function Section({ title, mobileKey, hint, items, depInfo, childMap, collapsed, 
                 isCollapsed={isCollapsed}
                 onToggleCollapse={onToggleCollapse}
                 isDragging={task.id === dragTaskId}
-                isDropTarget={task.id === dropTargetId}
-                reorderPosition={task.id === reorderTargetId ? reorderPosition : undefined}
                 onDragStart={onDragStart}
+                onDragMove={onDragMove}
+                onDragEnd={onDragEnd}
+                onDragCancel={onDragCancel}
                 onAddChild={onAddChild}
               />
             );

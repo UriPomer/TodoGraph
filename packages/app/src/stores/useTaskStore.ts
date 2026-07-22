@@ -80,6 +80,8 @@ interface TaskStore {
   ) => boolean;
   /** 按列表视觉顺序把任务放到同级锚点之前或之后，不改变父子关系。 */
   reorderTask: (taskId: string, anchorId: string, position: 'before' | 'after', storageOrder: 'forward' | 'reverse') => boolean;
+  /** 原子地改为锚点的同级任务并放入指定列表插槽。 */
+  moveTaskToSibling: (taskId: string, anchorId: string, position: 'before' | 'after', storageOrder: 'forward' | 'reverse') => boolean;
   ascendOneLevel: (childId: string) => boolean;
   /** 把一批子任务合并到一个新父任务下；若 existingParentId 给出则复用它，否则创建新父。 */
   groupTasks: (
@@ -869,6 +871,62 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         )),
         listRevision: current.listRevision + 1,
       }));
+      scheduleSave();
+      return true;
+    },
+    moveTaskToSibling: (taskId, anchorId, position, storageOrder) => {
+      const state = get();
+      const index = buildHierarchyIndex(state.nodes);
+      const task = index.byId.get(taskId);
+      const anchor = index.byId.get(anchorId);
+      if (!task || !anchor || task.id === anchor.id) return false;
+
+      const targetParentId = anchor.parentId ?? null;
+      if (targetParentId && wouldCreateParentCycleFromIndex(index, taskId, targetParentId)) {
+        toast.error('父子关系会形成循环', '已阻止');
+        return false;
+      }
+      if (wouldExceedMaxDepthFromIndex(index, taskId, targetParentId)) {
+        toast.error(`嵌套不能超过 ${MAX_HIERARCHY_DEPTH} 层`, '已阻止');
+        return false;
+      }
+
+      const storagePosition = storageOrder === 'forward'
+        ? position
+        : position === 'before' ? 'after' : 'before';
+      const withoutTask = state.nodes.filter((node) => node.id !== taskId);
+      const anchorIndex = withoutTask.findIndex((node) => node.id === anchorId);
+      if (anchorIndex < 0) return false;
+      const insertionIndex = anchorIndex + (storagePosition === 'after' ? 1 : 0);
+      const sameParent = (task.parentId ?? null) === targetParentId;
+      let movedTask = task;
+      if (!sameParent) {
+        const world = task.x === undefined || task.y === undefined
+          ? (state.viewportCenter ?? { x: 200, y: 100 })
+          : worldPositionFromIndex(index, taskId);
+        const parentWorld = targetParentId
+          ? worldPositionFromIndex(index, targetParentId)
+          : { x: 0, y: 0 };
+        movedTask = {
+          ...task,
+          parentId: targetParentId ?? undefined,
+          x: world.x - parentWorld.x,
+          y: world.y - parentWorld.y,
+        };
+      }
+      withoutTask.splice(insertionIndex, 0, movedTask);
+      if (state.nodes.every((node, nodeIndex) => node === withoutTask[nodeIndex])) return false;
+
+      pushPre();
+      set({
+        nodes: withoutTask,
+        listRevision: state.listRevision + 1,
+      });
+      if (targetParentId && !sameParent) {
+        get().normalizeGroupBounds(targetParentId, [taskId]);
+      } else if (!targetParentId && !sameParent) {
+        set((current) => ({ nodes: repairGeometry(current.nodes, [taskId]) }));
+      }
       scheduleSave();
       return true;
     },

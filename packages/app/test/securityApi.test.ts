@@ -65,6 +65,8 @@ describe('security API client', () => {
     const html = renderToStaticMarkup(createElement(McpSetupDialog, { open: true, embedded: true }));
     expect(html).toContain('role="switch"');
     expect(html).toContain('aria-checked="false"');
+    expect(html).toContain('inline-flex h-6 w-11 shrink-0 items-center');
+    expect(html).toContain('h-5 w-5 rounded-full');
     expect(html).not.toContain('type="checkbox"');
   });
 

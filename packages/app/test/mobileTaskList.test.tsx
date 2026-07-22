@@ -3,6 +3,7 @@ import { act, create } from 'react-test-renderer';
 import type { ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ListView } from '../src/features/tasks/ListView';
+import { TaskItem } from '../src/features/tasks/TaskItem';
 import { ThemeProvider } from '../src/features/theme/ThemeProvider';
 import { useTaskStore } from '../src/stores/useTaskStore';
 import { useWorkspaceStore } from '../src/stores/useWorkspaceStore';
@@ -46,6 +47,15 @@ describe('mobile task list', () => {
     expect(html).toContain('Blocked');
     expect(html).toContain('Done');
     expect(html).toContain('可执行');
+    const taskHtml = renderToStaticMarkup(
+      <TaskItem task={{ id: 'mobile-task', title: '移动任务', status: 'todo' }} />,
+    );
+    const descriptionButton = taskHtml.match(/<button[^>]*data-task-action="description"[^>]*>/)?.[0];
+    expect(descriptionButton).toBeDefined();
+    expect(descriptionButton).not.toContain('max-lg:hidden');
+    expect(descriptionButton).not.toMatch(/(?:^|\s)hover:/);
+    expect(taskHtml).not.toContain('data-mobile-task-open="true"');
+    expect(taskHtml).toMatch(/data-mobile-hidden-action="delete"[^>]*class="[^"]*max-lg:hidden/);
   });
 
   it('moves the split bar to the bottom when no other page has ready tasks', () => {
@@ -53,7 +63,11 @@ describe('mobile task list', () => {
 
     let renderer: ReactTestRenderer;
     act(() => {
-      renderer = create(<ListView />);
+      renderer = create(<ListView />, {
+        createNodeMock: (element) => String(element.props.className).includes('mobile-list-glass')
+          ? { getBoundingClientRect: () => ({ top: 0, height: 800 }) }
+          : null,
+      });
     });
     const scrollArea = () =>
       renderer.root.find(
@@ -83,6 +97,45 @@ describe('mobile task list', () => {
     expect(scrollArea().props.style.height).toBe('65%');
     expect(renderer.root.findByProps({ 'data-list-split': 'adjustable' })).toBeTruthy();
     expect(JSON.stringify(renderer.toJSON())).toContain('其他页面可做');
+    const split = renderer.root.findByProps({ 'data-list-split': 'adjustable' });
+    expect(split.props.className).toContain('h-px');
+    expect(split.props.className).toContain('lg:hover:bg-');
+    expect(split.props.className).not.toMatch(/(?:^|\s)hover:/);
+
+    let captured = false;
+    const pointerTarget = {
+      setPointerCapture: () => { captured = true; },
+      hasPointerCapture: () => captured,
+      releasePointerCapture: () => { captured = false; },
+    };
+    act(() => split.props.onPointerDown({
+      pointerId: 1,
+      clientY: 400,
+      preventDefault: () => {},
+      currentTarget: pointerTarget,
+    }));
+    const draggingSplit = renderer.root.findByProps({ 'data-list-split': 'adjustable' });
+    expect(draggingSplit.props['data-list-split-dragging']).toBe('true');
+    expect(draggingSplit.props.className).toContain('bg-[hsl(var(--primary))]');
+
+    act(() => draggingSplit.props.onPointerCancel({ pointerId: 1, currentTarget: pointerTarget }));
+    const releasedSplit = renderer.root.findByProps({ 'data-list-split': 'adjustable' });
+    expect(releasedSplit.props['data-list-split-dragging']).toBeUndefined();
+    expect(releasedSplit.props.className).toContain('bg-border/30');
+
+    act(() => releasedSplit.props.onPointerDown({
+      pointerId: 2,
+      clientY: 400,
+      preventDefault: () => {},
+      currentTarget: pointerTarget,
+    }));
+    const recapturedSplit = renderer.root.findByProps({ 'data-list-split': 'adjustable' });
+    expect(recapturedSplit.props['data-list-split-dragging']).toBe('true');
+
+    act(() => recapturedSplit.props.onLostPointerCapture());
+    const captureLostSplit = renderer.root.findByProps({ 'data-list-split': 'adjustable' });
+    expect(captureLostSplit.props['data-list-split-dragging']).toBeUndefined();
+    expect(captureLostSplit.props.className).toContain('bg-border/30');
 
     act(() => renderer.unmount());
   });

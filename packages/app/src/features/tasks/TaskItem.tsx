@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronRight, ChevronDown, FileText, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { Check, ChevronRight, ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
 import { MAX_HIERARCHY_DEPTH, type Task } from '@todograph/shared';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/LinkifiedText';
@@ -7,6 +7,21 @@ import { MAX_TITLE_LENGTH } from '@/lib/measureText';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { toast } from '@/components/ui/toaster-store';
 import { dialog } from '@/components/ui/dialog-store';
+
+export interface TaskDragStart {
+  pointerId: number;
+  pointerType: string;
+  clientX: number;
+  clientY: number;
+  sourceElement: HTMLElement;
+  activateImmediately: boolean;
+}
+
+export interface TaskDragPoint {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+}
 
 interface Props {
   task: Task;
@@ -21,27 +36,46 @@ interface Props {
   onToggleCollapse?: (taskId: string) => void;
   /** 当前是否正在被拖拽 */
   isDragging?: boolean;
-  /** 当前是否是 hover 的 drop target */
-  isDropTarget?: boolean;
-  /** 当前行边缘显示的排序落点。 */
-  reorderPosition?: 'before' | 'after';
   /** 专用把手的 pointerdown 拖拽开始回调 */
-  onDragStart?: (e: React.PointerEvent, task: Task) => void;
+  onDragStart?: (event: TaskDragStart, task: Task) => void;
+  onDragMove?: (event: TaskDragPoint) => void;
+  onDragEnd?: (pointerId: number) => void;
+  onDragCancel?: (pointerId: number) => void;
   /** 添加子任务；仅在 depth < MAX-1 时传入才显示按钮 */
   onAddChild?: (parentId: string, title: string) => boolean;
+}
+
+function caretOffsetFromPoint(element: HTMLElement, clientX: number, clientY: number) {
+  const ownerDocument = element.ownerDocument as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  const caret = ownerDocument.caretPositionFromPoint?.(clientX, clientY);
+  const fallbackRange = caret ? null : ownerDocument.caretRangeFromPoint?.(clientX, clientY);
+  const node = caret?.offsetNode ?? fallbackRange?.startContainer;
+  const offset = caret?.offset ?? fallbackRange?.startOffset;
+  if (node && offset !== undefined && element.contains(node)) {
+    const range = ownerDocument.createRange();
+    range.selectNodeContents(element);
+    range.setEnd(node, offset);
+    return range.toString().length;
+  }
+  const rect = element.getBoundingClientRect();
+  const ratio = rect.width > 0 ? Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) : 1;
+  return Math.round((element.textContent?.length ?? 0) * ratio);
 }
 
 /**
  * 极简任务行（参考 ref.PNG）：
  * - 无卡片边框/背景，仅靠空白与分组呈现
- * - 左侧拖动把手；状态圆点：todo=空心 / doing=中心点 / done=实心 + 勾
+ * - 桌面端拖动任务行、触屏长按拖起；状态圆点：todo=空心 / doing=中心点 / done=实心 + 勾
  * - done 状态整行灰化 + 标题 line-through
  * - 子任务、描述和删除按钮在行尾集中显示
  *
  * 用 memo 包住：ListView 每次 store 变化都会重排列表，但对于未变动的行
  * props 引用相同时跳过重渲染，避免大列表下 input 输入卡顿。
  */
-export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0, hasChildren, isCollapsed, onToggleCollapse, isDragging, isDropTarget, reorderPosition, onDragStart, onAddChild }: Props) {
+export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0, hasChildren, isCollapsed, onToggleCollapse, isDragging, onDragStart, onDragMove, onDragEnd, onDragCancel, onAddChild }: Props) {
   const toggleStatus = useTaskStore((s) => s.toggleStatus);
   const completeTask = useTaskStore((s) => s.completeTask);
   const updateTask = useTaskStore((s) => s.updateTask);
@@ -52,12 +86,19 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
   const [descDraft, setDescDraft] = useState(task.description ?? '');
   const [addingChild, setAddingChild] = useState(false);
   const [childDraft, setChildDraft] = useState('');
+  const rowRef = useRef<HTMLLIElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const editCaretRef = useRef<number | null>(null);
+  const lastTitleTapRef = useRef<{ at: number } | null>(null);
   const descRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (editing) {
-      inputRef.current?.focus();
+      const input = inputRef.current;
+      input?.focus();
+      const caret = editCaretRef.current ?? input?.value.length ?? 0;
+      input?.setSelectionRange(caret, caret);
+      editCaretRef.current = null;
     }
   }, [editing]);
 
@@ -69,6 +110,13 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
   useEffect(() => {
     if (descExpanded) descRef.current?.focus();
   }, [descExpanded]);
+
+  const beginTitleEditing = useCallback((element: HTMLElement, clientX: number, clientY: number) => {
+    window.getSelection()?.removeAllRanges();
+    editCaretRef.current = caretOffsetFromPoint(element, clientX, clientY);
+    setDraft(task.title);
+    setEditing(true);
+  }, [task.title]);
 
   const commit = () => {
     const t = draft.trim();
@@ -96,18 +144,24 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
     }
   };
 
-  // ===== 移动端滑动手势：纯 DOM 动画，不经过 React 渲染管线 =====
-  // touchmove 期间每帧 ~16ms 预算，React reconciliation 太慢，改用 ref 直接操作 DOM
+  // 移动端只使用这一套 Touch 状态机。浏览器可能因 pan-y 取消 Pointer 流，
+  // 因此手机滚动、滑动、双触和长按拖拽不能再分散到 Pointer handlers。
   const swipeLayerRef = useRef<HTMLDivElement>(null);
   const bgRightRef = useRef<HTMLDivElement>(null);
-  const bgLeftRef = useRef<HTMLDivElement>(null);
-  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
-  const swipeOffsetRef = useRef(0); //  touchmove 期间累积偏移，供 touchend 读
-  const swipingRef = useRef(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mobileGestureRef = useRef<
+    | { kind: 'idle' }
+    | { kind: 'pending'; touchId: number; startX: number; startY: number; lastX: number; lastY: number; titleElement: HTMLElement | null; sourceElement: HTMLElement }
+    | { kind: 'scrolling'; touchId: number }
+    | { kind: 'swiping'; touchId: number; startX: number; offset: number }
+    | { kind: 'dragging'; touchId: number }
+  >({ kind: 'idle' });
   const SWIPE_START_THRESHOLD = 18;
   const SWIPE_COMMIT_THRESHOLD = 96;
+  const LONG_PRESS_DELAY_MS = 240;
+  const TAP_SLOP_PX = 8;
 
-  const cancelSwipeDOM = () => {
+  const cancelSwipeDOM = useCallback(() => {
     const el = swipeLayerRef.current;
     if (el) {
       el.style.transition = 'transform 0.2s ease-out';
@@ -118,167 +172,246 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       bgRightRef.current.style.backgroundColor = 'transparent';
       bgRightRef.current.textContent = '完成';
     }
-    if (bgLeftRef.current) {
-      bgLeftRef.current.style.opacity = '0';
-      bgLeftRef.current.style.backgroundColor = 'transparent';
-      bgLeftRef.current.textContent = '删除';
-    }
-  };
-
-  const onSwipeStart = useCallback((e: React.TouchEvent) => {
-    // 多指触控（双指缩放等）不触发滑动
-    if (e.touches.length > 1) return;
-    swipeStartRef.current = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY };
-    swipingRef.current = false;
   }, []);
 
-  const onSwipeMove = useCallback((e: React.TouchEvent) => {
-    // 多指触控：取消当前滑动
-    if (e.touches.length > 1) {
-      if (swipingRef.current || swipeStartRef.current) {
-        swipeStartRef.current = null;
-        swipingRef.current = false;
-        swipeOffsetRef.current = 0;
-        cancelSwipeDOM();
-      }
-      return;
-    }
-    const start = swipeStartRef.current;
-    if (!start) return;
-    const dx = e.touches[0]!.clientX - start.x;
-    const dy = e.touches[0]!.clientY - start.y;
-
-    if (!swipingRef.current) {
-      if (Math.abs(dx) > SWIPE_START_THRESHOLD && Math.abs(dx) > Math.abs(dy) * 1.35) {
-        swipingRef.current = true;
-        const el = swipeLayerRef.current;
-        if (el) el.style.transition = 'none';
-      } else return;
-    }
-
-    const mag = Math.abs(dx);
+  const renderSwipe = useCallback((dx: number) => {
+    const mag = Math.max(0, dx);
     const clamped = mag > 100 ? 100 + (mag - 100) * 0.3 : mag;
-    const offset = dx > 0 ? clamped : -clamped;
-    swipeOffsetRef.current = offset;
-    e.preventDefault();
-
     const el = swipeLayerRef.current;
-    if (el) el.style.transform = `translateX(${offset}px)`;
+    if (el) el.style.transform = `translateX(${clamped}px)`;
 
-    const armed = Math.abs(offset) >= SWIPE_COMMIT_THRESHOLD;
-    const opacity = Math.min(1, Math.max(0, (Math.abs(offset) - 36) / 60));
+    const armed = clamped >= SWIPE_COMMIT_THRESHOLD;
+    const opacity = Math.min(1, Math.max(0, (clamped - 36) / 60));
     if (bgRightRef.current) {
       bgRightRef.current.style.opacity = String(dx > 0 ? opacity : 0);
       bgRightRef.current.style.backgroundColor = armed && dx > 0 ? 'hsl(var(--success) / 0.12)' : 'transparent';
       bgRightRef.current.textContent = armed && dx > 0 ? '松手完成' : '完成';
     }
-    if (bgLeftRef.current) {
-      bgLeftRef.current.style.opacity = String(dx < 0 ? opacity : 0);
-      bgLeftRef.current.style.backgroundColor = armed && dx < 0 ? 'hsl(var(--destructive) / 0.12)' : 'transparent';
-      bgLeftRef.current.textContent = armed && dx < 0 ? '松手删除' : '删除';
-    }
+    return clamped;
   }, []);
 
-  const onSwipeEnd = useCallback((e: React.TouchEvent) => {
-    // 仍有手指在屏幕上（双指缩放中一根手指抬起）：取消滑动
-    if (e.touches.length > 0) {
-      swipeStartRef.current = null;
-      swipingRef.current = false;
-      swipeOffsetRef.current = 0;
-      cancelSwipeDOM();
-      return;
-    }
-    swipeStartRef.current = null;
-    swipingRef.current = false;
-    const offset = swipeOffsetRef.current;
-    swipeOffsetRef.current = 0;
-
+  const finishSwipe = useCallback((offset: number) => {
     cancelSwipeDOM();
-
-    if (Math.abs(offset) >= SWIPE_COMMIT_THRESHOLD) {
+    if (offset >= SWIPE_COMMIT_THRESHOLD) {
       setTimeout(() => {
-        if (offset >= SWIPE_COMMIT_THRESHOLD) {
-          if (task.status === 'done') return;
-          if (completeTask(task.id)) {
-            toast.action('已完成', '撤销', () => useTaskStore.getState().undo(), task.title);
-          } else {
-            toast.info('无法完成', '该任务下还有未完成的子任务');
-          }
+        if (task.status === 'done') return;
+        if (completeTask(task.id)) {
+          toast.action('已完成', '撤销', () => useTaskStore.getState().undo(), task.title);
         } else {
-          deleteTask(task.id);
-          toast.action('已删除', '撤销', () => useTaskStore.getState().undo(), task.title);
+          toast.info('无法完成', '该任务下还有未完成的子任务');
         }
       }, 220);
     }
-  }, [completeTask, deleteTask, task.id, task.status, task.title]);
-  const onSwipeCancel = useCallback(() => {
-    swipeStartRef.current = null;
-    swipingRef.current = false;
-    swipeOffsetRef.current = 0;
-    cancelSwipeDOM();
+  }, [cancelSwipeDOM, completeTask, task.id, task.status, task.title]);
+
+  const cancelLongPress = useCallback(() => {
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
   }, []);
+
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row || typeof row.addEventListener !== 'function') return;
+    const resetGesture = () => {
+      cancelLongPress();
+      mobileGestureRef.current = { kind: 'idle' };
+    };
+    const touchById = (touches: TouchList, touchId: number) =>
+      Array.from(touches).find((touch) => touch.identifier === touchId) ?? null;
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) {
+        const current = mobileGestureRef.current;
+        if (current.kind === 'dragging') onDragCancel?.(current.touchId);
+        resetGesture();
+        cancelSwipeDOM();
+        return;
+      }
+      const target = event.target as HTMLElement;
+      const titleElement = target.closest('[data-task-title]') as HTMLElement | null;
+      if (target.closest('button, input, textarea') || (target.closest('a') && !titleElement)) return;
+      const touch = event.touches[0]!;
+      const pending = {
+        kind: 'pending' as const,
+        touchId: touch.identifier,
+        startX: touch.clientX,
+        startY: touch.clientY,
+        lastX: touch.clientX,
+        lastY: touch.clientY,
+        titleElement,
+        sourceElement: row,
+      };
+      mobileGestureRef.current = pending;
+      if (!onDragStart) return;
+      longPressTimerRef.current = setTimeout(() => {
+        const current = mobileGestureRef.current;
+        if (current.kind !== 'pending' || current.touchId !== pending.touchId) return;
+        longPressTimerRef.current = null;
+        cancelSwipeDOM();
+        mobileGestureRef.current = { kind: 'dragging', touchId: current.touchId };
+        onDragStart({
+          pointerId: current.touchId,
+          pointerType: 'touch',
+          clientX: current.lastX,
+          clientY: current.lastY,
+          sourceElement: current.sourceElement,
+          activateImmediately: true,
+        }, task);
+      }, LONG_PRESS_DELAY_MS);
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const current = mobileGestureRef.current;
+      if (current.kind === 'idle') return;
+      const touch = touchById(event.touches, current.touchId);
+      if (!touch) return;
+      if (current.kind === 'dragging') {
+        if (event.cancelable) event.preventDefault();
+        onDragMove?.({ pointerId: current.touchId, clientX: touch.clientX, clientY: touch.clientY });
+        return;
+      }
+      if (current.kind === 'swiping') {
+        if (event.cancelable) event.preventDefault();
+        const offset = renderSwipe(touch.clientX - current.startX);
+        mobileGestureRef.current = { ...current, offset };
+        return;
+      }
+      if (current.kind === 'scrolling') return;
+      const dx = touch.clientX - current.startX;
+      const dy = touch.clientY - current.startY;
+      if (dx > SWIPE_START_THRESHOLD && dx > Math.abs(dy) * 1.35) {
+        cancelLongPress();
+        const el = swipeLayerRef.current;
+        if (el) el.style.transition = 'none';
+        const offset = renderSwipe(dx);
+        mobileGestureRef.current = { kind: 'swiping', touchId: current.touchId, startX: current.startX, offset };
+        if (event.cancelable) event.preventDefault();
+        return;
+      }
+      if (Math.hypot(dx, dy) > TAP_SLOP_PX) {
+        cancelLongPress();
+        mobileGestureRef.current = { kind: 'scrolling', touchId: current.touchId };
+        return;
+      }
+      mobileGestureRef.current = { ...current, lastX: touch.clientX, lastY: touch.clientY };
+    };
+    const onTouchEnd = (event: TouchEvent) => {
+      const current = mobileGestureRef.current;
+      if (current.kind === 'idle') return;
+      cancelLongPress();
+      if (current.kind === 'dragging') {
+        if (event.cancelable) event.preventDefault();
+        onDragEnd?.(current.touchId);
+      } else if (current.kind === 'swiping') {
+        finishSwipe(current.offset);
+      } else if (current.kind === 'pending' && current.titleElement) {
+        const now = Date.now();
+        const previous = lastTitleTapRef.current;
+        if (previous && now - previous.at <= 320) {
+          lastTitleTapRef.current = null;
+          beginTitleEditing(current.titleElement, current.lastX, current.lastY);
+        } else {
+          lastTitleTapRef.current = { at: now };
+        }
+      }
+      mobileGestureRef.current = { kind: 'idle' };
+    };
+    const onTouchCancel = () => {
+      const current = mobileGestureRef.current;
+      if (current.kind === 'dragging') onDragCancel?.(current.touchId);
+      cancelSwipeDOM();
+      resetGesture();
+    };
+    row.addEventListener('touchstart', onTouchStart, { passive: true });
+    row.addEventListener('touchmove', onTouchMove, { passive: false });
+    row.addEventListener('touchend', onTouchEnd, { passive: false });
+    row.addEventListener('touchcancel', onTouchCancel);
+    return () => {
+      const current = mobileGestureRef.current;
+      if (current.kind === 'dragging') onDragCancel?.(current.touchId);
+      cancelLongPress();
+      row.removeEventListener('touchstart', onTouchStart);
+      row.removeEventListener('touchmove', onTouchMove);
+      row.removeEventListener('touchend', onTouchEnd);
+      row.removeEventListener('touchcancel', onTouchCancel);
+    };
+  }, [beginTitleEditing, cancelLongPress, cancelSwipeDOM, finishSwipe, onDragCancel, onDragEnd, onDragMove, onDragStart, renderSwipe, task]);
+
+  const onRowPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!onDragStart || !event.isPrimary || event.pointerType !== 'mouse' || event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest('button, a, input, textarea')) return;
+    if (target.closest('[data-task-title]')) return;
+    const sourceElement = event.currentTarget.closest('[data-task-id]') as HTMLElement | null;
+    if (!sourceElement) return;
+    const dragSurface = event.currentTarget;
+    const start = {
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      sourceElement,
+      activateImmediately: false,
+    };
+    dragSurface.setPointerCapture?.(event.pointerId);
+    onDragStart(start, task);
+  }, [onDragStart, task]);
+
+  const onRowPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== 'mouse' || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    event.preventDefault();
+    onDragMove?.({ pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY });
+  }, [onDragMove]);
+
+  const onRowPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== 'mouse') return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    onDragEnd?.(event.pointerId);
+  }, [onDragEnd]);
+
+  const onRowPointerCancel = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== 'mouse') return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    onDragCancel?.(event.pointerId);
+  }, [onDragCancel]);
 
   return (
     <li
+      ref={rowRef}
       data-task-id={task.id}
       onClick={(e) => {
         if (!(e.target as HTMLElement).closest('button, input, textarea, a, [data-task-title]')) {
           window.getSelection()?.removeAllRanges();
         }
       }}
-      onTouchStart={onSwipeStart}
-      onTouchMove={onSwipeMove}
-      onTouchEnd={onSwipeEnd}
-      onTouchCancel={onSwipeCancel}
       data-lens
       className={cn(
         'group relative flex flex-col select-none [content-visibility:auto] [contain-intrinsic-size:auto_52px]',
         'transition-colors duration-200',
-        'hover:bg-foreground/[0.035]',
+        'lg:hover:bg-foreground/[0.035]',
         isDragging && 'opacity-30 scale-[0.98]',
-        isDropTarget && 'bg-primary/10 border-l-2 border-primary',
         task.status === 'done' && !isDragging && 'text-muted-foreground',
       )}
     >
-      {reorderPosition && (
-        <span
-          data-reorder-indicator={reorderPosition}
-          className={cn(
-            'pointer-events-none absolute inset-x-2 z-20 h-0.5 rounded-full bg-[hsl(var(--primary))] shadow-[0_0_6px_hsl(var(--primary)/0.55)]',
-            reorderPosition === 'before' ? 'top-0' : 'bottom-0',
-          )}
-        />
-      )}
       {/* 滑动手势背景指示 — 由 ref 直接操作 DOM，不经过 React */}
       <div ref={bgRightRef} className="absolute inset-y-0 left-0 flex items-center pl-4 text-sm font-semibold text-[hsl(var(--success))] pointer-events-none" style={{ opacity: 0 }}>
         完成
       </div>
-      <div ref={bgLeftRef} className="absolute inset-y-0 right-0 flex items-center pr-4 text-sm font-semibold text-destructive pointer-events-none" style={{ opacity: 0 }}>
-        删除
-      </div>
-
       <div
         ref={swipeLayerRef}
         className="relative flex flex-col will-change-transform"
         style={{ paddingLeft: `${12 + depth * 20}px` }}
       >
-      <div className="flex items-center gap-2 py-1.5 pr-2 max-lg:min-h-[44px]">
-      <button
-        type="button"
-        title="拖动任务"
-        aria-label={`拖动任务：${task.title}`}
-        onPointerDown={(event) => {
-          event.stopPropagation();
-          onDragStart?.(event, task);
-        }}
-        onTouchStart={(event) => event.stopPropagation()}
-        onTouchMove={(event) => event.stopPropagation()}
-        onTouchEnd={(event) => event.stopPropagation()}
-        onClick={(event) => event.stopPropagation()}
-        className="flex h-8 w-6 shrink-0 touch-none cursor-grab items-center justify-center rounded-lg text-muted-foreground/55 transition-colors hover:bg-foreground/5 hover:text-muted-foreground active:cursor-grabbing max-lg:h-10 max-lg:w-7"
+      <div
+        data-task-drag-surface="true"
+        className="flex items-center gap-2 py-1.5 pr-2 lg:cursor-grab lg:active:cursor-grabbing max-lg:min-h-[44px]"
+        onPointerDown={onRowPointerDown}
+        onPointerMove={onRowPointerMove}
+        onPointerUp={onRowPointerUp}
+        onPointerCancel={onRowPointerCancel}
       >
-        <GripVertical className="h-4 w-4" />
-      </button>
       {/* 折叠/展开按钮 */}
       {hasChildren && (
         <button
@@ -286,7 +419,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
             e.stopPropagation();
             onToggleCollapse?.(task.id);
           }}
-          className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded hover:bg-foreground/5 transition-colors"
+          className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded lg:hover:bg-foreground/5 transition-colors"
           title={isCollapsed ? '展开' : '折叠'}
         >
           {isCollapsed ? (
@@ -323,25 +456,27 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
               setEditing(false);
             }
           }}
-          className="flex-1 min-w-0 bg-transparent text-sm outline-none"
+          className="min-w-0 flex-1 border-b border-[hsl(var(--primary))] bg-transparent pb-0.5 text-sm outline-none"
         />
       ) : (
-        <span
-          data-task-title="true"
-          onDoubleClick={(event) => {
-            event.preventDefault();
-            window.getSelection()?.removeAllRanges();
-            setDraft(task.title);
-            setEditing(true);
-          }}
-          className={cn(
-            'flex-1 min-w-0 truncate text-sm cursor-text select-text',
-            task.status === 'done' && 'line-through',
-          )}
-          title="双击编辑"
-        >
-          <LinkifiedText text={task.title} className="truncate" />
-        </span>
+        <div data-task-title-slot="true" className="min-w-0 flex-1 overflow-hidden">
+          <span
+            data-task-title="true"
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              beginTitleEditing(event.currentTarget, event.clientX, event.clientY);
+            }}
+            className={cn(
+              'inline-block max-w-full touch-manipulation truncate align-middle text-sm cursor-text select-text',
+              task.status === 'done' && 'line-through',
+            )}
+            title="双击编辑"
+          >
+            <LinkifiedText text={task.title} className="truncate" />
+          </span>
+        </div>
       )}
 
       {dependencyInfo && dependencyInfo.undone > 0 && (
@@ -354,7 +489,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       )}
 
       {/* 优先级 & 删除：hover 或 focus 时浮现，保持视觉纯净 */}
-      <div className="flex items-center gap-1.5 opacity-60 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
+      <div className="flex items-center gap-1.5 opacity-60 transition-opacity duration-150 lg:group-hover:opacity-100 lg:focus-within:opacity-100">
         {onAddChild && depth < MAX_HIERARCHY_DEPTH - 1 && (
           <button
             onClick={(e) => {
@@ -365,7 +500,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
             className={cn(
               'flex h-8 w-8 shrink-0 items-center justify-center text-muted-foreground rounded-lg',
               'transition-[color,transform,background-color] duration-150 ease-out',
-              'hover:text-[hsl(var(--primary))] hover:bg-foreground/5 active:scale-90',
+              'lg:hover:text-[hsl(var(--primary))] lg:hover:bg-foreground/5 active:scale-90',
             )}
             title="添加子任务"
           >
@@ -374,15 +509,16 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
         )}
 
         <button
+          data-task-action="description"
           onClick={(e) => {
             e.stopPropagation();
             setDescExpanded((v) => !v);
           }}
           onMouseDown={(e) => e.stopPropagation()}
           className={cn(
-              'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+            'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
             'transition-[color,transform,background-color] duration-150 ease-out',
-            'hover:bg-foreground/5 active:scale-90',
+            'lg:hover:bg-foreground/5 active:scale-90',
             task.description ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground',
           )}
           title={task.description ? '查看/编辑描述' : '添加描述'}
@@ -391,6 +527,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
         </button>
 
         <button
+          data-mobile-hidden-action="delete"
           onClick={async () => {
             const ok = await dialog.confirm(`删除「${task.title}」`, {
               description: '删除后可从撤销 toast 恢复',
@@ -402,9 +539,9 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
             }
           }}
           className={cn(
-              'flex h-8 w-8 shrink-0 items-center justify-center text-muted-foreground rounded-lg ml-1',
+              'flex h-8 w-8 shrink-0 items-center justify-center text-muted-foreground rounded-lg ml-1 max-lg:hidden',
             'transition-[color,transform,background-color] duration-150 ease-out',
-            'hover:text-destructive hover:bg-foreground/5 active:scale-90',
+            'lg:hover:text-destructive lg:hover:bg-foreground/5 active:scale-90',
             'max-lg:min-h-[28px] max-lg:min-w-[28px]',
           )}
           title="删除"
@@ -450,16 +587,16 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
             ref={descRef}
             value={descDraft}
             onChange={(e) => setDescDraft(e.target.value)}
-            onBlur={() => { commitDesc(); setDescExpanded(false); }}
+            onBlur={commitDesc}
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
                 setDescDraft(task.description ?? '');
                 setDescExpanded(false);
               }
             }}
-            rows={3}
+            rows={2}
             placeholder="添加描述..."
-            className="w-full resize-y rounded border border-border bg-background px-2 py-1.5 text-xs outline-none focus:border-[hsl(var(--primary))]"
+            className="w-full resize-none border-0 border-l-2 border-[hsl(var(--primary)/0.35)] bg-transparent px-2 py-1 text-base font-normal leading-5 tracking-normal text-muted-foreground outline-none placeholder:text-muted-foreground/45 focus:border-[hsl(var(--primary)/0.7)] lg:text-xs lg:leading-4"
           />
         </div>
       )}
@@ -467,7 +604,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       {/* 折叠态下的单行预览：有描述且未展开时显示 */}
       {!descExpanded && task.description && (
         <p
-          className="pb-1 pr-2 text-xs text-muted-foreground/80 line-clamp-1"
+          className="pb-1 pr-2 text-[11px] font-normal leading-4 tracking-normal text-muted-foreground/75 line-clamp-1 max-lg:hidden lg:text-xs"
           style={{ paddingLeft: `${10 + 14 + 16}px` }}
         >
           <LinkifiedText text={task.description} />
@@ -488,11 +625,11 @@ function StatusDot({
 }) {
   return (
     <button
-      onClick={onClick}
+      onClick={(event) => { event.stopPropagation(); onClick(); }}
       className={cn(
         'relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full lg:h-7 lg:w-7',
         'transition-[transform,box-shadow] duration-150 ease-out',
-        'hover:scale-110 active:scale-90',
+        'lg:hover:scale-110 active:scale-90',
       )}
       title="点击切换状态 todo → doing → done"
     >

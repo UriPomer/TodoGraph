@@ -162,7 +162,7 @@ export function MobilePageSelectorView({
   );
 }
 
-export function PageBar({ onModeChange }: { onModeChange?: (mode: 'list' | 'graph') => void }) {
+export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onModeChange?: (mode: 'list' | 'graph') => void }) {
   const meta = useWorkspaceStore((s) => s.meta);
   const switchPage = useWorkspaceStore((s) => s.switchPage);
   const createPage = useWorkspaceStore((s) => s.createPage);
@@ -182,7 +182,7 @@ export function PageBar({ onModeChange }: { onModeChange?: (mode: 'list' | 'grap
     [meta],
   );
   const systemPage = meta?.pages.find((page) => page.id === SYSTEM_HIERARCHY_PAGE_ID);
-  const isListMode = meta?.activePageId === SYSTEM_HIERARCHY_PAGE_ID;
+  const isListMode = mode ? mode === 'list' : meta?.activePageId === SYSTEM_HIERARCHY_PAGE_ID;
 
   useEffect(() => {
     if (meta?.activePageId && meta.activePageId !== SYSTEM_HIERARCHY_PAGE_ID) {

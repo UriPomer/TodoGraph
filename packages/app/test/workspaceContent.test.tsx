@@ -23,6 +23,15 @@ describe('responsive workspace content', () => {
     expect(html).toContain('data-viewport-scope="desktop"');
   });
 
+  it('keeps desktop in list view when switching to a graph-capable page', () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceContent isDesktop tab="list" graphEnabled onLogout={vi.fn()} />,
+    );
+
+    expect(html).toContain('data-testid="list"');
+    expect(html).not.toContain('data-testid="graph"');
+  });
+
   it('mounts exactly one graph on the mobile graph tab', () => {
     const html = renderToStaticMarkup(
       <WorkspaceContent isDesktop={false} tab="graph" onLogout={vi.fn()} />,

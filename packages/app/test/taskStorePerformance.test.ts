@@ -87,6 +87,30 @@ describe('atomic hierarchy commands', () => {
     }).toEqual(before);
   });
 
+  it('moves across parents into an exact sibling slot as one undoable command', () => {
+    useTaskStore.setState({
+      nodes: [
+        task('root', 100, 200),
+        task('parent', 20, 30, 'root'),
+        task('child', 40, 50, 'parent'),
+        task('target', 300, 30, 'root'),
+      ],
+    });
+    const before = worldPosition(useTaskStore.getState().nodes, 'child');
+
+    expect(useTaskStore.getState().moveTaskToSibling('child', 'target', 'before', 'forward')).toBe(true);
+
+    const nodes = useTaskStore.getState().nodes;
+    expect(nodes.find((node) => node.id === 'child')?.parentId).toBe('root');
+    expect(nodes.filter((node) => node.parentId === 'root').map((node) => node.id))
+      .toEqual(['parent', 'child', 'target']);
+    expect(worldPosition(nodes, 'child')).toEqual(before);
+    expect(useHistoryStore.getState().undoStack).toHaveLength(1);
+
+    expect(useTaskStore.getState().undo()).toBe(true);
+    expect(useTaskStore.getState().nodes.find((node) => node.id === 'child')?.parentId).toBe('parent');
+  });
+
   it('deletes a selection as one undoable command', () => {
     useTaskStore.setState({
       nodes: [task('a', 0, 0), task('b', 240, 0), task('c', 480, 0)],

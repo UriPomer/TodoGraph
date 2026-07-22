@@ -49,7 +49,7 @@ export function CrossPageReady() {
                 <button
                   data-lens
                   onClick={() => switchPage(pageId)}
-                  className="w-full flex items-center gap-2 text-left py-1.5 pr-2 rounded-xl hover:bg-foreground/5 transition-colors duration-200"
+                  className="w-full flex items-center gap-2 text-left py-1.5 pr-2 rounded-xl lg:hover:bg-foreground/5 transition-colors duration-200"
                   style={{ paddingLeft: '12px' }}
                 >
                   {/* 对齐 TaskItem.tsx 中 depth=0 的文本起始位置：spacer(10px) + dot(14px) + gap(8px) = 32px。

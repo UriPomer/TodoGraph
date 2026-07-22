@@ -45,7 +45,7 @@ describe('PageBar mode switching', () => {
     const onModeChange = vi.fn();
     let renderer: ReturnType<typeof create>;
 
-    await act(async () => { renderer = create(<PageBar onModeChange={onModeChange} />); });
+    await act(async () => { renderer = create(<PageBar mode="list" onModeChange={onModeChange} />); });
     const toggle = renderer.root.findAllByProps({ 'data-workspace-mode-toggle': 'true' })[0]!;
     act(() => { toggle.props.onClick(); toggle.props.onClick(); toggle.props.onClick(); });
     expect(deferred.switchPage).toHaveBeenCalledOnce();
@@ -61,13 +61,14 @@ describe('PageBar mode switching', () => {
     const onModeChange = vi.fn();
     let renderer: ReturnType<typeof create>;
 
-    await act(async () => { renderer = create(<PageBar onModeChange={onModeChange} />); });
+    await act(async () => { renderer = create(<PageBar mode="list" onModeChange={onModeChange} />); });
     const today = renderer.root.findAllByProps({ 'data-dropdown-item': 'true' })[0]!;
     act(() => today.props.onClick());
     expect(onModeChange).not.toHaveBeenCalled();
 
     await act(async () => { deferred.finishSwitch(); await deferred.switchFinished; });
     expect(onModeChange).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByProps({ 'data-workspace-mode-toggle': 'true' })[0]!.props['data-mode']).toBe('list');
     act(() => renderer.unmount());
   });
 });
