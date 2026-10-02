@@ -3,6 +3,7 @@
 @import './themes/glass.css';
 @import './themes/muted.css';
 @import './themes/muted-dark.css';
+@import './task-list.css';
 
 @tailwind base;
 @tailwind components;
@@ -44,7 +45,6 @@ html, body, #root {
  *
  * bg-sharp (z:-2): 霓虹城市原图，锐利
  * bg-matte (z:-1): backdrop-filter blur → 把 sharp 层变磨砂
- *                  CSS mask 挖洞 → hover 时露出锐利原图
  *
  * 内容（z:auto）天然在磨砂层上方，不受 blur 影响
  * ============================================================ */
@@ -63,7 +63,7 @@ html, body, #root {
   display: block;
 }
 
-/* Login is fully opaque; skip the costly full-screen blur and lens layers. */
+/* Login is fully opaque; skip the costly full-screen blur layers. */
 [data-app-surface='auth'] .bg-sharp,
 [data-app-surface='auth'] .bg-matte {
   display: none;
@@ -77,25 +77,10 @@ html, body, #root {
   background: var(--bg-url, url('/bg-1.jpg')) center/cover no-repeat;
 }
 
-/* lens 透镜孔位置由 App.tsx 全局 mouseover handler 动态覆写。
-   这里的 inline 默认值仅在 JS 未执行时生效（透镜不可见）。 */
 .bg-matte {
   position: fixed;
   inset: 0;
   z-index: -1;
-  --hole-x: -500px;
-  --hole-y: -500px;
-  --hole-r: 90px;
-  mask-image: radial-gradient(
-    circle var(--hole-r) at var(--hole-x) var(--hole-y),
-    transparent 0px,
-    black var(--hole-r)
-  );
-  -webkit-mask-image: radial-gradient(
-    circle var(--hole-r) at var(--hole-x) var(--hole-y),
-    transparent 0px,
-    black var(--hole-r)
-  );
 }
 
 [data-theme='glass-dark'] .bg-matte {
@@ -164,8 +149,8 @@ body {
     contain: paint;
   }
 
-  .graph-viewport-moving .react-flow__node > [data-lens],
-  .graph-node-dragging .react-flow__node > [data-lens] {
+  .graph-viewport-moving .react-flow__node > div,
+  .graph-node-dragging .react-flow__node > div {
     box-shadow: none !important;
     transition: none !important;
   }
@@ -224,7 +209,7 @@ body {
   transition: fill 120ms ease-out;
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 767px) {
   body {
     overscroll-behavior: none;
     -webkit-overflow-scrolling: touch;
@@ -233,65 +218,29 @@ body {
     font-size: 16px !important;
   }
 
+  /* One shared backdrop keeps the top chrome and list on the same paint layer. */
+  .mobile-workspace-shell {
+    background: hsl(var(--card) / var(--mobile-backdrop-alpha, 1));
+  }
+
   .mobile-frosted-bg {
     position: relative;
     isolation: isolate;
     overflow: hidden;
-    background:
-      radial-gradient(circle at 18% 12%, rgb(88 48 140 / 0.1), transparent 32%),
-      radial-gradient(circle at 82% 18%, rgb(18 152 122 / 0.08), transparent 28%),
-      linear-gradient(180deg, rgb(23 21 26 / 0.28) 0%, rgb(17 16 22 / 0.34) 55%, rgb(11 13 20 / 0.4) 100%);
+    background: transparent;
   }
 
-  .mobile-frosted-bg::before,
-  .mobile-frosted-bg::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-  }
-
-  .mobile-frosted-bg::before {
-    z-index: 0;
-    background-image: radial-gradient(rgb(255 255 255 / 0.12) 0.8px, transparent 0.8px);
-    background-size: 16px 16px;
-    opacity: 0.18;
-  }
-
-  .mobile-frosted-bg::after {
-    z-index: 0;
-    background: rgb(10 9 13 / 0.03);
-    backdrop-filter: blur(4px) saturate(1.04);
-    -webkit-backdrop-filter: blur(4px) saturate(1.04);
-    transition:
-      background-color 300ms ease,
-      backdrop-filter 300ms ease,
-      -webkit-backdrop-filter 300ms ease;
-  }
-
-  .mobile-frosted-bg[data-mobile-tab='more']::after {
-    background: rgb(10 9 13 / 0.24);
-    backdrop-filter: blur(18px) saturate(1.12) brightness(0.82);
-    -webkit-backdrop-filter: blur(18px) saturate(1.12) brightness(0.82);
-  }
-
-  .mobile-frosted-bg > * {
-    position: relative;
-    z-index: 1;
+  .mobile-top-chrome {
+    padding-top: calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) + 1.5rem);
+    padding-bottom: 0.5rem;
+    background: transparent;
   }
 
   .mobile-list-glass {
-    background: rgb(20 18 24 / 0.34);
-    border-top: 1px solid rgb(255 255 255 / 0.05);
-    border-bottom: 1px solid rgb(255 255 255 / 0.04);
-    backdrop-filter: blur(6px) saturate(1.04);
-    -webkit-backdrop-filter: blur(6px) saturate(1.04);
+    background: transparent;
+    border: 0;
   }
 
-  [data-theme='glass-dark'] .bg-matte {
-    backdrop-filter: blur(10px) brightness(0.58);
-    -webkit-backdrop-filter: blur(10px) brightness(0.58);
-  }
 }
 
 .react-flow__pane {
@@ -368,7 +317,7 @@ body {
   [data-task-id]:hover {
     background-color: transparent !important;
   }
-  .mobile-task-row:active {
+  .mobile-task-row[data-pressed='true'] {
     background: linear-gradient(
       90deg,
       hsl(var(--accent) / 0.18),

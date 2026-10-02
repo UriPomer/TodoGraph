@@ -1,0 +1,60 @@
+import { expect, type Page, type TestInfo } from '@playwright/test';
+
+export const E2E_SANDBOX_TITLE = 'E2E 测试沙箱';
+
+export async function openIsolatedWorkspace(page: Page, testInfo: TestInfo) {
+  const metaResponse = await page.request.get('/api/meta');
+  expect(metaResponse.ok()).toBeTruthy();
+  const meta = await metaResponse.json() as {
+    activePageId: string;
+    revision: number;
+    pages: Array<{ id: string; title: string; kind?: string; order: number }>;
+  };
+  const basePage = meta.pages.find((item) => item.title === E2E_SANDBOX_TITLE && item.kind !== 'hierarchy');
+  expect(basePage).toBeTruthy();
+  if (meta.activePageId !== basePage!.id) {
+    const activate = await page.request.patch(`/api/pages/${basePage!.id}`, {
+      data: { activate: true, expectedRevision: meta.revision },
+    });
+    expect(activate.ok(), `activate E2E page returned ${activate.status()}`).toBeTruthy();
+  }
+
+  const pageResponse = await page.request.get(`/api/pages/${basePage!.id}`);
+  expect(pageResponse.ok()).toBeTruthy();
+  const current = await pageResponse.json() as { version: number };
+  const fixtureId = `e2e-${testInfo.project.name}-${Date.now()}`;
+  const fixtureTitle = `E2E fixture ${testInfo.project.name} ${Date.now()}`;
+  const reset = await page.request.put(`/api/pages/${basePage!.id}`, {
+    data: {
+      nodes: [{ id: fixtureId, title: fixtureTitle, status: 'todo' }],
+      edges: [],
+      expectedVersion: current.version,
+    },
+  });
+  expect(reset.ok(), `reset E2E page returned ${reset.status()}`).toBeTruthy();
+  await page.goto('/');
+  await expect(page.locator('input[placeholder^="新任务"]')).toBeVisible();
+  await page.locator('.workspace-mode-enter').evaluate((element) =>
+    Promise.all(element.getAnimations().map((animation) => animation.finished)),
+  );
+}
+
+export async function addTask(page: Page, title: string) {
+  const input = page.locator('input[placeholder^="新任务"]');
+  await input.fill(title);
+  await input.press('Enter');
+  const row = taskRow(page, title);
+  await expect(row).toBeVisible();
+  return row;
+}
+
+export function taskRow(page: Page, title: string) {
+  return page.locator('[data-task-title]')
+    .filter({ hasText: title })
+    .first()
+    .locator('xpath=ancestor::li[@data-task-id][1]');
+}
+
+export function taskStatusButton(row: ReturnType<typeof taskRow>) {
+  return row.locator('button[title^="点击切换状态"]');
+}

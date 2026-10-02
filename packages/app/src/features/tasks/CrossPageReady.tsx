@@ -47,7 +47,6 @@ export function CrossPageReady() {
             {tasks.map((t) => (
               <li key={t.id} className="mb-0.5">
                 <button
-                  data-lens
                   onClick={() => switchPage(pageId)}
                   className="w-full flex items-center gap-2 text-left py-1.5 pr-2 rounded-xl lg:hover:bg-foreground/5 transition-colors duration-200"
                   style={{ paddingLeft: '12px' }}

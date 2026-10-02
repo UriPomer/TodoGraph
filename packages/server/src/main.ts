@@ -9,6 +9,7 @@ async function main(): Promise<void> {
     registrationKey: cfg.registrationKey,
     sessionSecret: cfg.sessionSecret,
     cookieSecure: cfg.cookieSecure,
+    logger: process.env.TODOGRAPH_E2E === '1' ? false : undefined,
   });
 
   try {

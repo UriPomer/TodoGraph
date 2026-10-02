@@ -26,15 +26,15 @@ export const ToastViewport = React.forwardRef<
 ToastViewport.displayName = 'ToastViewport';
 
 export const TOAST_BASE_CLASSNAME =
-  'group pointer-events-auto relative flex w-full items-center justify-between gap-2 overflow-hidden rounded-xl border p-3 pr-8 shadow-lg backdrop-blur-xl transition-all';
+  'group pointer-events-auto relative flex w-full items-center justify-between gap-2 overflow-hidden rounded-2xl border p-3 shadow-xl backdrop-blur-xl transition-all';
 
 const toastVariants = cva(
   TOAST_BASE_CLASSNAME,
   {
     variants: {
       variant: {
-        default: 'border bg-card text-card-foreground',
-        destructive: 'destructive border-destructive bg-destructive text-destructive-foreground',
+        default: 'border-border/65 bg-card/95 text-card-foreground',
+        destructive: 'border-destructive/35 bg-card/95 text-card-foreground',
       },
     },
     defaultVariants: { variant: 'default' },

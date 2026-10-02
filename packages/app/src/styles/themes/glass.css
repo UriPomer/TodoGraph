@@ -8,6 +8,7 @@
 
 /* ---------- 玻璃·深色 ---------- */
 [data-theme='glass-dark'] {
+  --mobile-backdrop-alpha: 0.24;
   --background: 250 5% 4%;
   --foreground: 240 8% 93%;
 
@@ -49,6 +50,7 @@
 
 /* ---------- 玻璃·浅色 ---------- */
 [data-theme='glass-light'] {
+  --mobile-backdrop-alpha: 0.36;
   --background: 45 8% 94%;
   --foreground: 30 6% 12%;
 

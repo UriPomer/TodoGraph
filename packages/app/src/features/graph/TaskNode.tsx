@@ -44,7 +44,6 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
 
   return (
     <div
-      data-lens
       className={cn(
         'group relative flex items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-sm',
         'min-h-[56px] min-w-[180px]',

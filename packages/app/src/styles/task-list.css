@@ -1,0 +1,39 @@
+/* Disclosure, status, title and detail editors share one column geometry. */
+.mobile-task-row { --task-status-size: 32px; --task-title-offset: calc(18px + 8px + var(--task-status-size) + 8px); }
+.task-row__surface { display: grid; grid-template-columns: 18px var(--task-status-size) minmax(0, 1fr) auto auto; }
+.task-row__dependencies { grid-column: 4; }
+.task-row__actions { grid-column: 5; }
+.task-row__details { padding-inline-start: var(--task-title-offset); }
+/* Advance one hierarchy level; the child editor's icon and gap occupy 22px. */
+.task-row__child-editor { padding-inline-start: calc(var(--task-title-offset) + 16px - 14px - 8px); }
+.task-row__status { position: relative; display: grid; width: var(--task-status-size); height: var(--task-status-size); place-items: center; border: 0; border-radius: 50%; background: transparent; transition: transform 150ms, box-shadow 150ms; }
+.task-row__status:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.task-row__status:active { transform: scale(0.9); }
+.task-row__status-ring { width: 14px; height: 14px; border: 1px solid hsl(var(--muted-foreground) / 0.55); border-radius: 50%; }
+.task-row__status[data-status='doing'] .task-row__status-ring { border-color: hsl(var(--primary)); }
+.task-row__status[data-status='done'] .task-row__status-ring { border-color: transparent; background: hsl(var(--muted-foreground) / 0.7); }
+.task-row__status-progress, .task-row__status-check { position: absolute; }
+.task-row__status-progress { width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--primary)); }
+.task-row__status-check { width: 12px; height: 12px; color: hsl(var(--card)); }
+/* The mask fades both the tint and the blur; the action stays crisp above it. */
+.mobile-swipe-action {
+  --swipe-color: var(--success); --swipe-contrast: var(--success-foreground); --swipe-direction: 90deg;
+  position: absolute; inset: 0 auto 0 0; display: flex; align-items: center; width: 144px; pointer-events: none;
+  color: hsl(var(--swipe-color)); opacity: 0; transition: opacity 120ms ease-out;
+}
+.mobile-swipe-action[data-swipe-action='delete'] {
+  --swipe-color: var(--destructive); --swipe-contrast: var(--destructive-foreground); --swipe-direction: 270deg;
+  inset: 0 0 0 auto; justify-content: flex-end;
+}
+.mobile-swipe-action::before {
+  content: ''; position: absolute; inset: 2px 0; border-radius: 999px;
+  background: hsl(var(--swipe-color) / 0.16);
+  mask-image: linear-gradient(var(--swipe-direction), #000, transparent);
+}
+.mobile-swipe-action[data-active='true']::before { backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.mobile-swipe-action svg { position: relative; flex-shrink: 0; width: 28px; height: 28px; margin: 0 18px; padding: 6px; border-radius: 50%; background: hsl(var(--swipe-color) / 0.12); transition: background 120ms, color 120ms, transform 120ms; }
+.mobile-swipe-action[data-armed='true'] svg { background: hsl(var(--swipe-color)); color: hsl(var(--swipe-contrast)); transform: scale(1.08); }
+@media (min-width: 1024px) {
+  .mobile-task-row { --task-status-size: 28px; }
+  .task-row__status:hover { transform: scale(1.1); }
+}

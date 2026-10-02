@@ -78,7 +78,7 @@ export function MobilePageSelectorView({
   const activePage = orderedPages.find((page) => page.id === activePageId);
 
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-2 lg:hidden">
+    <div className="mobile-top-chrome flex items-center gap-2 px-3 md:hidden">
       <div data-mobile-page-controls="true" className="flex min-w-0 items-center gap-2">
         <WorkspaceModeButton isChecklistMode={isChecklistMode} disabled={isSwitching} onToggle={onToggleMode} />
         <DropdownMenu>
@@ -273,7 +273,7 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
   };
 
   return (
-    <div className="shrink-0 border-b border-border bg-card">
+    <div className="shrink-0 bg-transparent md:bg-card">
       <MobilePageSelectorView
         pages={pages}
         activePageId={meta.activePageId}
@@ -284,7 +284,7 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
         isSwitching={isSwitching}
       />
 
-      <div className="hidden items-center gap-2 overflow-x-auto px-3 py-2 lg:flex">
+      <div className="hidden items-center gap-2 overflow-x-auto px-3 py-2 md:flex">
         <WorkspaceModeButton
           isChecklistMode={isChecklistMode}
           disabled={isSwitching || !systemPage || (isChecklistMode && pages.length === 0)}
@@ -297,7 +297,6 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
           return (
             <div
               key={page.id}
-              data-lens
               draggable
               onDragStart={(e) => handleDragStart(e, page.id)}
               onDragOver={handleDragOver}

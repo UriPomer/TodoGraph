@@ -9,6 +9,7 @@ pnpm dev              # Start Fastify (5173) + Vite (5174) concurrently
 pnpm dev:electron     # Run Electron desktop app with HMR
 pnpm -r build         # Build packages (tsc; MCP entry bundled with esbuild)
 pnpm test             # Build dependencies, then run all workspace tests
+pnpm test:e2e         # Run browser E2E; save JSON report and screenshots under packages/app/test-results
 pnpm typecheck        # Type-check every workspace package
 pnpm --filter @todograph/server test     # Run server tests
 pnpm --filter @todograph/app test        # Run frontend tests

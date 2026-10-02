@@ -137,7 +137,6 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
   return (
     <div
       ref={rootRef}
-      data-lens
       className={cn(
         'relative h-full w-full rounded-xl bg-card',
         'transition-colors duration-200',

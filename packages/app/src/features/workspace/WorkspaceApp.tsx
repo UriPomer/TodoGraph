@@ -28,7 +28,7 @@ export function takePreviousMobileTab(history: MobileTab[], graphEnabled: boolea
 }
 
 export function DesktopHeaderShell({ children }: { children: ReactNode }) {
-  return <header data-desktop-header="true" className="hidden h-12 shrink-0 items-center gap-4 border-b border-border bg-card px-4 text-foreground lg:flex">{children}</header>;
+  return <header data-desktop-header="true" className="hidden h-12 shrink-0 items-center gap-4 border-b border-border bg-card px-4 text-foreground md:flex">{children}</header>;
 }
 
 function Header({ onTab, user, onLogout, onOpenSecurity, onOpenMcp }: {
@@ -61,7 +61,7 @@ function Header({ onTab, user, onLogout, onOpenSecurity, onOpenMcp }: {
         <Sparkles className="h-3.5 w-3.5 text-[hsl(var(--success))]" />
         <span className="text-muted-foreground">推荐：</span><span className="truncate font-medium text-[hsl(var(--success))]">{recommended?.title ?? '—'}</span>
       </button>
-      <div className="ml-auto hidden items-center gap-2 lg:flex">
+      <div className="ml-auto flex shrink-0 items-center gap-2">
         <SecurityButton onClick={onOpenSecurity} /><McpSetupButton onClick={onOpenMcp} /><ThemeSwitcher />
         <button onClick={() => void exportMarkdown()} className="text-muted-foreground hover:text-foreground" title="导出 Markdown"><Download className="h-4 w-4" /></button>
         <span className="text-xs text-muted-foreground">{user.username}</span>
@@ -72,7 +72,7 @@ function Header({ onTab, user, onLogout, onOpenSecurity, onOpenMcp }: {
 }
 
 export function MobileMoreHeader({ username }: { username: string }) {
-  return <header data-mobile-more-header="true" className="flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-2 lg:hidden"><div className="flex h-9 min-w-0 flex-1 items-center px-2.5"><span className="text-sm font-medium text-foreground">更多</span><span className="ml-2 truncate text-xs text-muted-foreground">{username}</span></div><ThemeSwitcher /></header>;
+  return <header data-mobile-more-header="true" className="mobile-top-chrome flex items-center justify-between gap-2 px-3 md:hidden"><div className="flex h-9 min-w-0 flex-1 items-center px-2.5"><span className="text-sm font-medium text-foreground">更多</span><span className="ml-2 truncate text-xs text-muted-foreground">{username}</span></div><ThemeSwitcher /></header>;
 }
 
 export function MobileMorePanel({ onLogout, username }: { onLogout: () => void; username?: string }) {
@@ -82,13 +82,34 @@ export function MobileMorePanel({ onLogout, username }: { onLogout: () => void; 
     setHaptics(next);
     setHapticsEnabled(next);
   };
-  return <div data-mobile-surface="dark" className="h-full overflow-auto bg-[#151317]/60 px-5 text-[#e5e7eb] backdrop-blur-sm"><div className="mx-auto max-w-lg divide-y divide-white/10"><SecurityDialog open embedded username={username} /><McpSetupDialog open embedded />{isNativeRuntime() && <section className="py-5"><button type="button" role="switch" aria-checked={haptics} onClick={toggleHaptics} className="flex min-h-11 w-full items-center gap-3 text-left"><Smartphone className="h-4 w-4 text-muted-foreground" /><span className="flex-1 text-sm">触觉反馈</span><span className={cn('relative h-6 w-11 rounded-full transition-colors', haptics ? 'bg-[hsl(var(--primary))]' : 'bg-white/15')}><span className={cn('absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow-sm transition-transform', haptics ? 'translate-x-6' : 'translate-x-1')} /></span></button></section>}<button type="button" onClick={onLogout} className="flex w-full items-center gap-2 py-6 text-sm text-red-300 transition-colors active:text-red-200"><LogOut className="h-4 w-4" />退出登录</button></div></div>;
+  return (
+    <div data-mobile-surface="theme-aware" className="h-full overflow-auto px-5 text-card-foreground">
+      <div className="mx-auto max-w-lg divide-y divide-border/45">
+        <SecurityDialog open embedded username={username} />
+        <McpSetupDialog open embedded />
+        {isNativeRuntime() && <button type="button" role="switch" aria-checked={haptics} onClick={toggleHaptics} className="flex min-h-11 w-full items-center gap-3 py-5 text-left">
+          <Smartphone className="h-4 w-4 text-muted-foreground" /><span className="flex-1 text-sm">触觉反馈</span>
+          <span className={cn('relative h-6 w-11 rounded-full transition-colors', haptics ? 'bg-[hsl(var(--primary))]' : 'bg-muted')}>
+            <span className={cn('absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full shadow-sm transition-transform', haptics ? 'translate-x-6 bg-[hsl(var(--primary-foreground))]' : 'translate-x-1 bg-card')} />
+          </span>
+        </button>}
+        <button type="button" onClick={onLogout} className="flex w-full items-center gap-2 py-6 text-sm text-destructive transition-colors active:opacity-80"><LogOut className="h-4 w-4" />退出登录</button>
+      </div>
+    </div>
+  );
 }
 
 const navItems = [['list', ListChecks, '任务'], ['graph', Network, '依赖图'], ['more', MoreHorizontal, '更多']] as const;
 export function MobileBottomNav({ tab, onTab, graphEnabled = true, hidden = false }: { tab: MobileTab; onTab: (tab: MobileTab) => void; graphEnabled?: boolean; hidden?: boolean }) {
   if (hidden) return null;
-  return <nav data-mobile-chrome="dark" className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-[#312d35] bg-[#17151a]/95 shadow-[0_-10px_30px_rgba(0,0,0,0.28)] backdrop-blur lg:hidden" style={{ paddingBottom: 'var(--safe-area-inset-bottom, env(safe-area-inset-bottom))' }}>{navItems.map(([value, Icon, label]) => { const disabled = value === 'graph' && !graphEnabled; return <button key={value} type="button" disabled={disabled} onClick={() => !disabled && onTab(value)} className={cn('flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px]', disabled ? 'text-[#5f5964]' : tab === value ? 'text-[#20d1aa]' : 'text-[#8b8491]')} aria-label={label}><Icon className="h-5 w-5" />{label}</button>; })}</nav>;
+  return (
+    <nav data-mobile-chrome="theme-aware" className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-border/60 bg-card/90 shadow-[0_-8px_24px_hsl(var(--background)/0.16)] backdrop-blur-xl md:hidden" style={{ paddingBottom: 'var(--safe-area-inset-bottom, env(safe-area-inset-bottom))' }}>
+      {navItems.map(([value, Icon, label]) => {
+        const disabled = value === 'graph' && !graphEnabled;
+        return <button key={value} type="button" disabled={disabled} onClick={() => !disabled && onTab(value)} className={cn('flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] transition-colors', disabled ? 'text-muted-foreground/45' : tab === value ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground')} aria-label={label}><Icon className="h-5 w-5" />{label}</button>;
+      })}
+    </nav>
+  );
 }
 
 function useWorkspaceEffects() {
@@ -113,23 +134,12 @@ function useWorkspaceEffects() {
     return () => window.removeEventListener('keydown', keydown);
   }, []);
   useEffect(() => {
-    let current: HTMLElement | null = null;
-    let timer: ReturnType<typeof setTimeout>;
-    const style = document.documentElement.style;
-    const mouseover = (event: MouseEvent) => {
-      const element = (event.target as HTMLElement).closest('[data-lens]') as HTMLElement | null;
-      if (element && element !== current) {
-        current = element; clearTimeout(timer);
-        const rect = element.getBoundingClientRect();
-        style.setProperty('--hole-x', `${rect.left + rect.width / 2}px`);
-        style.setProperty('--hole-y', `${rect.top + rect.height / 2}px`);
-        style.setProperty('--hole-r', '100px');
-      } else if (!element) {
-        current = null; timer = setTimeout(() => style.setProperty('--hole-x', '-500px'), 100);
-      }
+    const clearSelection = (event: PointerEvent) => {
+      if (event.pointerType === 'touch' || event.button !== 0 || event.shiftKey) return;
+      window.getSelection()?.removeAllRanges();
     };
-    document.addEventListener('mouseover', mouseover, { passive: true });
-    return () => { document.removeEventListener('mouseover', mouseover); clearTimeout(timer); };
+    document.addEventListener('pointerdown', clearSelection, true);
+    return () => document.removeEventListener('pointerdown', clearSelection, true);
   }, []);
   useEffect(() => {
     const noop = () => {};
@@ -155,10 +165,10 @@ function useWorkspaceEffects() {
 }
 
 function useDesktopLayout() {
-  const [isDesktop, setIsDesktop] = useState(() => typeof window === 'undefined' || !window.matchMedia ? true : window.matchMedia('(min-width: 1024px)').matches);
+  const [isDesktop, setIsDesktop] = useState(() => typeof window === 'undefined' || !window.matchMedia ? true : window.matchMedia('(min-width: 768px)').matches);
   useEffect(() => {
     if (!window.matchMedia) return;
-    const query = window.matchMedia('(min-width: 1024px)');
+    const query = window.matchMedia('(min-width: 768px)');
     const update = () => setIsDesktop(query.matches);
     update(); query.addEventListener('change', update);
     return () => query.removeEventListener('change', update);
@@ -168,7 +178,7 @@ function useDesktopLayout() {
 
 export function WorkspaceContent({ isDesktop, tab, onLogout, graphEnabled = true, username, keyboardVisible = false }: { isDesktop: boolean; tab: MobileTab; onLogout: () => void; graphEnabled?: boolean; username?: string; keyboardVisible?: boolean }) {
   const visibleTab = !graphEnabled && tab === 'graph' ? 'list' : tab;
-  if (isDesktop) return <div className="min-h-0 flex-1"><div key={visibleTab} className="workspace-mode-enter h-full">{visibleTab === 'graph' ? <SplitPane storageKey="todograph.splitLeftWidth" defaultLeftWidth={360} minLeft={260} maxLeft={720} left={<ListView />} right={<GraphView viewportScope="desktop" />} /> : <ListView />}</div></div>;
+  if (isDesktop) return <div className="min-h-0 flex-1"><div key={graphEnabled ? 'page' : 'checklist'} className="workspace-mode-enter h-full">{graphEnabled ? <SplitPane storageKey="todograph.splitLeftWidth" defaultLeftWidth={360} minLeft={260} maxLeft={720} left={<ListView />} right={<GraphView viewportScope="desktop" />} /> : <ListView />}</div></div>;
   return <main data-mobile-tab={visibleTab} className="mobile-frosted-bg min-h-0 flex-1" style={{ paddingBottom: keyboardVisible ? 0 : 'calc(3rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)))' }}><div key={visibleTab} className="workspace-mode-enter h-full">{visibleTab === 'list' && <div className="h-full overflow-auto"><ListView /></div>}{visibleTab === 'graph' && <div className="h-full"><GraphView viewportScope="mobile" /></div>}{visibleTab === 'more' && <MobileMorePanel onLogout={onLogout} username={username} />}</div></main>;
 }
 
@@ -222,5 +232,5 @@ export default function WorkspaceApp({ user, logout }: {
     try { await useTaskStore.getState().flush(); await logout(); } catch { /* save error is already shown */ }
   };
   const ready = loaded && workspaceUserId === user.id;
-  return <><div className="flex h-full flex-col"><Header onTab={changeTab} user={user} onLogout={() => void logoutSafely()} onOpenSecurity={() => setSecurityOpen(true)} onOpenMcp={() => setMcpOpen(true)} /><div className={tab === 'more' ? 'hidden lg:block' : undefined}><PageBar mode={tab === 'graph' ? 'graph' : 'list'} onModeChange={changeTab} /></div>{tab === 'more' && <MobileMoreHeader username={user.username} />}{ready ? <WorkspaceContent isDesktop={isDesktop} tab={tab} graphEnabled={graphEnabled} username={user.username} keyboardVisible={keyboardVisible} onLogout={() => void logoutSafely()} /> : <LoadingState />}<Toaster /><DialogContainer /><SecurityDialog open={securityOpen} username={user.username} onClose={() => setSecurityOpen(false)} /><McpSetupDialog open={mcpOpen} onClose={() => setMcpOpen(false)} /></div><MobileBottomNav tab={tab} graphEnabled={graphEnabled} onTab={changeTab} hidden={keyboardVisible} /></>;
+  return <><div className="mobile-workspace-shell flex h-full flex-col"><Header onTab={changeTab} user={user} onLogout={() => void logoutSafely()} onOpenSecurity={() => setSecurityOpen(true)} onOpenMcp={() => setMcpOpen(true)} /><div className={tab === 'more' ? 'hidden md:block' : undefined}><PageBar mode={isDesktop && graphEnabled ? 'graph' : tab === 'graph' ? 'graph' : 'list'} onModeChange={changeTab} /></div>{!isDesktop && tab === 'more' && <MobileMoreHeader username={user.username} />}{ready ? <WorkspaceContent isDesktop={isDesktop} tab={tab} graphEnabled={graphEnabled} username={user.username} keyboardVisible={keyboardVisible} onLogout={() => void logoutSafely()} /> : <LoadingState />}<Toaster /><DialogContainer /><SecurityDialog open={securityOpen} username={user.username} onClose={() => setSecurityOpen(false)} /><McpSetupDialog open={mcpOpen} onClose={() => setMcpOpen(false)} /></div><MobileBottomNav tab={tab} graphEnabled={graphEnabled} onTab={changeTab} hidden={keyboardVisible} /></>;
 }
