@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronRight, ChevronDown, FileText, Plus, Trash2 } from 'lucide-react';
+import { Check, ChevronRight, ChevronDown, FileText, Play, Plus, Trash2 } from 'lucide-react';
 import { MAX_HIERARCHY_DEPTH, normalizeTaskDescription, type Task } from '@todograph/shared';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/LinkifiedText';
@@ -128,10 +128,11 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
     }
   };
 
-  const { swipeLayerRef, completeHintRef: bgRightRef, deleteHintRef: bgLeftRef } = useTaskItemGestures({
+  const { swipeLayerRef, progressHintRef, deleteHintRef } = useTaskItemGestures({
     task,
     rowRef,
     beginTitleEditing,
+    toggleStatus,
     completeTask,
     deleteTask,
     onDragStart,
@@ -193,7 +194,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
         task.status === 'done' && !isDragging && 'text-muted-foreground',
       )}
     >
-      {([['complete', bgRightRef, Check], ['delete', bgLeftRef, Trash2]] as const).map(([action, ref, Icon]) => (
+      {([[task.status === 'todo' ? 'start' : 'complete', progressHintRef, task.status === 'todo' ? Play : Check], ['delete', deleteHintRef, Trash2]] as const).map(([action, ref, Icon]) => (
         <div key={action} ref={ref} data-swipe-action={action} data-active="false" data-armed="false"
           className="mobile-swipe-action" aria-hidden="true">
           <Icon />

@@ -244,7 +244,7 @@ test('mobile themes preserve the background, list spacing, swipe affordance, and
   const statusBox = await row.locator('button[title^="点击切换状态"]').boundingBox();
   expect(statusBox).not.toBeNull();
   expect(statusBox!.x).toBeLessThan(64);
-  const gradient = await row.locator('[data-swipe-action="complete"]').evaluate((element) => getComputedStyle(element, '::before').maskImage);
+  const gradient = await row.locator('[data-swipe-action="start"]').evaluate((element) => getComputedStyle(element, '::before').maskImage);
   expect(gradient).toContain('gradient');
   const toolbar = page.locator('.mobile-top-chrome').first();
   await expect(toolbar).toBeVisible();
@@ -267,7 +267,7 @@ test('mobile themes preserve the background, list spacing, swipe affordance, and
   await page.screenshot({ path: testInfo.outputPath('mobile-light-more-panel.png'), fullPage: true });
 });
 
-test('Android GEST-008/GEST-009 swipe completion and deletion can both be undone above bottom navigation', async ({ page }, testInfo) => {
+test('Android GEST-008/GEST-009/GEST-015 swipe start, completion and deletion can be undone above bottom navigation', async ({ page }, testInfo) => {
   await page.locator('html').evaluate((element) => element.setAttribute('data-theme', 'glass-light'));
   const titleText = `移动端滑动撤销回归 ${Date.now()}`;
   const sourceRow = await addTask(page, titleText);
@@ -277,11 +277,15 @@ test('Android GEST-008/GEST-009 swipe completion and deletion can both be undone
   const cdp = await page.context().newCDPSession(page);
 
   const swipe = async (direction: 1 | -1, cancel = false) => {
-    const box = await row.boundingBox();
+    const title = row.locator('[data-task-title]');
+    // Wait for the previous swipe to settle; fixed row coordinates can hit the moving status button.
+    await title.click({ trial: true });
+    const box = await title.boundingBox();
     expect(box).not.toBeNull();
-    const startX = box!.x + Math.min(120, box!.width / 2);
+    const startX = box!.x + Math.min(24, box!.width / 2);
     const y = box!.y + box!.height / 2;
-    const action = direction > 0 ? 'complete' : 'delete';
+    const status = await row.locator('[data-status]').getAttribute('data-status');
+    const action = direction > 0 ? status === 'todo' ? 'start' : 'complete' : 'delete';
     const hint = row.locator(`[data-swipe-action="${action}"]`);
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: startX, y }] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: startX + direction * 48, y }] });
@@ -322,6 +326,8 @@ test('Android GEST-008/GEST-009 swipe completion and deletion can both be undone
     await swipe(-1, true);
   }
   await swipe(1);
+  await expect(row.locator('[data-status]')).toHaveAttribute('data-status', 'doing');
+  await swipe(1);
   const undo = page.getByRole('button', { name: '撤销' });
   await expect(undo).toBeVisible();
   await expect(page.locator(`[data-mobile-task-section="ready"] [data-task-id="${taskId}"]`)).toHaveCount(0);
@@ -334,6 +340,7 @@ test('Android GEST-008/GEST-009 swipe completion and deletion can both be undone
 
   await undo.last().click();
   await expect(row).toBeVisible();
+  await expect(row.locator('[data-status]')).toHaveAttribute('data-status', 'doing');
   await swipe(-1);
   await expect(row).toHaveCount(0);
   await expect(undo.last()).toBeVisible();

@@ -4,6 +4,7 @@
 @import './themes/muted.css';
 @import './themes/muted-dark.css';
 @import './task-list.css';
+@import './toast.css';
 
 @tailwind base;
 @tailwind components;

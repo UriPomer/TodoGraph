@@ -20,6 +20,7 @@ interface Options {
   task: Task;
   rowRef: RefObject<HTMLLIElement>;
   beginTitleEditing: (element: HTMLElement, clientX: number, clientY: number) => void;
+  toggleStatus: (taskId: string) => boolean;
   completeTask: (taskId: string) => boolean;
   deleteTask: (taskId: string) => void;
   onDragStart?: (event: TaskDragStart, task: Task) => void;
@@ -40,7 +41,7 @@ const useBrowserLayoutEffect = typeof window === 'undefined' ? useEffect : useLa
 export function useTaskItemGestures(options: Options) {
   const { rowRef } = options;
   const swipeLayerRef = useRef<HTMLDivElement>(null);
-  const completeHintRef = useRef<HTMLDivElement>(null);
+  const progressHintRef = useRef<HTMLDivElement>(null);
   const deleteHintRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef(options);
   actionsRef.current = options;
@@ -59,7 +60,7 @@ export function useTaskItemGestures(options: Options) {
     const cancelSwipeDOM = () => {
       const layer = swipeLayerRef.current;
       if (layer) Object.assign(layer.style, { transition: 'transform 0.2s ease-out', transform: 'translateX(0px)' });
-      for (const hint of [completeHintRef.current, deleteHintRef.current]) {
+      for (const hint of [progressHintRef.current, deleteHintRef.current]) {
         if (!hint) continue;
         hint.style.opacity = '0';
         hint.dataset.active = 'false';
@@ -73,7 +74,7 @@ export function useTaskItemGestures(options: Options) {
       if (swipeLayerRef.current) swipeLayerRef.current.style.transform = `translateX(${offset}px)`;
       const armed = resisted >= LIST_SWIPE_COMMIT_PX;
       const opacity = Math.min(1, Math.max(0, (resisted - LIST_SWIPE_START_PX) / 44));
-      for (const [hint, visible] of [[completeHintRef.current, dx > 0], [deleteHintRef.current, dx < 0]] as const) {
+      for (const [hint, visible] of [[progressHintRef.current, dx > 0 && actionsRef.current.task.status !== 'done'], [deleteHintRef.current, dx < 0]] as const) {
         if (!hint) continue;
         hint.style.opacity = String(visible ? opacity : 0);
         hint.dataset.active = String(visible);
@@ -83,10 +84,13 @@ export function useTaskItemGestures(options: Options) {
     };
     const finishSwipe = (offset: number) => {
       cancelSwipeDOM();
-      const { task, completeTask, deleteTask } = actionsRef.current;
+      const { task, toggleStatus, completeTask, deleteTask } = actionsRef.current;
       if (offset >= LIST_SWIPE_COMMIT_PX) {
         if (task.status === 'done') return;
-        if (completeTask(task.id)) toast.action('已完成', '撤销', () => useTaskStore.getState().undo(), task.title);
+        const starting = task.status === 'todo';
+        if (starting ? toggleStatus(task.id) : completeTask(task.id)) {
+          toast.action(starting ? '已开始' : '已完成', '撤销', () => useTaskStore.getState().undo(), task.title);
+        }
         else toast.info('无法完成', '该任务下还有未完成的子任务');
       } else if (offset <= -LIST_SWIPE_COMMIT_PX) {
         deleteTask(task.id);
@@ -214,5 +218,5 @@ export function useTaskItemGestures(options: Options) {
     };
   }, [rowRef]);
 
-  return { swipeLayerRef, completeHintRef, deleteHintRef };
+  return { swipeLayerRef, progressHintRef, deleteHintRef };
 }

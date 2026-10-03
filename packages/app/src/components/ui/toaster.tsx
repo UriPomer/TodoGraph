@@ -1,4 +1,4 @@
-import { AlertTriangle, Info, Undo2 } from 'lucide-react';
+import { AlertTriangle, Check, Info, Undo2 } from 'lucide-react';
 import {
   Toast,
   ToastClose,
@@ -19,28 +19,31 @@ export function Toaster() {
           key={t.id}
           duration={5000}
           variant={t.variant}
-          className={t.action ? 'min-h-11 px-2.5 py-2' : 'pr-8'}
+          data-action={t.action ? 'true' : undefined}
+          className={t.action ? 'toast-glass--action' : 'pr-8'}
           onOpenChange={(open) => {
             if (!open) dismiss(t.id);
           }}
         >
           <div className="flex min-w-0 flex-1 items-center gap-2.5">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]" aria-hidden="true">
-              {t.action ? <Undo2 className="h-4 w-4" /> : t.variant === 'destructive' ? <AlertTriangle className="h-4 w-4 text-destructive" /> : <Info className="h-4 w-4" />}
+            <span className="toast-glass__icon" aria-hidden="true">
+              {t.action ? <Check className="h-4 w-4" /> : t.variant === 'destructive' ? <AlertTriangle className="h-4 w-4 text-destructive" /> : <Info className="h-4 w-4" />}
             </span>
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-              <ToastTitle className="shrink-0 max-w-[40%] truncate text-sm leading-5">{t.title}</ToastTitle>
-              {t.description && <ToastDescription className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={t.description}>{t.description}</ToastDescription>}
+            <div className="min-w-0 flex-1 overflow-hidden">
+              <ToastTitle className="truncate text-[13px] leading-5">{t.title}</ToastTitle>
+              {t.description && <ToastDescription className="truncate text-[11px] leading-4 text-foreground/70" title={t.description}>{t.description}</ToastDescription>}
             </div>
             {t.action && (
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   t.action!.onClick();
                   dismiss(t.id);
                 }}
-                className="inline-flex min-h-8 shrink-0 items-center rounded-xl border border-[hsl(var(--primary)/0.22)] bg-[hsl(var(--primary)/0.1)] px-3 py-1 text-xs font-semibold text-[hsl(var(--primary))] transition-[background-color,transform] hover:bg-[hsl(var(--primary)/0.16)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                className="toast-glass__action"
               >
+                <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />
                 {t.action.label}
               </button>
             )}

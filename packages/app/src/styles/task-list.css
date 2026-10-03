@@ -25,6 +25,7 @@
   --swipe-color: var(--destructive); --swipe-contrast: var(--destructive-foreground); --swipe-direction: 270deg;
   inset: 0 0 0 auto; justify-content: flex-end;
 }
+.mobile-swipe-action[data-swipe-action='start'] { --swipe-color: var(--primary); --swipe-contrast: var(--primary-foreground); }
 .mobile-swipe-action::before {
   content: ''; position: absolute; inset: 2px 0; border-radius: 999px;
   background: hsl(var(--swipe-color) / 0.16);
