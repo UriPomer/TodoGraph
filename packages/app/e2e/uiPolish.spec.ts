@@ -190,9 +190,11 @@ test('mobile themes preserve the background, list spacing, swipe affordance, and
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme!);
     await expect(workspaceSurface).toHaveCSS('background-image', 'none');
     const background = await workspaceSurface.evaluate((element) => getComputedStyle(element).backgroundColor);
-    const color = background.match(/[\d.]+/g)!.map(Number);
-    const alpha = color[3] ?? 1;
+    expect(background).toBe('rgba(0, 0, 0, 0)');
     const glass = theme!.startsWith('glass');
+    const surfaceColor = await page.locator(glass ? '.bg-matte' : 'html').evaluate((element) => getComputedStyle(element).backgroundColor);
+    const color = surfaceColor.match(/[\d.]+/g)!.map(Number);
+    const alpha = color[3] ?? 1;
     if (glass) {
       expect(alpha, `${theme} tint must let at least 60% of the photo through`).toBeGreaterThan(0);
       expect(alpha).toBeLessThanOrEqual(0.4);

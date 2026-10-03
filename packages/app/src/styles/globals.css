@@ -19,21 +19,34 @@ html, body {
 }
 
 /*
- * html 背景策略：
- * - background-color 统一用 --card（和 Header 同色），!important 确保不会被任何
- *   主题 CSS 或 JS inline style 意外覆盖。iOS Safari 26 从此读取状态栏颜色。
- * - 玻璃主题额外叠加背景原图，用于手机 overscroll 时的视觉衔接。
+ * 根画布提供纯色底；玻璃主题由覆盖整个视口的固定图层统一绘制。
+ * 不在根画布重复原图，避免露出未经模糊、压暗和叠色的照片。
  */
 html {
   background-color: hsl(var(--card)) !important;
 }
 
-[data-theme='glass-dark'] html,
-[data-theme='glass-light'] html {
-  background-image: var(--bg-url, url('/bg-1.jpg'));
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
+.ios-status-bar-edge {
+  display: none;
+}
+
+/* iOS 27 home-screen scroll-edge blur workaround. Use a real fixed element:
+   WebKit resolves pseudo-element hits to their host, losing its fixed renderer.
+   A declared background clipped to empty text avoids painting a stripe.
+   11px is a sampling strip, not a safe-area size.
+   Keep this isolated: remove when iOS no longer needs the workaround. Device
+   verification is required; desktop WebKit cannot render the iOS system blur.
+   https://tips.ojapp.app/en/ios-27-pwa-top-blur-workaround-2/ */
+html[data-ios-home-screen] .ios-status-bar-edge {
+  display: block;
+  position: fixed;
+  inset: 0 0 auto;
+  height: 11px;
+  z-index: 1000;
+  pointer-events: none;
+  background-color: hsl(var(--card));
+  -webkit-background-clip: text;
+  background-clip: text;
 }
 
 html, body, #root {
@@ -73,7 +86,7 @@ html, body, #root {
   position: fixed;
   inset: 0;
   z-index: -2;
-  /* --bg-url 由 index.html 内联脚本设置；fallback 用第一张图 */
+  /* --bg-url 由 main.tsx 设置；fallback 用第一张图 */
   background: var(--bg-url, url('/bg-1.jpg')) center/cover no-repeat;
 }
 
@@ -218,8 +231,8 @@ body {
     font-size: 16px !important;
   }
 
-  /* One shared backdrop keeps the top chrome and list on the same paint layer. */
-  .mobile-workspace-shell {
+  /* Tint the fixed backdrop so exposed edges and workspace share the same pixels. */
+  .bg-matte {
     background: hsl(var(--card) / var(--mobile-backdrop-alpha, 1));
   }
 
