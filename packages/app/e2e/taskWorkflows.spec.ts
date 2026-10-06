@@ -35,12 +35,15 @@ test('GEST-012/GEST-013 desktop task editing, child completion, persistence, and
   const parentStatus = taskStatusButton(editedParent);
   await parentStatus.click();
   await parentStatus.click();
+  await page.getByRole('menuitem', { name: '标记完成', exact: true }).click();
   await expect(page.getByText('无法完成')).toBeVisible();
 
   const childStatus = taskStatusButton(child);
   await childStatus.click();
   await childStatus.click();
+  await page.getByRole('menuitem', { name: '标记完成', exact: true }).click();
   await parentStatus.click();
+  await page.getByRole('menuitem', { name: '标记完成', exact: true }).click();
 
   const disposableTitle = `端到端待删除任务 ${Date.now()}`;
   const disposable = await addTask(page, disposableTitle);

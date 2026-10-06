@@ -8,6 +8,7 @@ import { useTaskStore } from '@/stores/useTaskStore';
 import { toast } from '@/components/ui/toaster-store';
 import { dialog } from '@/components/ui/dialog-store';
 import { useTaskItemGestures, type TaskDragPoint, type TaskDragStart } from './useTaskItemGestures';
+import { TaskStatusControl } from './TaskStatusControl';
 
 export type { TaskDragPoint, TaskDragStart } from './useTaskItemGestures';
 type DescriptionMode = 'closed' | 'viewing' | 'editing';
@@ -233,16 +234,7 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       )}
 
       {!hasChildren && <span aria-hidden="true" className="h-[18px] w-[18px] shrink-0" />}
-      <TaskStatusDot
-        status={task.status}
-        onClick={() => {
-          if (!toggleStatus(task.id)) {
-            toast.info('无法完成', '该任务下还有未完成的子任务');
-          } else if (task.status === 'doing') {
-            toast.action('已完成', '撤销', () => useTaskStore.getState().undo(), task.title);
-          }
-        }}
-      />
+      <TaskStatusControl id={task.id} status={task.status} title={task.title} />
 
       {editing ? (
         <input
@@ -443,18 +435,3 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
     </li>
   );
 });
-
-function TaskStatusDot({ status, onClick }: { status: Task['status']; onClick: () => void }) {
-  return (
-    <button
-      data-status={status}
-      onClick={(event) => { event.stopPropagation(); onClick(); }}
-      className="task-row__status"
-      title="点击切换状态 todo → doing → done"
-    >
-      <span className="task-row__status-ring" />
-      {status === 'doing' && <span className="task-row__status-progress" />}
-      {status === 'done' && <Check className="task-row__status-check" strokeWidth={3} />}
-    </button>
-  );
-}

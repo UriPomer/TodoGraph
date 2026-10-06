@@ -5,6 +5,8 @@
 @import './themes/muted-dark.css';
 @import './task-list.css';
 @import './toast.css';
+@import './settings.css';
+@import './mobile-chrome.css';
 
 @tailwind base;
 @tailwind components;
@@ -20,23 +22,25 @@ html, body {
 }
 
 /*
- * 根画布提供纯色底；玻璃主题由覆盖整个视口的固定图层统一绘制。
- * 不在根画布重复原图，避免露出未经模糊、压暗和叠色的照片。
+ * 浏览器会把根画布颜色延伸到系统区域。移动端玻璃主题使用壁纸顶部
+ * 合成后的代表色；纯色主题、登录页和图片未就绪时使用卡片底色。
  */
 html {
-  background-color: hsl(var(--card)) !important;
+  --page-chrome-color: hsl(var(--card));
+  background-color: var(--page-chrome-color) !important;
 }
 
 .ios-status-bar-edge {
   display: none;
 }
 
-/* iOS 27 home-screen scroll-edge blur workaround. Use a real fixed element:
-   WebKit resolves pseudo-element hits to their host, losing its fixed renderer.
-   A declared background clipped to empty text avoids painting a stripe.
+/* iOS uses this declared color behind the status bar even when the empty
+   text clip paints no page pixels. Glass exports its sampled wallpaper edge
+   instead of the unrelated card color. Native chrome accepts a solid color,
+   so this is a color-matched extension, not image transparency.
    11px is a sampling strip, not a safe-area size.
-   Keep this isolated: remove when iOS no longer needs the workaround. Device
-   verification is required; desktop WebKit cannot render the iOS system blur.
+   Device verification is required; desktop WebKit has no iOS system chrome.
+   Remove when iOS no longer needs the scroll-edge blur workaround.
    https://tips.ojapp.app/en/ios-27-pwa-top-blur-workaround-2/ */
 html[data-ios-home-screen] .ios-status-bar-edge {
   display: block;
@@ -45,9 +49,15 @@ html[data-ios-home-screen] .ios-status-bar-edge {
   height: 11px;
   z-index: 1000;
   pointer-events: none;
-  background-color: hsl(var(--card));
+  background-color: var(--page-chrome-color);
   -webkit-background-clip: text;
   background-clip: text;
+}
+
+@media (max-width: 767px) {
+  html[data-theme^='glass']:not([data-app-surface='auth']) {
+    --page-chrome-color: var(--wallpaper-edge-color, hsl(var(--card)));
+  }
 }
 
 html, body, #root {
@@ -77,7 +87,10 @@ html, body, #root {
   display: block;
 }
 
-/* Login is fully opaque; skip the costly full-screen blur layers. */
+/* Until the photo decodes, paint the same card fallback as browser chrome.
+   Login is fully opaque and does not need the full-screen blur layers. */
+html:not([data-wallpaper-ready]) .bg-sharp,
+html:not([data-wallpaper-ready]) .bg-matte,
 [data-app-surface='auth'] .bg-sharp,
 [data-app-surface='auth'] .bg-matte {
   display: none;
@@ -232,21 +245,34 @@ body {
     font-size: 16px !important;
   }
 
-  /* Tint the fixed backdrop so exposed edges and workspace share the same pixels. */
-  .bg-matte {
-    background: hsl(var(--card) / var(--mobile-backdrop-alpha, 1));
+  /* Frost the wallpaper directly so mobile blur survives composition boundaries.
+     Overscan keeps the blurred image opaque at every viewport edge. */
+  .bg-sharp {
+    inset: -36px;
+    filter: blur(18px) brightness(.4);
+  }
+  [data-theme='glass-light'] .bg-sharp {
+    filter: blur(18px) brightness(.9);
+  }
+  [data-theme^='glass'] .bg-matte {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  /* WebKit can treat a fixed translucent color as a full-screen dimming layer,
+     even at negative z-index, and extend its flat color over the status area.
+     Keep the tint on a non-fixed child so the wallpaper owns those pixels.
+     See LocalFrameView::fixedContainerEdges in WebKit. */
+  [data-theme^='glass'] .bg-matte::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: hsl(var(--mobile-backdrop-color) / var(--mobile-backdrop-alpha));
   }
 
   .mobile-frosted-bg {
     position: relative;
     isolation: isolate;
     overflow: hidden;
-    background: transparent;
-  }
-
-  .mobile-top-chrome {
-    padding-top: calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) + 1.5rem);
-    padding-bottom: 0.5rem;
     background: transparent;
   }
 

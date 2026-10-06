@@ -1,6 +1,6 @@
 .toast-viewport {
   position: fixed;
-  bottom: calc(4.5rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)));
+  bottom: calc(var(--mobile-bottom-chrome-height) + 16px);
   left: 50%;
   z-index: 220;
   display: flex;

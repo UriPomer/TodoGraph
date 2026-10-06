@@ -31,13 +31,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     } else {
       document.documentElement.classList.remove('dark');
     }
-
-    // 同步 theme-color meta（Android Chrome；Safari 26 读 html background-color）
-    const card = getComputedStyle(document.documentElement).getPropertyValue('--card').trim();
-    if (card) {
-      const meta = document.querySelector('meta[name="theme-color"]');
-      if (meta) meta.setAttribute('content', `hsl(${card})`);
-    }
   }, [theme]);
 
   const setTheme = useCallback((id: string) => {

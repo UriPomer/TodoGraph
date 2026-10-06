@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import type { TaskStatus } from '@todograph/shared';
 import { cn } from '@/lib/utils';
-import { TaskStatusButton } from './TaskStatusButton';
+import { TaskStatusControl } from '../tasks/TaskStatusControl';
 
 export interface GroupDescendant {
   id: string;
@@ -19,7 +19,6 @@ interface Props {
   title: string;
   descendants: GroupDescendant[];
   returnFocus: HTMLButtonElement | null;
-  onToggleStatus: (id: string) => void;
   onClose: () => void;
 }
 
@@ -29,7 +28,7 @@ function statusLabel(status: TaskStatus): string {
   return '待处理';
 }
 
-export function GroupContentsDialog({ title, descendants, returnFocus, onToggleStatus, onClose }: Props) {
+export function GroupContentsDialog({ title, descendants, returnFocus, onClose }: Props) {
   const dialogRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
@@ -114,15 +113,7 @@ export function GroupContentsDialog({ title, descendants, returnFocus, onToggleS
                 className="rounded-xl border border-border bg-background/60 p-3"
               >
                 <div className="flex items-start gap-2.5">
-                  <TaskStatusButton
-                    status={child.status}
-                    touchTarget
-                    aria-label={`推进 ${child.title} 状态`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onToggleStatus(child.id);
-                    }}
-                  />
+                  <TaskStatusControl id={child.id} status={child.status} title={child.title} graph touchTarget />
                   <div className="min-w-0 flex-1">
                     <h3
                       className={cn(

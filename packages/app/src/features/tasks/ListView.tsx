@@ -320,7 +320,7 @@ export function ListView() {
             {pullReady ? '松手新建' : '下拉新建'}
           </span>
         </div>
-        <div ref={contentRef} className="will-change-transform w-full px-4 py-5 max-lg:px-3 max-lg:py-3" style={{ transform: 'translateY(0px)' }}>
+        <div ref={contentRef} className="will-change-transform w-full px-4 py-5 max-lg:px-3 max-lg:py-3 max-md:pt-1" style={{ transform: 'translateY(0px)' }}>
           <TaskInput focusTrigger={focusTrigger} />
 
           <TaskSection

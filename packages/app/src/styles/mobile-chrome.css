@@ -1,0 +1,23 @@
+:root {
+  --mobile-status-extension: 0.5rem;
+  --mobile-bottom-space: max(0px, calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) - 0.5rem));
+  --mobile-bottom-chrome-height: calc(3.5rem + var(--mobile-bottom-space));
+}
+
+@media (max-width: 767px) {
+  /* Keep the system-color extension outside the moving page snapshot. */
+  .mobile-workspace-shell::before {
+    content: '';
+    position: fixed;
+    inset: 0 0 auto;
+    height: calc(var(--mobile-status-extension) + var(--safe-area-inset-top, env(safe-area-inset-top, 0px)));
+    z-index: 40;
+    pointer-events: none;
+    background: var(--page-chrome-color);
+  }
+  .mobile-top-chrome {
+    flex-shrink: 0;
+    padding-top: calc(0.5rem + var(--mobile-status-extension) + var(--safe-area-inset-top, env(safe-area-inset-top, 0px)));
+    padding-bottom: 0.5rem;
+  }
+}

@@ -58,7 +58,7 @@ describe('mobile collapsed group controls', () => {
         type="group"
       />,
     );
-    const statusButton = renderer.root.findByProps({ 'aria-label': '推进 子节点 状态' });
+    const statusButton = renderer.root.findByProps({ 'aria-label': '子节点：未开始' });
     const clickEvent = { stopPropagation: vi.fn() };
     act(() => statusButton.props.onClick(clickEvent));
     expect(clickEvent.stopPropagation).toHaveBeenCalledOnce();
@@ -94,7 +94,7 @@ describe('mobile collapsed group controls', () => {
     )!;
     act(() => expand.props.onClick({ stopPropagation: vi.fn(), currentTarget: { focus: vi.fn() } }));
 
-    const statusButtons = renderer.root.findAllByProps({ 'aria-label': '推进 子节点 状态' });
+    const statusButtons = renderer.root.findAllByProps({ 'aria-label': '子节点：未开始' });
     const dialogStatus = statusButtons[statusButtons.length - 1]!;
     for (let index = 0; index < 4; index++) {
       act(() => dialogStatus.props.onClick({ stopPropagation: vi.fn() }));

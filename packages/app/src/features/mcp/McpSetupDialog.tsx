@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bot, Check, Copy, Key, Plus, Trash2, X } from 'lucide-react';
 import { api, getApiBase, type McpKeyInfo } from '@/api/client';
@@ -29,15 +29,30 @@ export function McpSetupDialog({ open, onClose, embedded = false }: Props) {
   const [generated, setGenerated] = useState<GeneratedKey | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [copied, setCopied] = useState<'key' | 'config' | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const catalogRequest = useRef<AbortController | null>(null);
+  const visible = useRef(false);
 
   const loadKeys = useCallback(async () => {
+    if (!visible.current) return;
+    catalogRequest.current?.abort();
+    const controller = new AbortController();
+    catalogRequest.current = controller;
     setBusy('load');
-    try { setKeys(await api.listMcpKeys()); }
-    catch (error) { toast.error('加载 MCP Key 失败', String((error as Error).message ?? error)); }
-    finally { setBusy(null); }
+    setLoadError(null);
+    try {
+      const next = await api.listMcpKeys(controller.signal);
+      if (!controller.signal.aborted) setKeys(next);
+    } catch (error) {
+      if (!controller.signal.aborted) setLoadError(String((error as Error).message ?? error));
+    } finally { if (!controller.signal.aborted) setBusy(null); }
   }, []);
 
-  useEffect(() => { if (open) void loadKeys(); }, [open, loadKeys]);
+  useEffect(() => {
+    visible.current = open;
+    if (open) void loadKeys();
+    return () => { visible.current = false; catalogRequest.current?.abort(); };
+  }, [open, loadKeys]);
 
   const generate = async () => {
     setBusy('generate');
@@ -72,17 +87,17 @@ export function McpSetupDialog({ open, onClose, embedded = false }: Props) {
   if (!open) return null;
   const config = generated ? mcpConfig(generated.key) : '';
   const panel = (
-      <div className={embedded ? 'py-6' : 'relative max-h-full w-full max-w-lg overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-2xl'}>
-        <header className="mb-5 flex items-center justify-between">
+      <div className={embedded ? 'space-y-4' : 'relative max-h-full w-full max-w-lg overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-2xl'}>
+        {!embedded && <header className="mb-5 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-sm font-semibold"><Bot className="h-5 w-5 text-[hsl(var(--primary))]" />AI Agent 接入</h2>
           {!embedded && <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-accent"><X className="h-4 w-4" /></button>}
-        </header>
-        <p className="mb-5 text-xs leading-5 text-muted-foreground">生成 API Key，并将配置粘贴到 Claude Desktop、VS Code 或 Cursor。</p>
-        <section className="mb-5 border-b border-border/60 pb-5">
+        </header>}
+        <p className={embedded ? 'settings-intro' : 'mb-5 text-xs leading-5 text-muted-foreground'}>生成 API Key，并将配置粘贴到 Claude Desktop、VS Code 或 Cursor。</p>
+        <section className={embedded ? 'settings-section' : 'mb-5 border-b border-border/60 pb-5'}>
           <h3 className="mb-3 flex items-center gap-1 text-xs font-semibold"><Plus className="h-3.5 w-3.5" />生成新 Key</h3>
           <div className="flex gap-3">
-            <input value={label} onChange={(event) => setLabel(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void generate(); }} placeholder="设备名称" className={`min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-xs ${embedded ? 'h-10' : 'h-8'}`} />
-            <Button size="sm" className={embedded ? 'h-10 px-4' : undefined} onClick={() => void generate()} disabled={busy === 'generate'}>{busy === 'generate' ? '生成中...' : '生成'}</Button>
+            <input value={label} onChange={(event) => setLabel(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && busy === null) void generate(); }} placeholder="设备名称" className={`min-w-0 flex-1 px-3 text-xs ${embedded ? 'settings-field' : 'h-8 rounded-md border border-input bg-background'}`} />
+            <Button size="sm" className={embedded ? 'h-11 rounded-xl px-4' : undefined} onClick={() => void generate()} disabled={busy !== null}>{busy === 'generate' ? '生成中...' : '生成'}</Button>
           </div>
           <button
             type="button"
@@ -117,9 +132,9 @@ export function McpSetupDialog({ open, onClose, embedded = false }: Props) {
             </div>
           )}
         </section>
-        <section>
+        <section className={embedded ? 'settings-section' : undefined}>
           <h3 className="mb-3 flex items-center gap-1 text-xs font-semibold"><Key className="h-3.5 w-3.5" />已有 Key ({keys.length})</h3>
-          {busy === 'load' ? <p className="text-xs text-muted-foreground">加载中...</p> : keys.length === 0 ? <p className="text-xs text-muted-foreground">暂无 Key</p> : (
+          {loadError ? <div className="space-y-2"><p role="alert" className="text-xs text-destructive">加载失败：{loadError}</p><Button size="sm" variant="secondary" onClick={() => void loadKeys()}>重试加载</Button></div> : busy === 'load' ? <p role="status" className="text-xs text-muted-foreground">加载中...</p> : keys.length === 0 ? <p className="text-xs text-muted-foreground">暂无 Key</p> : (
             <div className="space-y-3">
               {keys.map((key) => (
                 <div key={key.id} className="flex items-center rounded-md border border-border px-3 py-2">
@@ -128,7 +143,7 @@ export function McpSetupDialog({ open, onClose, embedded = false }: Props) {
                     <p className="truncate font-mono text-[10px] text-muted-foreground">{key.prefix}... · {new Date(key.createdAt).toLocaleString()}</p>
                     <p className="text-[10px] text-muted-foreground">{key.scopes.includes('destructive') ? '可执行破坏性操作' : '只读与安全写入'}</p>
                   </div>
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0 hover:text-destructive" disabled={busy === key.id} onClick={() => void revoke(key.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  <Button size="sm" variant="ghost" aria-label={`撤销 ${key.label}`} className="h-11 w-11 p-0 hover:text-destructive" disabled={busy !== null} onClick={() => void revoke(key.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
                 </div>
               ))}
             </div>

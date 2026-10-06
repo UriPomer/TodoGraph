@@ -334,8 +334,8 @@ export const api = {
     const res = await request(`/api/pages/${encodeURIComponent(pageId)}/backup`, 'POST');
     await jsonOk(res);
   },
-  async listBackups(pageId: string): Promise<BackupInfo[]> {
-    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/backups`);
+  async listBackups(pageId: string, signal?: AbortSignal): Promise<BackupInfo[]> {
+    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/backups`, signal ? { signal } : undefined);
     const data = await json<{ backups: BackupInfo[] }>(res);
     return data.backups;
   },
@@ -349,8 +349,8 @@ export const api = {
     const body = await json<{ data?: unknown }>(res);
     return PageDataSchema.parse(body.data);
   },
-  async listTrashedPages(): Promise<TrashedPageInfo[]> {
-    const res = await apiFetch(`${getApiBase()}/api/trash/pages`);
+  async listTrashedPages(signal?: AbortSignal): Promise<TrashedPageInfo[]> {
+    const res = await apiFetch(`${getApiBase()}/api/trash/pages`, signal ? { signal } : undefined);
     return (await json<{ pages: TrashedPageInfo[] }>(res)).pages;
   },
   async restoreTrashedPage(
@@ -390,8 +390,8 @@ export const api = {
     const body = await json<{ meta?: unknown }>(res);
     return MetaSchema.parse(body.meta);
   },
-  async listMcpKeys(): Promise<McpKeyInfo[]> {
-    const res = await apiFetch(`${getApiBase()}/api/mcp/keys`);
+  async listMcpKeys(signal?: AbortSignal): Promise<McpKeyInfo[]> {
+    const res = await apiFetch(`${getApiBase()}/api/mcp/keys`, signal ? { signal } : undefined);
     const data = await json<{ keys: McpKeyInfo[] }>(res);
     return data.keys;
   },

@@ -15,6 +15,16 @@
 .task-row__status-progress, .task-row__status-check { position: absolute; }
 .task-row__status-progress { width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--primary)); }
 .task-row__status-check { width: 12px; height: 12px; color: hsl(var(--card)); }
+.task-status-menu {
+  border-color: hsl(var(--foreground) / 0.12);
+  background: hsl(var(--card) / 0.84);
+  box-shadow: 0 12px 32px hsl(0 0% 0% / 0.18), inset 0 1px 0 hsl(0 0% 100% / 0.16);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .task-status-menu { background: hsl(var(--card)); }
+}
 /* The mask fades both the tint and the blur; the action stays crisp above it. */
 .mobile-swipe-action {
   --swipe-color: var(--success); --swipe-contrast: var(--success-foreground); --swipe-direction: 90deg;

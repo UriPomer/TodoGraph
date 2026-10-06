@@ -8,7 +8,7 @@ import { dialog } from '@/components/ui/dialog-store';
 import { toast } from '@/components/ui/toaster-store';
 import { MAX_TITLE_LENGTH } from '@/lib/measureText';
 import type { TaskStatus } from '@todograph/shared';
-import { TaskStatusButton } from './TaskStatusButton';
+import { TaskStatusControl } from '../tasks/TaskStatusControl';
 
 export interface TaskNodeData extends Record<string, unknown> {
   title: string;
@@ -21,7 +21,6 @@ export interface TaskNodeData extends Record<string, unknown> {
 
 function TaskNodeImpl({ id, data, selected }: NodeProps) {
   const d = data as TaskNodeData;
-  const toggleStatus = useTaskStore((s) => s.toggleStatus);
   const deleteTask = useTaskStore((s) => s.deleteTask);
   const updateTask = useTaskStore((s) => s.updateTask);
   const [editing, setEditing] = useState(false);
@@ -60,16 +59,7 @@ function TaskNodeImpl({ id, data, selected }: NodeProps) {
     >
       <Handle type="target" position={Position.Left} />
 
-      <TaskStatusButton
-        status={d.status}
-        onClick={(e) => {
-          if (e.shiftKey) return;
-          e.stopPropagation();
-          if (toggleStatus(id) && d.status === 'doing') {
-            toast.action('已完成', '撤销', () => useTaskStore.getState().undo(), d.title);
-          }
-        }}
-      />
+      <TaskStatusControl id={id} status={d.status} title={d.title} graph />
 
       {editing ? (
         <input

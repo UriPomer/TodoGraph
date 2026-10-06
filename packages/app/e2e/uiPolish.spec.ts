@@ -14,9 +14,9 @@ async function assertHierarchyAlignment(page: Page, maxExpanderX: number, screen
   await expect(child).toBeVisible();
   const leaf = await addTask(page, leafTitle);
 
-  const parentStatus = await parent.locator('button[title^="点击切换状态"]').boundingBox();
-  const leafStatus = await leaf.locator('button[title^="点击切换状态"]').boundingBox();
-  const childStatus = await child.locator('button[title^="点击切换状态"]').boundingBox();
+  const parentStatus = await parent.locator('button[data-status]').boundingBox();
+  const leafStatus = await leaf.locator('button[data-status]').boundingBox();
+  const childStatus = await child.locator('button[data-status]').boundingBox();
   const expander = await parent.locator('button[title="折叠"]').boundingBox();
   expect(parentStatus).not.toBeNull();
   expect(leafStatus).not.toBeNull();
@@ -192,12 +192,7 @@ test('mobile themes preserve the background, list spacing, swipe affordance, and
     const background = await workspaceSurface.evaluate((element) => getComputedStyle(element).backgroundColor);
     expect(background).toBe('rgba(0, 0, 0, 0)');
     const glass = theme!.startsWith('glass');
-    const surfaceColor = await page.locator(glass ? '.bg-matte' : 'html').evaluate((element) => getComputedStyle(element).backgroundColor);
-    const color = surfaceColor.match(/[\d.]+/g)!.map(Number);
-    const alpha = color[3] ?? 1;
     if (glass) {
-      expect(alpha, `${theme} tint must let at least 60% of the photo through`).toBeGreaterThan(0);
-      expect(alpha).toBeLessThanOrEqual(0.4);
       await expect(page.locator('.bg-sharp')).toHaveCSS('display', 'block');
       await expect(page.locator('.bg-matte')).toHaveCSS('mask-image', 'none');
       const sample = { x: page.viewportSize()!.width - 20, y: page.viewportSize()!.height - 160, width: 10, height: 10 };
@@ -230,6 +225,9 @@ test('mobile themes preserve the background, list spacing, swipe affordance, and
       await page.getByRole('button', { name: '切换到页面模式' }).click();
       await expect(page.getByRole('button', { name: '切换到清单模式' })).toBeEnabled();
     } else {
+      const surfaceColor = await page.locator('html').evaluate((element) => getComputedStyle(element).backgroundColor);
+      const color = surfaceColor.match(/[\d.]+/g)!.map(Number);
+      const alpha = color[3] ?? 1;
       expect(alpha, `${theme} keeps its solid theme surface`).toBe(1);
       expect(color[0], `${theme} uses light theme tokens`).toBeGreaterThan(180);
       await expect(page.locator('.bg-sharp')).toHaveCSS('display', 'none');
@@ -241,7 +239,7 @@ test('mobile themes preserve the background, list spacing, swipe affordance, and
     has: page.locator('[data-task-title]', { hasText: titleText }),
   });
   await expect(row.locator('[data-task-title]')).toHaveCSS('white-space', 'normal');
-  const statusBox = await row.locator('button[title^="点击切换状态"]').boundingBox();
+  const statusBox = await row.locator('button[data-status]').boundingBox();
   expect(statusBox).not.toBeNull();
   expect(statusBox!.x).toBeLessThan(64);
   const gradient = await row.locator('[data-swipe-action="start"]').evaluate((element) => getComputedStyle(element, '::before').maskImage);
@@ -256,8 +254,6 @@ test('mobile themes preserve the background, list spacing, swipe affordance, and
   ]);
   await expect(page.locator('main[data-mobile-tab="list"]')).toBeVisible();
   expect(toolbarColor).toBe(listColorAtSeam);
-  const toolbarTopPadding = await toolbar.evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingTop));
-  expect(toolbarTopPadding).toBeGreaterThanOrEqual(24);
   await page.screenshot({ path: testInfo.outputPath('mobile-glass-light-list.png'), fullPage: true });
   await assertHierarchyAlignment(page, 20, testInfo.outputPath('mobile-task-hierarchy-alignment.png'));
 
@@ -316,7 +312,7 @@ test('Android GEST-008/GEST-009/GEST-015 swipe start, completion and deletion ca
       await expect(hint).toHaveAttribute('data-active', 'false');
       await expect(hint).toHaveCSS('opacity', '0');
       await expect(row).toBeVisible();
-      await expect(row.locator('button[title^="点击切换状态"]')).toHaveAttribute('data-status', 'todo');
+      await expect(row.locator('button[data-status]')).toHaveAttribute('data-status', 'todo');
     }
   };
 

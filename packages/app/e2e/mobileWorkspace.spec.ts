@@ -76,6 +76,7 @@ test('NAV-001/NAV-002/NAV-003/NAV-008 checklist stays list-only, folds Done, and
   const status = taskStatusButton(row);
   await status.click();
   await status.click();
+  await page.getByRole('menuitem', { name: '标记完成', exact: true }).click();
   await expect(taskRow(page, title)).toHaveCount(0);
   await page.getByRole('button', { name: '展开已完成任务' }).click();
   await expect(taskRow(page, title)).toBeVisible();
@@ -126,7 +127,7 @@ test('NAV-004/NAV-005 mobile page creation, page switching, cross-page split, an
 
   await page.getByRole('button', { name: '更多' }).click();
   await expect(page.locator('main[data-mobile-tab="more"]')).toBeVisible();
-  await expect(page.getByText('账号与数据')).toBeVisible();
+  await expect(page.getByRole('button', { name: '账号安全', exact: true })).toBeVisible();
   await expect(page.getByText('AI Agent 接入')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('mobile-more-panel.png'), fullPage: true });
 

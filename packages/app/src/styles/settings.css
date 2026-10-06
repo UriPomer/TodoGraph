@@ -1,0 +1,50 @@
+.settings-section { padding: 16px 4px; }
+.settings-section + .settings-section { border-top: 1px solid hsl(var(--foreground) / .12); }
+.settings-account { display: flex; align-items: center; gap: 14px; min-height: 96px; margin: 4px 4px 24px; }
+.settings-account-avatar { display: grid; place-items: center; width: 48px; height: 48px; flex-shrink: 0; border: 1px solid hsl(var(--foreground) / .12); border-radius: 50%; background: hsl(var(--foreground) / .05); }
+.settings-menu { display: grid; gap: 12px; flex-shrink: 0; }
+.settings-entry { display: flex; align-items: center; gap: 14px; padding: 12px 8px; min-height: 72px; }
+.settings-entry-symbol { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; color: hsl(var(--primary)); }
+.settings-entry-icon { width: 20px; height: 20px; }
+.settings-entry:active { background: hsl(var(--foreground) / .055); }
+.settings-entry:focus-visible, .settings-back:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -3px; }
+.settings-scroll .text-muted-foreground { color: hsl(var(--foreground) / .84); }
+.settings-intro { margin: 0 4px 18px; font-size: 14px; line-height: 1.7; color: hsl(var(--foreground) / .84); }
+[data-theme='glass-dark'] .settings-scroll .text-muted-foreground,
+[data-theme='glass-dark'] .settings-intro { color: hsl(var(--foreground) / .9); }
+[data-theme='glass-dark'] .settings-section .text-muted-foreground { color: hsl(var(--foreground) / .96); }
+.settings-field { min-height: 44px; border: 1px solid hsl(var(--foreground) / .16); border-radius: 12px; background: hsl(var(--background)); transition: border-color 160ms; }
+.settings-content .settings-section h3 { font-size: 14px; font-weight: 500; }
+.settings-content select { min-height: 44px; border-radius: 12px; background: hsl(var(--background)); }
+[data-theme='glass-dark'] .settings-field,
+[data-theme='glass-dark'] .settings-content select { background: hsl(0 0% 100% / .04); border-color: hsl(var(--foreground) / .16); }
+[data-theme='glass-light'] .settings-field,
+[data-theme='glass-light'] .settings-content select { background: hsl(var(--card) / .2); }
+.settings-content input::placeholder { color: hsl(var(--foreground) / .68); }
+.settings-content button:disabled { cursor: default; }
+
+/* Only the workspace content changes; the backdrop and bottom navigation stay live. */
+@media (max-width: 767px) {
+  /* A permanent snapshot boundary prevents glass from sampling the backdrop. */
+  html[data-workspace-motion] [data-workspace-screen] { view-transition-name: workspace-screen; }
+  html[data-workspace-motion] { view-transition-name: none; }
+  ::view-transition { pointer-events: none; }
+  ::view-transition-group(workspace-screen) { animation-duration: 240ms; animation-timing-function: cubic-bezier(.22,1,.36,1); }
+  ::view-transition-old(workspace-screen), ::view-transition-new(workspace-screen) { mix-blend-mode: normal; animation-fill-mode: both; }
+  ::view-transition-old(workspace-screen) { animation: workspace-switch-out 180ms ease-out both; }
+  ::view-transition-new(workspace-screen) { animation: workspace-switch-in 180ms ease-out both; }
+  html[data-workspace-motion='push']::view-transition-old(workspace-screen) { animation: workspace-push-out 240ms cubic-bezier(.22,1,.36,1) both; }
+  html[data-workspace-motion='push']::view-transition-new(workspace-screen) { animation: workspace-push-in 240ms cubic-bezier(.22,1,.36,1) both; }
+  html[data-workspace-motion='pop']::view-transition-old(workspace-screen) { animation: workspace-pop-out 240ms cubic-bezier(.22,1,.36,1) both; }
+  html[data-workspace-motion='pop']::view-transition-new(workspace-screen) { animation: workspace-pop-in 240ms cubic-bezier(.22,1,.36,1) both; }
+}
+@keyframes workspace-switch-out { to { opacity: 0; transform: translateY(-4px); } }
+@keyframes workspace-switch-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes workspace-push-out { to { opacity: 0; transform: translateX(-12%); } }
+@keyframes workspace-push-in { from { opacity: 0; transform: translateX(18%); } to { opacity: 1; transform: none; } }
+@keyframes workspace-pop-out { to { opacity: 0; transform: translateX(18%); } }
+@keyframes workspace-pop-in { from { opacity: 0; transform: translateX(-12%); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+  .settings-entry, .settings-field { transition: none; }
+}

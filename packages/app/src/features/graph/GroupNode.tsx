@@ -6,11 +6,10 @@ import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/LinkifiedText';
 import { useTaskStore } from '@/stores/useTaskStore';
 import { dialog } from '@/components/ui/dialog-store';
-import { toast } from '@/components/ui/toaster-store';
 import type { TaskStatus } from '@todograph/shared';
 import { GroupContentsDialog, type GroupDescendant } from './GroupContentsDialog';
 import { centeredDropPosition, isOutsideRect } from './collapsedGroupDrag';
-import { TaskStatusButton } from './TaskStatusButton';
+import { TaskStatusControl } from '../tasks/TaskStatusControl';
 
 export interface GroupNodeData extends Record<string, unknown> {
   title: string;
@@ -39,7 +38,6 @@ export interface GroupNodeData extends Record<string, unknown> {
 function GroupNodeImpl({ id, data, selected }: NodeProps) {
   const d = data as GroupNodeData;
   const rf = useReactFlow();
-  const toggleStatus = useTaskStore((s) => s.toggleStatus);
   const updateTask = useTaskStore((s) => s.updateTask);
   const setParent = useTaskStore((s) => s.setParent);
   const [showAll, setShowAll] = useState(false);
@@ -173,16 +171,7 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
         onClick={(e) => e.stopPropagation()}
         onDoubleClick={(e) => e.stopPropagation()}
       >
-        <TaskStatusButton
-          status={d.status}
-          className="nodrag nopan"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (toggleStatus(id) && d.status === 'doing') {
-              toast.action('已完成', '撤销', () => useTaskStore.getState().undo(), d.title);
-            }
-          }}
-        />
+        <TaskStatusControl id={id} status={d.status} title={d.title} graph />
 
         <span
           className={cn(
@@ -217,19 +206,7 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
                   onDoubleClick={(event) => event.stopPropagation()}
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <TaskStatusButton
-                      status={child.status}
-                      touchTarget
-                      className="nodrag nopan nowheel"
-                      aria-label={`推进 ${child.title} 状态`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (toggleStatus(child.id) && child.status === 'doing') {
-                          toast.action('已完成', '撤销', () => useTaskStore.getState().undo(), child.title);
-                        }
-                      }}
-                      onDoubleClick={(event) => event.stopPropagation()}
-                    />
+                    <TaskStatusControl id={child.id} status={child.status} title={child.title} graph touchTarget />
                     <span className={cn('truncate text-xs', child.status === 'done' && 'line-through text-muted-foreground')}>
                       {child.depth > 1 ? `${'·'.repeat(child.depth - 1)} ` : ''}{child.title}
                     </span>
@@ -259,7 +236,6 @@ function GroupNodeImpl({ id, data, selected }: NodeProps) {
           title={d.title}
           descendants={descendants}
           returnFocus={returnFocusRef.current}
-          onToggleStatus={toggleStatus}
           onClose={closeAll}
         />
       )}

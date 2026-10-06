@@ -2,13 +2,14 @@
  * 液态玻璃主题
  *
  * 玻璃/磨砂效果由 bg-sharp + bg-matte 双层 fixed div 提供（见 globals.css）。
- * 本文件只定义颜色令牌。卡片为实色不透明，文字可读性优先。
+ * 本文件定义颜色令牌；玻璃表面由组件使用半透明底色和背景模糊呈现。
  * 品牌色通过 --brand-hue 控制（默认 260 紫），HueSlider 实时覆写。
  * ============================================================ */
 
 /* ---------- 玻璃·深色 ---------- */
 [data-theme='glass-dark'] {
-  --mobile-backdrop-alpha: 0.24;
+  --mobile-backdrop-alpha: 0.2;
+  --mobile-backdrop-color: var(--background);
   --background: 250 5% 4%;
   --foreground: 240 8% 93%;
 
@@ -50,7 +51,8 @@
 
 /* ---------- 玻璃·浅色 ---------- */
 [data-theme='glass-light'] {
-  --mobile-backdrop-alpha: 0.36;
+  --mobile-backdrop-alpha: 0.64;
+  --mobile-backdrop-color: var(--card);
   --background: 45 8% 94%;
   --foreground: 30 6% 12%;
 

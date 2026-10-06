@@ -2,7 +2,7 @@ import { expect, type Page, type TestInfo } from '@playwright/test';
 
 export const E2E_SANDBOX_TITLE = 'E2E 测试沙箱';
 
-export async function openIsolatedWorkspace(page: Page, testInfo: TestInfo) {
+export async function openIsolatedWorkspace(page: Page, testInfo: TestInfo, waitUntil: 'load' | 'domcontentloaded' = 'load') {
   const metaResponse = await page.request.get('/api/meta');
   expect(metaResponse.ok()).toBeTruthy();
   const meta = await metaResponse.json() as {
@@ -32,10 +32,10 @@ export async function openIsolatedWorkspace(page: Page, testInfo: TestInfo) {
     },
   });
   expect(reset.ok(), `reset E2E page returned ${reset.status()}`).toBeTruthy();
-  await page.goto('/');
+  await page.goto('/', { waitUntil });
   await expect(page.locator('input[placeholder^="新任务"]')).toBeVisible();
-  await page.locator('.workspace-mode-enter').evaluate((element) =>
-    Promise.all(element.getAnimations().map((animation) => animation.finished)),
+  await page.locator('.mobile-workspace-shell').evaluate((element) =>
+    Promise.all(element.getAnimations({ subtree: true }).filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished)),
   );
 }
 
@@ -56,5 +56,5 @@ export function taskRow(page: Page, title: string) {
 }
 
 export function taskStatusButton(row: ReturnType<typeof taskRow>) {
-  return row.locator('button[title^="点击切换状态"]');
+  return row.locator('button[data-status]');
 }

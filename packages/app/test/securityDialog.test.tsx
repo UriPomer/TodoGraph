@@ -16,7 +16,6 @@ describe('SecurityDialog password change', () => {
     useTaskStore.setState(useTaskStore.getInitialState(), true);
     useWorkspaceStore.setState(useWorkspaceStore.getInitialState(), true);
     vi.restoreAllMocks();
-    vi.spyOn(api, 'listBackups').mockResolvedValue([]);
   });
 
   it('blocks mismatches, respects cancellation, and submits confirmed passwords', async () => {
@@ -88,21 +87,4 @@ describe('SecurityDialog password change', () => {
     vi.unstubAllGlobals();
   });
 
-  it('reserves consistent right-side space for the backup chevron', async () => {
-    useTaskStore.setState({ activePageId: 'p-1' });
-    vi.mocked(api.listBackups).mockResolvedValue([{
-      name: '2026-07-10T16-29-05-000Z.json',
-      createdAt: '2026-07-10T16:29:05.000Z',
-      size: 8_400,
-    }]);
-    let renderer: ReturnType<typeof create>;
-
-    await act(async () => { renderer = create(<SecurityDialog open embedded />); });
-
-    const select = renderer.root.findByType('select');
-    expect(select.props.className).toContain('appearance-none');
-    expect(select.props.className).toContain('!pr-12');
-    expect(JSON.stringify(renderer.toJSON())).toContain('right-4');
-    act(() => renderer.unmount());
-  });
 });

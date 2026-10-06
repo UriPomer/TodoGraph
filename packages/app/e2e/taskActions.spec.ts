@@ -125,6 +125,7 @@ test('GEST-009 undo is a compact frosted capsule, clears mobile navigation in po
       const status = row.locator('[data-status]');
       await status.click();
       await status.click();
+      await page.getByRole('menuitem', { name: '标记完成', exact: true }).click();
       const undo = page.getByRole('button', { name: '撤销', exact: true });
       await expect(undo).toHaveCount(1);
       const toast = undo.locator('xpath=ancestor::li[1]');
