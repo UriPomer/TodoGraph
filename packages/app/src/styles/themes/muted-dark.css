@@ -8,14 +8,11 @@
   --foreground: 40 8% 85%;
 
   --card: 40 4% 10%;
-  --card-foreground: 40 8% 85%;
 
   --border: 40 4% 16%;
   --input: 40 4% 18%;
-  --ring: 35 12% 50%;
 
   --primary: 35 12% 50%;
-  --primary-foreground: 0 0% 100%;
 
   --secondary: 40 4% 14%;
   --secondary-foreground: 40 6% 80%;
@@ -27,19 +24,12 @@
   --accent-foreground: 40 6% 80%;
 
   --destructive: 5 20% 42%;
-  --destructive-foreground: 0 0% 100%;
 
   --success: 140 10% 32%;
-  --success-foreground: 0 0% 100%;
 
   --link: 35 15% 50%;
 
-  --surface-2: 40 4% 13%;
-  --overlay: 40 5% 8% / 0.5;
 
-  --shadow-sm: 0 1px 2px hsl(40 5% 4% / 0.4);
   --shadow: 0 2px 8px hsl(40 5% 4% / 0.5);
-  --shadow-lg: 0 8px 20px hsl(40 5% 4% / 0.6);
 
-  --radius: 0.625rem;
 }

@@ -54,17 +54,17 @@ function DialogInstance({
       onDone();
     }, 180);
   };
+  const accept = () => resolve(dialog.type === 'prompt' ? promptValue : true);
+  const cancel = () => resolve(dialog.type === 'prompt' ? null : false);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (dialog.type === 'prompt') resolve(promptValue);
-      else resolve(true);
+      accept();
     }
     if (e.key === 'Escape') {
       e.preventDefault();
-      if (dialog.type === 'prompt') resolve(null);
-      else resolve(false);
+      cancel();
     }
   };
 
@@ -109,27 +109,21 @@ function DialogInstance({
 
         <div className="mt-4 flex justify-end gap-2">
           <button
-            onClick={() => {
-              if (dialog.type === 'prompt') resolve(null);
-              else resolve(false);
-            }}
+            onClick={cancel}
             className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
           >
-            {dialog.type === 'prompt' ? (dialog.cancelLabel ?? '取消') : (dialog.cancelLabel ?? '取消')}
+            {dialog.cancelLabel ?? '取消'}
           </button>
           <button
             ref={confirmRef}
-            onClick={() => {
-              if (dialog.type === 'prompt') resolve(promptValue);
-              else resolve(true);
-            }}
+            onClick={accept}
             className={`rounded-md px-4 py-1.5 text-xs font-semibold transition-colors ${
               dialog.type === 'confirm' && dialog.danger
                 ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
                 : 'bg-[hsl(var(--primary))] text-primary-foreground hover:bg-[hsl(var(--primary))]/90'
             }`}
           >
-            {dialog.type === 'prompt' ? (dialog.confirmLabel ?? '确定') : (dialog.confirmLabel ?? '确定')}
+            {dialog.confirmLabel ?? '确定'}
           </button>
         </div>
       </div>

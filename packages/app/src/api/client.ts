@@ -191,233 +191,146 @@ async function json<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function jsonOk(res: Response): Promise<void> {
-  const body = await json<{ ok?: boolean; error?: string }>(res);
-  if (body.ok === false) throw new Error(body.error ?? 'request failed');
+interface RequestOptions<T> {
+  method?: string;
+  body?: unknown;
+  signal?: AbortSignal;
+  conflict?: 'page' | 'meta';
+  pageId?: string;
+  schema?: { parse: (data: unknown) => T };
+  failureMessage?: string;
 }
 
-function buildConflictError(
-  message: string,
-  extra: { serverVersion?: number; serverRevision?: number; pageId?: string } = {},
-): Error & { conflict: boolean; serverVersion?: number; serverRevision?: number; pageId?: string } {
-  const err = new Error(message) as Error & {
-    conflict: boolean;
-    serverVersion?: number;
-    serverRevision?: number;
-    pageId?: string;
-  };
-  err.conflict = true;
-  err.serverVersion = extra.serverVersion;
-  err.serverRevision = extra.serverRevision;
-  err.pageId = extra.pageId;
-  return err;
+/** Transport owns HTTP failures and conflict metadata; schemas own domain validation. */
+async function request<T = unknown>(path: string, options: RequestOptions<T> = {}): Promise<T> {
+  const { method = 'GET', body, signal, conflict, pageId, schema } = options;
+  const init = method === 'GET' && body === undefined
+    ? (signal ? { signal } : undefined)
+    : {
+        method,
+        headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        ...(signal ? { signal } : {}),
+      };
+  const response = await apiFetch(`${getApiBase()}${path}`, init);
+  if (response.status === 409 && conflict) {
+    const detail = await response.json().catch(() => ({})) as {
+      pageId?: string; serverVersion?: number; serverRevision?: number;
+    };
+    throw Object.assign(new Error(conflict === 'page'
+      ? '版本冲突：页面已被其他设备修改' : '版本冲突：工作区已被其他设备修改'), {
+      conflict: true,
+      serverVersion: detail.serverVersion,
+      serverRevision: detail.serverRevision,
+      pageId: detail.pageId ?? pageId,
+    });
+  }
+  const result = await json<T>(response);
+  const acknowledgement = result as { ok?: boolean; error?: string } | null;
+  if (acknowledgement?.ok === false) {
+    throw new Error(acknowledgement.error ?? options.failureMessage ?? 'request failed');
+  }
+  return schema ? schema.parse(result) : result;
 }
 
-type ConflictKind = 'page' | 'meta';
-async function request(
-  path: string,
-  method = 'GET',
-  body?: unknown,
-): Promise<Response> {
-  return apiFetch(`${getApiBase()}${path}`, {
-    method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-}
-
-async function rejectConflict(
-  response: Response,
-  kind: ConflictKind,
-  pageId?: string,
-): Promise<void> {
-  if (response.status !== 409) return;
-  const body = await response.json().catch(() => ({})) as {
-    pageId?: string;
-    serverVersion?: number;
-    serverRevision?: number;
-  };
-  throw buildConflictError(
-    kind === 'page' ? '版本冲突：页面已被其他设备修改' : '版本冲突：工作区已被其他设备修改',
-    { ...body, pageId: body.pageId ?? pageId },
-  );
-}
-
-async function mutateMeta(
-  path: string,
-  method: string,
-  body: unknown,
-): Promise<Meta> {
-  const response = await request(path, method, body);
-  await rejectConflict(response, 'meta');
-  const result = await json<{ meta?: unknown }>(response);
+const pagePath = (id: string) => `/api/pages/${encodeURIComponent(id)}`;
+async function mutateMeta(path: string, method: string, body: unknown): Promise<Meta> {
+  const result = await request<{ meta?: unknown }>(path, { method, body, conflict: 'meta' });
   return MetaSchema.parse(result.meta);
 }
 
 export const api = {
-  // ---- meta ----
-  async loadMeta(): Promise<Meta> {
-    const res = await apiFetch(`${getApiBase()}/api/meta`);
-    const data = await json<unknown>(res);
-    return MetaSchema.parse(data);
-  },
-  // ---- pages ----
-  async loadPage(pageId: string): Promise<PageData> {
-    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}`);
-    const data = await json<unknown>(res);
-    return PageDataSchema.parse(data);
-  },
-  async savePage(
-    pageId: string,
-    data: PageData,
-    expectedVersion?: number,
-  ): Promise<{ version: number }> {
-    const res = await request(`/api/pages/${encodeURIComponent(pageId)}`, 'PUT', {
-      ...data,
-      expectedVersion,
+  loadMeta: (): Promise<Meta> => request('/api/meta', { schema: MetaSchema }),
+  loadPage: (pageId: string): Promise<PageData> => request(pagePath(pageId), { schema: PageDataSchema }),
+  loadAllTasks: (): Promise<AllTasksResponse> => request('/api/all-tasks', { schema: AllTasksResponseSchema }),
+
+  async savePage(pageId: string, data: PageData, expectedVersion?: number): Promise<{ version: number }> {
+    const result = await request<{ version?: number }>(pagePath(pageId), {
+      method: 'PUT', body: { ...data, expectedVersion }, conflict: 'page', pageId, failureMessage: 'save failed',
     });
-    await rejectConflict(res, 'page', pageId);
-    const body = await json<{ ok?: boolean; version?: number; error?: string }>(res);
-    if (body.ok === false) throw new Error(body.error ?? 'save failed');
-    return { version: body.version ?? 0 };
+    return { version: result.version ?? 0 };
   },
   async createPage(title: string, expectedRevision?: number): Promise<{ page: PageInfo; meta: Meta }> {
-    const res = await request('/api/pages', 'POST', { title, expectedRevision });
-    await rejectConflict(res, 'meta');
-    const data = await json<unknown>(res);
-    const parsed = data as { page?: unknown; meta?: unknown };
-    return {
-      page: PageInfoSchema.parse(parsed.page),
-      meta: MetaSchema.parse(parsed.meta),
-    };
-  },
-  async deletePage(pageId: string, expectedRevision?: number): Promise<Meta> {
-    return mutateMeta(
-      `/api/pages/${encodeURIComponent(pageId)}`,
-      'DELETE',
-      { expectedRevision },
-    );
-  },
-  async renamePage(pageId: string, title: string, expectedRevision?: number): Promise<Meta | null> {
-    return mutateMeta(`/api/pages/${encodeURIComponent(pageId)}`, 'PATCH', {
-      title,
-      expectedRevision,
+    const result = await request<{ page?: unknown; meta?: unknown }>('/api/pages', {
+      method: 'POST', body: { title, expectedRevision }, conflict: 'meta',
     });
+    return { page: PageInfoSchema.parse(result.page), meta: MetaSchema.parse(result.meta) };
   },
-  async setActivePage(pageId: string, expectedRevision?: number): Promise<Meta | null> {
-    return mutateMeta(`/api/pages/${encodeURIComponent(pageId)}`, 'PATCH', {
-      activate: true,
-      expectedRevision,
+  deletePage: (pageId: string, expectedRevision?: number): Promise<Meta> =>
+    mutateMeta(pagePath(pageId), 'DELETE', { expectedRevision }),
+  renamePage: (pageId: string, title: string, expectedRevision?: number): Promise<Meta> =>
+    mutateMeta(pagePath(pageId), 'PATCH', { title, expectedRevision }),
+  setActivePage: (pageId: string, expectedRevision?: number): Promise<Meta> =>
+    mutateMeta(pagePath(pageId), 'PATCH', { activate: true, expectedRevision }),
+  reorderPages: (ids: string[], expectedRevision?: number): Promise<Meta> =>
+    mutateMeta('/api/pages/reorder', 'POST', { ids, expectedRevision }),
+
+  moveNodes(sourcePageId: string, targetPageId: string, nodeIds: string[],
+    expectedSourceVersion?: number, expectedTargetVersion?: number): Promise<MoveNodesResponse> {
+    return request(`${pagePath(sourcePageId)}/move-nodes`, {
+      method: 'POST', body: { targetPageId, nodeIds, expectedSourceVersion, expectedTargetVersion },
+      conflict: 'page', pageId: sourcePageId, schema: MoveNodesResponseSchema,
     });
-  },
-  async reorderPages(ids: string[], expectedRevision?: number): Promise<Meta> {
-    return mutateMeta('/api/pages/reorder', 'POST', { ids, expectedRevision });
-  },
-  async moveNodes(
-    sourcePageId: string,
-    targetPageId: string,
-    nodeIds: string[],
-    expectedSourceVersion?: number,
-    expectedTargetVersion?: number,
-  ): Promise<MoveNodesResponse> {
-    const res = await request(`/api/pages/${encodeURIComponent(sourcePageId)}/move-nodes`, 'POST', {
-      targetPageId,
-      nodeIds,
-      expectedSourceVersion,
-      expectedTargetVersion,
-    });
-    await rejectConflict(res, 'page', sourcePageId);
-    const data = await json<unknown>(res);
-    return MoveNodesResponseSchema.parse(data);
   },
   async createBackup(pageId: string): Promise<void> {
-    const res = await request(`/api/pages/${encodeURIComponent(pageId)}/backup`, 'POST');
-    await jsonOk(res);
+    await request(`${pagePath(pageId)}/backup`, { method: 'POST' });
   },
   async listBackups(pageId: string, signal?: AbortSignal): Promise<BackupInfo[]> {
-    const res = await apiFetch(`${getApiBase()}/api/pages/${encodeURIComponent(pageId)}/backups`, signal ? { signal } : undefined);
-    const data = await json<{ backups: BackupInfo[] }>(res);
-    return data.backups;
+    return (await request<{ backups: BackupInfo[] }>(`${pagePath(pageId)}/backups`, { signal })).backups;
   },
   async restoreBackup(pageId: string, backupName?: string, expectedVersion?: number): Promise<PageData> {
-    const res = await request(
-      `/api/pages/${encodeURIComponent(pageId)}/restore`,
-      'POST',
-      { ...(backupName ? { backupName } : {}), expectedVersion },
-    );
-    await rejectConflict(res, 'page', pageId);
-    const body = await json<{ data?: unknown }>(res);
-    return PageDataSchema.parse(body.data);
+    const result = await request<{ data?: unknown }>(`${pagePath(pageId)}/restore`, {
+      method: 'POST', body: { ...(backupName ? { backupName } : {}), expectedVersion }, conflict: 'page', pageId,
+    });
+    return PageDataSchema.parse(result.data);
   },
   async listTrashedPages(signal?: AbortSignal): Promise<TrashedPageInfo[]> {
-    const res = await apiFetch(`${getApiBase()}/api/trash/pages`, signal ? { signal } : undefined);
-    return (await json<{ pages: TrashedPageInfo[] }>(res)).pages;
+    return (await request<{ pages: TrashedPageInfo[] }>('/api/trash/pages', { signal })).pages;
   },
-  async restoreTrashedPage(
-    name: string,
-    expectedRevision?: number,
-  ): Promise<{ meta: Meta; page: PageInfo; data: PageData; cleanupWarning?: string }> {
-    const res = await request(`/api/trash/pages/${encodeURIComponent(name)}/restore`, 'POST', {
-      expectedRevision,
-    });
-    await rejectConflict(res, 'meta');
-    const body = await json<{ meta: Meta; page: PageInfo; data: unknown; cleanupWarning?: string }>(res);
-    return { ...body, data: PageDataSchema.parse(body.data) };
-  },
-  async loadAllTasks(): Promise<AllTasksResponse> {
-    const res = await apiFetch(`${getApiBase()}/api/all-tasks`);
-    const data = await json<unknown>(res);
-    return AllTasksResponseSchema.parse(data);
+  async restoreTrashedPage(name: string, expectedRevision?: number): Promise<{
+    meta: Meta; page: PageInfo; data: PageData; cleanupWarning?: string;
+  }> {
+    const result = await request<{ meta: Meta; page: PageInfo; data: unknown; cleanupWarning?: string }>(
+      `/api/trash/pages/${encodeURIComponent(name)}/restore`, {
+        method: 'POST', body: { expectedRevision }, conflict: 'meta',
+      },
+    );
+    return { ...result, data: PageDataSchema.parse(result.data) };
   },
   async exportMarkdown(): Promise<string> {
-    const res = await apiFetch(`${getApiBase()}/api/workspace/markdown`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.text();
+    const response = await apiFetch(`${getApiBase()}/api/workspace/markdown`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.text();
   },
   async exportWorkspaceJson(): Promise<WorkspaceExport> {
-    const res = await apiFetch(`${getApiBase()}/api/workspace/export.json`);
-    const data = await json<WorkspaceExport>(res);
+    const data = await request<WorkspaceExport>('/api/workspace/export.json');
     return {
       exportedAt: data.exportedAt,
       meta: MetaSchema.parse(data.meta),
-      pages: Object.fromEntries(
-        Object.entries(data.pages).map(([id, page]) => [id, PageDataSchema.parse(page)]),
-      ),
+      pages: Object.fromEntries(Object.entries(data.pages).map(([id, page]) => [id, PageDataSchema.parse(page)])),
     };
   },
   async importWorkspaceJson(data: WorkspaceExport): Promise<Meta> {
-    const res = await request('/api/workspace/import', 'POST', data);
-    const body = await json<{ meta?: unknown }>(res);
-    return MetaSchema.parse(body.meta);
+    const result = await request<{ meta?: unknown }>('/api/workspace/import', { method: 'POST', body: data });
+    return MetaSchema.parse(result.meta);
   },
   async listMcpKeys(signal?: AbortSignal): Promise<McpKeyInfo[]> {
-    const res = await apiFetch(`${getApiBase()}/api/mcp/keys`, signal ? { signal } : undefined);
-    const data = await json<{ keys: McpKeyInfo[] }>(res);
-    return data.keys;
+    return (await request<{ keys: McpKeyInfo[] }>('/api/mcp/keys', { signal })).keys;
   },
-  async generateMcpKey(label: string, scopes: McpKeyScope[] = ['read', 'write']): Promise<GeneratedMcpKey> {
-    const res = await request('/api/mcp/keys', 'POST', { label, scopes });
-    return json<GeneratedMcpKey>(res);
-  },
+  generateMcpKey: (label: string, scopes: McpKeyScope[] = ['read', 'write']): Promise<GeneratedMcpKey> =>
+    request('/api/mcp/keys', { method: 'POST', body: { label, scopes } }),
   async revokeMcpKey(id: string): Promise<void> {
-    const res = await request(`/api/mcp/keys/${encodeURIComponent(id)}`, 'DELETE');
-    await jsonOk(res);
+    await request(`/api/mcp/keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
   },
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    const body = { currentPassword, newPassword };
     if (isNativeRuntime()) {
-      const res = await request('/api/auth/native/change-password', 'POST', {
-        currentPassword,
-        newPassword,
-        remember: isNativeSessionPersisted(),
+      const result = await request<{ ok: boolean; token: string }>('/api/auth/native/change-password', {
+        method: 'POST', body: { ...body, remember: isNativeSessionPersisted() },
       });
-      const body = await json<{ ok: boolean; token: string }>(res);
-      await replaceNativeSessionToken(body.token);
-      return;
+      await replaceNativeSessionToken(result.token);
+    } else {
+      await request('/api/auth/change-password', { method: 'POST', body });
     }
-    const res = await request('/api/auth/change-password', 'POST', {
-      currentPassword,
-      newPassword,
-    });
-    await jsonOk(res);
   },
 };

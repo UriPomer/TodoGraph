@@ -96,13 +96,7 @@ export class PageViewportController {
 
   switchTo(pageId: string | null, currentViewport: Viewport): void {
     if (this.ownerPageId && this.ownerPageId !== pageId) {
-      rememberPageViewport(
-        this.cache,
-        this.ownerPageId,
-        this.scope,
-        currentViewport,
-        this.getDimensions(),
-      );
+      this.remember(this.ownerPageId, currentViewport);
     }
     this.ownerPageId = null;
     this.desiredPageId = pageId;
@@ -139,42 +133,27 @@ export class PageViewportController {
     if (token.generation !== this.generation || token.pageId !== this.desiredPageId) {
       return 'stale';
     }
-    if (success) {
-      rememberPageViewport(
-        this.cache,
-        token.pageId,
-        this.scope,
-        currentViewport,
-        this.getDimensions(),
-      );
-      this.desiredPageId = null;
-      this.ownerPageId = token.pageId;
-      this.attempts = 0;
-      return 'settled';
-    }
-    this.attempts += 1;
-    if (this.attempts < 3) return 'retry';
+    if (!success && ++this.attempts < 3) return 'retry';
     this.desiredPageId = null;
     this.ownerPageId = token.pageId;
-    rememberPageViewport(
-      this.cache,
-      token.pageId,
-      this.scope,
-      currentViewport,
-      this.getDimensions(),
-    );
-    return 'adopted';
+    if (success) this.attempts = 0;
+    this.remember(token.pageId, currentViewport);
+    return success ? 'settled' : 'adopted';
   }
 
-  recordMove(viewport: Viewport): void {
-    if (!this.ownerPageId || this.desiredPageId || this.inFlight) return;
+  private remember(pageId: string, viewport: Viewport): void {
     rememberPageViewport(
       this.cache,
-      this.ownerPageId,
+      pageId,
       this.scope,
       viewport,
       this.getDimensions(),
     );
+  }
+
+  recordMove(viewport: Viewport): void {
+    if (!this.ownerPageId || this.desiredPageId || this.inFlight) return;
+    this.remember(this.ownerPageId, viewport);
   }
 }
 

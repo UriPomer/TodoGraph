@@ -1,7 +1,7 @@
 :root {
+  --mobile-layout-space: 0.5rem;
   --mobile-status-extension: 0.5rem;
   --mobile-bottom-space: max(0px, calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) - 0.5rem));
-  --mobile-bottom-chrome-height: calc(3.5rem + var(--mobile-bottom-space));
 }
 
 @media (max-width: 767px) {
@@ -17,7 +17,7 @@
   }
   .mobile-top-chrome {
     flex-shrink: 0;
-    padding-top: calc(0.5rem + var(--mobile-status-extension) + var(--safe-area-inset-top, env(safe-area-inset-top, 0px)));
-    padding-bottom: 0.5rem;
+    padding-top: calc(var(--mobile-layout-space) + var(--mobile-status-extension) + var(--safe-area-inset-top, env(safe-area-inset-top, 0px)));
+    padding-bottom: var(--mobile-layout-space);
   }
 }

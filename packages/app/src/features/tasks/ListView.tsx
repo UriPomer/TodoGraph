@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { MAX_HIERARCHY_DEPTH, SYSTEM_HIERARCHY_PAGE_ID, type Task } from '@todograph/shared';
-import { buildHierarchyMetrics, useTaskStore } from '@/stores/useTaskStore';
+import { useTaskStore } from '@/stores/useTaskStore';
+import { buildHierarchyMetrics } from '@/lib/taskHierarchy';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useDerived } from '@/hooks/useRecommendation';
 import { toast } from '@/components/ui/toaster-store';
@@ -278,22 +279,13 @@ export function ListView() {
     splitPctRef.current = pct;
     setTopPct(pct);
   }, []);
-  const onSplitPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+  const finishSplitDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
-      localStorage.setItem('todograph.listSplitTopPct', String(Math.round(splitPctRef.current)));
+      if (e.type === 'pointerup') {
+        localStorage.setItem('todograph.listSplitTopPct', String(Math.round(splitPctRef.current)));
+      }
     }
-    splitRectRef.current = null;
-    setSplitDragging(false);
-  }, []);
-  const onSplitPointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    }
-    splitRectRef.current = null;
-    setSplitDragging(false);
-  }, []);
-  const onSplitLostPointerCapture = useCallback(() => {
     splitRectRef.current = null;
     setSplitDragging(false);
   }, []);
@@ -320,28 +312,18 @@ export function ListView() {
             {pullReady ? '松手新建' : '下拉新建'}
           </span>
         </div>
-        <div ref={contentRef} className="will-change-transform w-full px-4 py-5 max-lg:px-3 max-lg:py-3 max-md:pt-1" style={{ transform: 'translateY(0px)' }}>
+        <div ref={contentRef} className="task-list-content will-change-transform w-full" style={{ transform: 'translateY(0px)' }}>
           <TaskInput focusTrigger={focusTrigger} />
 
-          <TaskSection
-            title="Ready"
-            mobileKey="ready"
-            hint="可执行"
-            items={readyArr}
-            depInfo={depInfo}
-            childMap={childMap}
-            collapsed={collapsed}
-            onToggleCollapse={toggleCollapse}
-            drag={sectionDrag}
-            onAddChild={handleAddChild}
-            empty="暂无可执行任务"
-          />
-          {!isChecklistMode && (
+          {([
+            { mobileKey: 'ready', title: 'Ready', hint: '可执行', items: readyArr, empty: '暂无可执行任务' },
+            ...(!isChecklistMode ? [{ mobileKey: 'blocked' as const, title: 'Blocked', hint: '有未完成的前置', items: blockedArr }] : []),
+            { mobileKey: 'done', title: 'Done', items: doneArr, sectionCollapsed: doneSectionCollapsed,
+              onToggleSection: () => setDoneSectionCollapsed(value => !value) },
+          ] as const).map(section => (
             <TaskSection
-              title="Blocked"
-              mobileKey="blocked"
-              hint="有未完成的前置"
-              items={blockedArr}
+              key={section.mobileKey}
+              {...section}
               depInfo={depInfo}
               childMap={childMap}
               collapsed={collapsed}
@@ -349,20 +331,7 @@ export function ListView() {
               drag={sectionDrag}
               onAddChild={handleAddChild}
             />
-          )}
-          <TaskSection
-            title="Done"
-            mobileKey="done"
-            items={doneArr}
-            depInfo={depInfo}
-            childMap={childMap}
-            collapsed={collapsed}
-            onToggleCollapse={toggleCollapse}
-            drag={sectionDrag}
-            onAddChild={handleAddChild}
-            sectionCollapsed={doneSectionCollapsed}
-            onToggleSection={() => setDoneSectionCollapsed((value) => !value)}
-          />
+          ))}
         </div>
       </div>
 
@@ -372,9 +341,9 @@ export function ListView() {
         data-list-split-dragging={splitDragging ? 'true' : undefined}
         onPointerDown={hasCrossPageReady ? onSplitPointerDown : undefined}
         onPointerMove={hasCrossPageReady ? onSplitPointerMove : undefined}
-        onPointerUp={hasCrossPageReady ? onSplitPointerUp : undefined}
-        onPointerCancel={hasCrossPageReady ? onSplitPointerCancel : undefined}
-        onLostPointerCapture={hasCrossPageReady ? onSplitLostPointerCapture : undefined}
+        onPointerUp={hasCrossPageReady ? finishSplitDrag : undefined}
+        onPointerCancel={hasCrossPageReady ? finishSplitDrag : undefined}
+        onLostPointerCapture={hasCrossPageReady ? finishSplitDrag : undefined}
         className={`shrink-0 h-px lg:h-[5px] flex items-center justify-center transition-colors relative group touch-none select-none ${
           splitDragging ? 'bg-[hsl(var(--primary))]' : 'bg-border/30'
         } ${

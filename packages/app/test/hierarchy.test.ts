@@ -4,7 +4,7 @@ import {
   depthOf,
   subtreeHeight,
   wouldExceedMaxDepth,
-} from '@/stores/useTaskStore';
+} from '@/lib/taskHierarchy';
 import {
   MAX_HIERARCHY_DEPTH,
   validateDependencyEdges,

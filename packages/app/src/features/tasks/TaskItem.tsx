@@ -9,6 +9,7 @@ import { toast } from '@/components/ui/toaster-store';
 import { dialog } from '@/components/ui/dialog-store';
 import { useTaskItemGestures, type TaskDragPoint, type TaskDragStart } from './useTaskItemGestures';
 import { TaskStatusControl } from './TaskStatusControl';
+import { TaskTitleEditor } from './TaskTitleEditor';
 
 export type { TaskDragPoint, TaskDragStart } from './useTaskItemGestures';
 type DescriptionMode = 'closed' | 'viewing' | 'editing';
@@ -75,26 +76,13 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
   const updateTask = useTaskStore((s) => s.updateTask);
   const deleteTask = useTaskStore((s) => s.deleteTask);
   const description = normalizeTaskDescription(task.description);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(task.title);
+  const [titleCaret, setTitleCaret] = useState<number | null>(null);
   const [descriptionMode, setDescriptionMode] = useState<DescriptionMode>('closed');
   const [descDraft, setDescDraft] = useState(description ?? '');
   const [addingChild, setAddingChild] = useState(false);
   const [childDraft, setChildDraft] = useState('');
   const rowRef = useRef<HTMLLIElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const editCaretRef = useRef<number | null>(null);
   const descRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    if (editing) {
-      const input = inputRef.current;
-      input?.focus();
-      const caret = editCaretRef.current ?? input?.value.length ?? 0;
-      input?.setSelectionRange(caret, caret);
-      editCaretRef.current = null;
-    }
-  }, [editing]);
 
   useEffect(() => setDescDraft(description ?? ''), [description]);
   useEffect(() => {
@@ -103,17 +91,8 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
 
   const beginTitleEditing = useCallback((element: HTMLElement, clientX: number, clientY: number) => {
     window.getSelection()?.removeAllRanges();
-    editCaretRef.current = caretOffsetFromPoint(element, clientX, clientY);
-    setDraft(task.title);
-    setEditing(true);
-  }, [task.title]);
-
-  const commit = () => {
-    const t = draft.trim();
-    if (t && t !== task.title) updateTask(task.id, { title: t });
-    else setDraft(task.title);
-    setEditing(false);
-  };
+    setTitleCaret(caretOffsetFromPoint(element, clientX, clientY));
+  }, []);
 
   const commitDesc = () => {
     const normalized = normalizeTaskDescription(descDraft);
@@ -167,21 +146,14 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
     onDragMove?.({ pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY });
   }, [onDragMove]);
 
-  const onRowPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+  const finishRowDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType !== 'mouse') return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    onDragEnd?.(event.pointerId);
-  }, [onDragEnd]);
-
-  const onRowPointerCancel = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.pointerType !== 'mouse') return;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    onDragCancel?.(event.pointerId);
-  }, [onDragCancel]);
+    const finish = event.type === 'pointerup' ? onDragEnd : onDragCancel;
+    finish?.(event.pointerId);
+  }, [onDragEnd, onDragCancel]);
 
   return (
     <li
@@ -211,9 +183,9 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
         className="task-row__surface items-center gap-2 py-1.5 pr-2 lg:cursor-grab lg:active:cursor-grabbing max-lg:min-h-[44px]"
         onPointerDown={onRowPointerDown}
         onPointerMove={onRowPointerMove}
-        onPointerUp={onRowPointerUp}
-        onPointerCancel={onRowPointerCancel}
-        onLostPointerCapture={onRowPointerCancel}
+        onPointerUp={finishRowDrag}
+        onPointerCancel={finishRowDrag}
+        onLostPointerCapture={finishRowDrag}
       >
       {/* 折叠/展开按钮 */}
       {hasChildren && (
@@ -236,20 +208,12 @@ export const TaskItem = memo(function TaskItem({ task, dependencyInfo, depth = 0
       {!hasChildren && <span aria-hidden="true" className="h-[18px] w-[18px] shrink-0" />}
       <TaskStatusControl id={task.id} status={task.status} title={task.title} />
 
-      {editing ? (
-        <input
-          ref={inputRef}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          maxLength={MAX_TITLE_LENGTH}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commit();
-            if (e.key === 'Escape') {
-              setDraft(task.title);
-              setEditing(false);
-            }
-          }}
+      {titleCaret !== null ? (
+        <TaskTitleEditor
+          id={task.id}
+          title={task.title}
+          caret={titleCaret}
+          onClose={() => setTitleCaret(null)}
           className="min-w-0 flex-1 border-b border-[hsl(var(--primary))] bg-transparent pb-0.5 text-sm outline-none"
         />
       ) : (

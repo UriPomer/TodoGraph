@@ -1,3 +1,12 @@
+/* The list owns section spacing; sections only render their contents. */
+.task-list-content { display: flex; flex-direction: column; gap: 1.25rem; padding: 1.25rem 1rem; }
+@media (max-width: 1023px) {
+  .task-list-content { padding: .75rem; }
+}
+@media (max-width: 767px) {
+  .task-list-content { gap: calc(var(--mobile-layout-space) * 1.5); padding-top: calc(var(--mobile-layout-space) / 2); }
+}
+
 /* Disclosure, status, title and detail editors share one column geometry. */
 .mobile-task-row { --task-status-size: 32px; --task-title-offset: calc(18px + 8px + var(--task-status-size) + 8px); }
 .task-row__surface { display: grid; grid-template-columns: 18px var(--task-status-size) minmax(0, 1fr) auto auto; }

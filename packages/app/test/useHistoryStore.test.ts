@@ -26,22 +26,22 @@ describe('useHistoryStore', () => {
   it('undo returns the most recently pushed snapshot (pre-mutation state)', () => {
     useHistoryStore.getState().push(snap('pre1'));
     useHistoryStore.getState().push(snap('pre2'));
-    const popped = useHistoryStore.getState().undo();
+    const popped = useHistoryStore.getState().undo(snap('current'));
     expect(popped?.nodes[0]?.title).toBe('pre2');
   });
 
   it('redo replays forward', () => {
     useHistoryStore.getState().push(snap('a'));
     useHistoryStore.getState().push(snap('b'));
-    useHistoryStore.getState().undo();
-    const forward = useHistoryStore.getState().redo();
-    expect(forward?.nodes[0]?.title).toBe('b');
+    useHistoryStore.getState().undo(snap('current'));
+    const forward = useHistoryStore.getState().redo(snap('previous'));
+    expect(forward?.nodes[0]?.title).toBe('current');
   });
 
   it('new push after undo clears redo stack', () => {
     useHistoryStore.getState().push(snap('a'));
     useHistoryStore.getState().push(snap('b'));
-    useHistoryStore.getState().undo();
+    useHistoryStore.getState().undo(snap('current'));
     useHistoryStore.getState().push(snap('c'));
     expect(useHistoryStore.getState().canRedo()).toBe(false);
   });
@@ -50,7 +50,7 @@ describe('useHistoryStore', () => {
     for (let i = 0; i < 150; i++) useHistoryStore.getState().push(snap(String(i)));
     // only last 100 kept → undo 100 times should work
     let last = null;
-    for (let i = 0; i < 100; i++) last = useHistoryStore.getState().undo();
+    for (let i = 0; i < 100; i++) last = useHistoryStore.getState().undo(snap('current'));
     expect(last).not.toBeNull();
     expect(useHistoryStore.getState().canUndo()).toBe(false);
   });
@@ -58,17 +58,17 @@ describe('useHistoryStore', () => {
   it('clear resets both stacks', () => {
     useHistoryStore.getState().push(snap('a'));
     useHistoryStore.getState().push(snap('b'));
-    useHistoryStore.getState().undo();
+    useHistoryStore.getState().undo(snap('current'));
     useHistoryStore.getState().clear();
     expect(useHistoryStore.getState().canUndo()).toBe(false);
     expect(useHistoryStore.getState().canRedo()).toBe(false);
   });
 
   it('undo on empty returns null', () => {
-    expect(useHistoryStore.getState().undo()).toBeNull();
+    expect(useHistoryStore.getState().undo(snap('current'))).toBeNull();
   });
 
   it('redo on empty returns null', () => {
-    expect(useHistoryStore.getState().redo()).toBeNull();
+    expect(useHistoryStore.getState().redo(snap('previous'))).toBeNull();
   });
 });

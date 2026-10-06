@@ -1,6 +1,6 @@
 .toast-viewport {
-  position: fixed;
-  bottom: calc(var(--mobile-bottom-chrome-height) + 16px);
+  position: absolute;
+  bottom: calc(100% + 16px);
   left: 50%;
   z-index: 220;
   display: flex;
@@ -64,7 +64,7 @@
 @keyframes toast-arrive { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
 @keyframes toast-leave { to { opacity: 0; transform: translateX(calc(var(--radix-toast-swipe-end-x) + 100%)); } }
 @media (min-width: 768px) {
-  .toast-viewport { bottom: 24px; left: auto; right: 24px; transform: none; }
+  .toast-viewport { position: fixed; bottom: 24px; left: auto; right: 24px; transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .toast-glass[data-state], .toast-glass[data-swipe] { animation: none; transition: none; }

@@ -1,5 +1,5 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
-import { openIsolatedWorkspace } from './support';
+import { addTask, openIsolatedWorkspace } from './support';
 
 test.beforeEach(({}, info) => test.skip(info.project.name === 'desktop-chromium', 'Mobile chrome geometry'));
 
@@ -21,6 +21,10 @@ async function openPhone(page: Page, info: TestInfo, standalone: boolean, outsid
 
 async function geometry(page: Page) {
   await expect.poll(() => page.locator('html').getAttribute('data-workspace-motion')).toBeNull();
+  // Measure rendered content, rather than content-visibility's row placeholder.
+  const title = page.locator('[data-mobile-task-section="ready"] [data-task-title]').first();
+  if (await title.count()) await expect(title).toBeVisible();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
   return page.evaluate(() => {
     const toolbar = Array.from(document.querySelectorAll<HTMLElement>('.mobile-top-chrome')).find(el => el.offsetHeight)!;
     const nav = document.querySelector<HTMLElement>('nav[data-mobile-chrome]')!;
@@ -139,4 +143,88 @@ test('NATIVE-101/NATIVE-105 keyboard, zoom and rotation preserve usable chrome',
   await expect(page.getByRole('button', { name: '返回设置', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '返回设置', exact: true }).click();
   await page.screenshot({ path: info.outputPath('rotated-chrome.png'), animations: 'disabled' });
+});
+
+test('NATIVE-105 changing toolbar control height moves the complete task column together', async ({ page }, info) => {
+  await openPhone(page, info, true, 62);
+  const before = await geometry(page);
+  await page.addStyleTag({ content: '[data-mobile-page-controls] button, .mobile-top-chrome > button { height: 52px !important; }' });
+  const after = await geometry(page);
+  expect(after.top - before.top).toBeCloseTo(16, 1);
+  for (const element of ['input', 'heading', 'firstTask'] as const) {
+    expect(after.list![element].y - before.list![element].y, `${element} follows the resized toolbar`).toBeCloseTo(16, 1);
+    expect(after.list![element].height).toBe(before.list![element].height);
+  }
+  expect(after.bottomY).toBe(before.bottomY);
+  await info.attach('toolbar-flow', { body: JSON.stringify({ before, after }), contentType: 'application/json' });
+  await page.screenshot({ path: info.outputPath('resized-toolbar-column.png'), animations: 'disabled' });
+});
+
+test('NATIVE-105 a single spacing adjustment keeps both task-column gaps proportional', async ({ page }, info) => {
+  await openPhone(page, info, true, 62);
+  const measurements = [];
+  for (const spacing of [8, 4, 12]) {
+    await page.locator('.mobile-workspace-shell').evaluate((shell, value) => (shell as HTMLElement).style.setProperty('--mobile-layout-space', `${value}px`), spacing);
+    const measured = await geometry(page);
+    const controlBottom = Math.max(...measured.controls.map(control => control.bottom));
+    const toolbarGap = measured.list!.input.y - controlBottom;
+    const sectionGap = measured.list!.heading.y - measured.list!.input.bottom;
+    // Accepted 12px gaps at the normal density; compact/comfortable layouts
+    // scale both gaps together without scaling touch targets or task rows.
+    expect.soft(toolbarGap).toBeCloseTo(spacing === 8 ? 12 : spacing === 4 ? 6 : 18, 1);
+    expect.soft(sectionGap).toBeCloseTo(toolbarGap, 1);
+    expect(measured.list!.input.height).toBe(32);
+    expect(measured.list!.firstTask.height).toBeGreaterThanOrEqual(44);
+    measurements.push({ spacing, toolbarGap, sectionGap, ...measured });
+    await page.screenshot({ path: info.outputPath(`column-spacing-${spacing}.png`), animations: 'disabled' });
+  }
+  await info.attach('column-spacing', { body: JSON.stringify(measurements), contentType: 'application/json' });
+});
+
+test('NATIVE-105 resized bottom controls reserve their actual height for content and undo feedback', async ({ page }, info) => {
+  await openPhone(page, info, true, 62);
+  const before = await geometry(page);
+  await page.addStyleTag({ content: 'nav[data-mobile-chrome] > button { padding-block: 20px !important; }' });
+  const row = await addTask(page, '底栏动态高度回归');
+  await row.locator('[data-status]').click();
+  await row.locator('[data-status]').click();
+  await page.getByRole('menuitem', { name: '回到未开始', exact: true }).click();
+  const toast = page.locator('.toast-viewport');
+  await expect(page.getByRole('button', { name: '撤销', exact: true })).toBeVisible();
+  const after = await geometry(page);
+  const toastBox = (await toast.boundingBox())!;
+  expect(after.bottom - before.bottom).toBeCloseTo(24, 1);
+  expect.soft(after.contentBottom, 'the task viewport ends exactly above the resized navigation').toBeCloseTo(after.bottomY, 1);
+  expect.soft(toastBox.y + toastBox.height, 'undo feedback tracks the real navigation top').toBeCloseTo(after.bottomY - 16, 1);
+  expect(after.top).toBe(before.top);
+  const measurements = [{ tab: '任务', ...after }];
+  for (const tab of ['依赖图', '更多', '备份与恢复']) {
+    await page.getByRole('button', { name: tab, exact: true }).click();
+    const measured = await geometry(page);
+    expect.soft(measured.contentBottom, `${tab} reserves the same real navigation height`).toBeCloseTo(measured.bottomY, 1);
+    expect(measured.bottomY).toBe(after.bottomY);
+    measurements.push({ tab, ...measured });
+  }
+  await info.attach('bottom-flow', { body: JSON.stringify({ before, measurements, toastBox }), contentType: 'application/json' });
+  await page.screenshot({ path: info.outputPath('resized-footer-subpage.png'), animations: 'disabled' });
+});
+
+test('NATIVE-101/NATIVE-105 hiding navigation releases its space and moves undo feedback to the viewport edge', async ({ page }, info) => {
+  await openPhone(page, info, true, 62);
+  const row = await addTask(page, '键盘撤销位置回归');
+  await row.locator('[data-status]').click();
+  await row.locator('[data-status]').click();
+  await page.getByRole('menuitem', { name: '回到未开始', exact: true }).click();
+  await expect(page.getByRole('button', { name: '撤销', exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    Object.defineProperty(visualViewport!, 'height', { configurable: true, value: 700 });
+    visualViewport!.dispatchEvent(new Event('resize'));
+  });
+  await expect(page.locator('nav[data-mobile-chrome]')).toBeHidden();
+  const mainBox = (await page.locator('main[data-mobile-tab]').boundingBox())!;
+  const toastBox = (await page.locator('.toast-viewport').boundingBox())!;
+  expect(mainBox.y + mainBox.height).toBe(894);
+  expect(toastBox.y + toastBox.height).toBeCloseTo(878, 1);
+  await info.attach('keyboard-flow', { body: JSON.stringify({ mainBox, toastBox }), contentType: 'application/json' });
+  await page.screenshot({ path: info.outputPath('keyboard-feedback-edge.png'), animations: 'disabled' });
 });

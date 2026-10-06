@@ -121,3 +121,103 @@ test('GEST-002 desktop drag cancels when its pointer capture is lost', async ({ 
   await page.mouse.up();
   await page.screenshot({ path: testInfo.outputPath('desktop-drag-capture-cleanup.png'), fullPage: true });
 });
+
+test('DROP-001/DROP-002 desktop drag nests and then moves a child to a root sibling, preserving hierarchy after reload', async ({ page }, info) => {
+  const parent = await addTask(page, `拖入父任务 ${Date.now()}`);
+  const sibling = await addTask(page, `根级锚点 ${Date.now()}`);
+  const moving = await addTask(page, `跨层移动 ${Date.now()}`);
+  const parentId = (await parent.getAttribute('data-task-id'))!;
+  const movingId = (await moving.getAttribute('data-task-id'))!;
+  const row = page.locator(`[data-task-id="${movingId}"]`);
+  const meta = await (await page.request.get('/api/meta')).json();
+  const savedPage = async () => (await page.request.get(`/api/pages/${meta.activePageId}`)).json();
+  const dragTo = async (target: typeof row, ratio: number) => {
+    await row.locator('[data-task-title]').click({ trial: true });
+    const sourceBox = (await row.locator('[data-task-drag-surface]').boundingBox())!;
+    const targetBox = (await target.locator('[data-task-drag-surface]').boundingBox())!;
+    const x = sourceBox.x + 8;
+    const y = sourceBox.y + sourceBox.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 28, y + 2, { steps: 3 });
+    await page.mouse.move(targetBox.x + 32, targetBox.y + targetBox.height * ratio, { steps: 5 });
+    await page.mouse.up();
+  };
+  await dragTo(parent, 0.5);
+  await expect.poll(async () => (await savedPage()).nodes.find((node: { id: string }) => node.id === movingId)?.parentId).toBe(parentId);
+  await dragTo(sibling, 0.9);
+  await expect.poll(async () => {
+    const node = (await savedPage()).nodes.find((node: { id: string }) => node.id === movingId);
+    return Boolean(node && !node.parentId);
+  }).toBe(true);
+  await page.reload();
+  await expect(row.locator('[data-task-title]')).toBeVisible();
+  const data = await savedPage();
+  expect(data.nodes.find((node: { id: string }) => node.id === movingId).parentId).toBeUndefined();
+  await info.attach('persisted-hierarchy', { body: JSON.stringify(data), contentType: 'application/json' });
+  await page.screenshot({ path: info.outputPath('desktop-hierarchy-move.png') });
+});
+
+test('DROP-005 undo and redo exchange exactly one snapshot per operation and a new edit clears redo', async ({ page }, info) => {
+  const firstTitle = `撤销重做 A ${Date.now()}`;
+  const secondTitle = `撤销重做 B ${Date.now()}`;
+  await addTask(page, firstTitle);
+  await addTask(page, secondTitle);
+  const undo = page.getByTitle('撤销 (⌘Z)', { exact: true });
+  const redo = page.getByTitle('重做 (⌘⇧Z / ⌘Y)', { exact: true });
+  const first = taskRow(page, firstTitle);
+  const second = taskRow(page, secondTitle);
+  await undo.click();
+  await expect(first).toBeVisible();
+  await expect(second).toHaveCount(0);
+  await undo.click();
+  await expect(first).toHaveCount(0);
+  await redo.click();
+  await expect(first).toBeVisible();
+  await expect(second).toHaveCount(0);
+  await redo.click();
+  await expect(second).toBeVisible();
+  await expect(redo).toBeDisabled();
+  await undo.click();
+  await addTask(page, `新分支 ${Date.now()}`);
+  await expect(redo).toBeDisabled();
+  const meta = await (await page.request.get('/api/meta')).json();
+  await expect.poll(async () => {
+    const data = await (await page.request.get(`/api/pages/${meta.activePageId}`)).json();
+    return data.nodes.some((node: { title: string }) => node.title === firstTitle)
+      && !data.nodes.some((node: { title: string }) => node.title === secondTitle);
+  }).toBe(true);
+  await page.screenshot({ path: info.outputPath('history-one-step.png') });
+});
+
+test('GEST-012 multiline graph titles retain their frame during editing and share list commit and cancel behavior', async ({ page }, info) => {
+  const row = page.locator('[data-task-id]').first();
+  const id = await row.getAttribute('data-task-id');
+  const original = await row.locator('[data-task-title]').innerText();
+  const graphNode = page.locator(`.react-flow__node[data-id="${id}"]`);
+  await expect(page.locator('.graph-viewport-restoring')).toHaveCount(0);
+  const graphTitle = graphNode.getByTitle('双击编辑标题');
+  await graphTitle.dblclick();
+  await expect(graphNode.locator('input')).toBeFocused();
+  await graphNode.locator('input').fill('cancelled graph draft');
+  await graphNode.locator('input').press('Escape');
+  await expect(row.locator('[data-task-title]')).toHaveText(original);
+  await graphTitle.dblclick();
+  await graphNode.locator('input').fill('');
+  await graphNode.locator('input').press('Enter');
+  await expect(row.locator('[data-task-title]')).toHaveText(original);
+  await graphTitle.dblclick();
+  await graphNode.locator('input').fill('saved from graph');
+  await graphNode.locator('input').press('Enter');
+  await expect(row.locator('[data-task-title]')).toHaveText('saved from graph');
+  await row.locator('[data-task-title]').dblclick();
+  await row.locator('input').fill('saved on blur from list');
+  await graphTitle.click();
+  await expect(graphTitle).toHaveText('saved on blur from list');
+  const meta = await (await page.request.get('/api/meta')).json();
+  await expect.poll(async () => {
+    const data = await (await page.request.get(`/api/pages/${meta.activePageId}`)).json();
+    return data.nodes.find((node: { id: string }) => node.id === id)?.title;
+  }).toBe('saved on blur from list');
+  await page.screenshot({ path: info.outputPath('shared-title-editor.png') });
+});

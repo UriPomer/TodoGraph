@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeNodeGeometryMap, type Task } from '@todograph/shared';
 import { buildGraphNodeProjection } from '@/features/graph/graphNodeProjection';
-import { buildHierarchyMetrics } from '@/stores/useTaskStore';
+import { buildHierarchyMetrics } from '@/lib/taskHierarchy';
 
 const tasks: Task[] = [
   { id: 'group', title: 'Group', status: 'todo', x: 10, y: 20 },

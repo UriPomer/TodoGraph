@@ -32,11 +32,19 @@ export async function openIsolatedWorkspace(page: Page, testInfo: TestInfo, wait
     },
   });
   expect(reset.ok(), `reset E2E page returned ${reset.status()}`).toBeTruthy();
+  // Desktop graph measurement persists the fixture's initial dimensions.
+  // Wait for that public save before a test reads a version for its own PUT.
+  const layoutSaved = testInfo.project.name === 'desktop-chromium' ? page.waitForResponse(response => {
+    if (response.request().method() !== 'PUT' || new URL(response.url()).pathname !== `/api/pages/${basePage!.id}` || !response.ok()) return false;
+    const data = response.request().postDataJSON() as { nodes: Array<{ id: string; width?: number; height?: number }> };
+    return data.nodes.some(node => node.id === fixtureId && (node.width ?? 0) > 0 && (node.height ?? 0) > 0);
+  }) : undefined;
   await page.goto('/', { waitUntil });
   await expect(page.locator('input[placeholder^="新任务"]')).toBeVisible();
   await page.locator('.mobile-workspace-shell').evaluate((element) =>
     Promise.all(element.getAnimations({ subtree: true }).filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished)),
   );
+  await layoutSaved;
 }
 
 export async function addTask(page: Page, title: string) {

@@ -10,10 +10,8 @@ interface HistoryStore {
   undoStack: Snapshot[];
   redoStack: Snapshot[];
   push: (s: Snapshot) => void;
-  pushToRedo: (s: Snapshot) => void;
-  pushToUndo: (s: Snapshot) => void;
-  undo: () => Snapshot | null;
-  redo: () => Snapshot | null;
+  undo: (current: Snapshot) => Snapshot | null;
+  redo: (current: Snapshot) => Snapshot | null;
   clear: () => void;
   canUndo: () => boolean;
   canRedo: () => boolean;
@@ -28,8 +26,8 @@ const MAX = 100;
  * 设计契约：
  *  - `push(s)` 记录的是"一次 mutation 的 **前态**" —— 调用方在真正改之前 push。
  *    这样 undo() 返回的 snapshot 直接就能 set 到 store 里实现回滚。
- *  - `undo()` 从 undoStack 弹出最顶的 snapshot，顺便压入 redoStack。
- *  - `redo()` 反向 —— 从 redoStack 弹出压回 undoStack。
+ *  - `undo(current)` 弹出上一次前态，同时把当前态压入 redoStack。
+ *  - `redo(current)` 弹出待重做状态，同时把当前态压入 undoStack。
  *  - 任何 `push` 都会清空 redoStack（线性历史的经典做法）。
  *  - `clear()` 两栈清空 —— 切页时调用。
  *
@@ -37,40 +35,34 @@ const MAX = 100;
  * 直接作为新的 state 写回即可。useTaskStore 的写操作都是 immutable 的，
  * 所以共享引用安全。
  */
-export const useHistoryStore = create<HistoryStore>((set, get) => ({
-  undoStack: [],
-  redoStack: [],
+export const useHistoryStore = create<HistoryStore>((set, get) => {
+  const travel = (from: 'undoStack' | 'redoStack', current: Snapshot): Snapshot | null => {
+    const to = from === 'undoStack' ? 'redoStack' : 'undoStack';
+    const state = get();
+    const snapshot = state[from].at(-1);
+    if (!snapshot) return null;
+    set({ [from]: state[from].slice(0, -1), [to]: [...state[to], current] });
+    return snapshot;
+  };
+  return {
+    undoStack: [],
+    redoStack: [],
 
-  push: (s) => {
-    const { undoStack } = get();
-    const next =
-      undoStack.length >= MAX
-        ? [...undoStack.slice(-(MAX - 1)), s]
-        : [...undoStack, s];
-    set({ undoStack: next, redoStack: [] });
-  },
+    push: (s) => {
+      const { undoStack } = get();
+      const next =
+        undoStack.length >= MAX
+          ? [...undoStack.slice(-(MAX - 1)), s]
+          : [...undoStack, s];
+      set({ undoStack: next, redoStack: [] });
+    },
 
-  undo: () => {
-    const { undoStack, redoStack } = get();
-    if (undoStack.length === 0) return null;
-    const s = undoStack[undoStack.length - 1]!;
-    set({ undoStack: undoStack.slice(0, -1), redoStack: [...redoStack, s] });
-    return s;
-  },
+    undo: (current) => travel('undoStack', current),
+    redo: (current) => travel('redoStack', current),
 
-  redo: () => {
-    const { undoStack, redoStack } = get();
-    if (redoStack.length === 0) return null;
-    const s = redoStack[redoStack.length - 1]!;
-    set({ undoStack: [...undoStack, s], redoStack: redoStack.slice(0, -1) });
-    return s;
-  },
+    clear: () => set({ undoStack: [], redoStack: [] }),
 
-  pushToRedo: (s: Snapshot) => set((st) => ({ redoStack: [...st.redoStack, s] })),
-  pushToUndo: (s: Snapshot) => set((st) => ({ undoStack: [...st.undoStack, s] })),
-
-  clear: () => set({ undoStack: [], redoStack: [] }),
-
-  canUndo: () => get().undoStack.length > 0,
-  canRedo: () => get().redoStack.length > 0,
-}));
+    canUndo: () => get().undoStack.length > 0,
+    canRedo: () => get().redoStack.length > 0,
+  };
+});

@@ -4,7 +4,7 @@ import {
   type Task,
   type computeNodeGeometryMap,
 } from '@todograph/shared';
-import type { HierarchyMetrics } from '@/stores/useTaskStore';
+import type { HierarchyMetrics } from '@/lib/taskHierarchy';
 import { measureTextWidth } from '@/lib/measureText';
 import type { GroupNodeData } from './GroupNode';
 import type { TaskNodeData } from './TaskNode';
@@ -23,21 +23,12 @@ interface ProjectionInput {
 export function buildGraphNodeProjection(input: ProjectionInput): {
   nodes: ProjectedGraphNode[];
   dataById: Map<string, TaskNodeData | GroupNodeData>;
-  groupSizes: Map<string, { w: number; h: number }>;
 } {
   const { nodes, hierarchy, geometryById, readySet, recommendedId } = input;
   const { childIdsByParentId, byId, depthById } = hierarchy;
-  const groupIds = [...childIdsByParentId.keys()].sort(
-    (a, b) => (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0),
+  const collapsedGroupIds = new Set(
+    [...childIdsByParentId.keys()].filter(id => geometryById.get(id)?.collapsed),
   );
-  const groupSizes = new Map<string, { w: number; h: number }>();
-  const collapsedGroupIds = new Set<string>();
-  for (const id of groupIds) {
-    const geometry = geometryById.get(id);
-    if (!geometry) continue;
-    if (geometry.collapsed) collapsedGroupIds.add(id);
-    groupSizes.set(id, geometry.displayedSize);
-  }
 
   const insideCollapsedGroup = (node: Task): boolean => {
     let parentId = node.parentId;
@@ -81,7 +72,7 @@ export function buildGraphNodeProjection(input: ProjectionInput): {
       const isGroup = childIdsByParentId.has(node.id);
       const leafWidth = isGroup ? undefined : measureTextWidth(node.title);
       const collapsed = collapsedGroupIds.has(node.id);
-      const size = groupSizes.get(node.id);
+      const size = geometryById.get(node.id)?.displayedSize;
       const candidate: TaskNodeData | GroupNodeData = isGroup
         ? {
             title: node.title,
@@ -119,7 +110,7 @@ export function buildGraphNodeProjection(input: ProjectionInput): {
         ...(!isGroup ? { style: { width: leafWidth ?? CHILD_DEFAULT_W } } : {}),
       };
     });
-  return { nodes: projected, dataById, groupSizes };
+  return { nodes: projected, dataById };
 }
 
 function shallowEqualData(a: Record<string, unknown>, b: Record<string, unknown>): boolean {

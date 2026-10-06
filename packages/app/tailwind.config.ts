@@ -39,8 +39,6 @@ export default {
           DEFAULT: 'hsl(var(--success))',
           foreground: 'hsl(var(--success-foreground))',
         },
-        'surface-2': 'hsl(var(--surface-2))',
-        overlay: 'hsl(var(--overlay))',
       },
       borderRadius: {
         lg: 'var(--radius)',
@@ -48,9 +46,7 @@ export default {
         sm: 'calc(var(--radius) - 4px)',
       },
       boxShadow: {
-        'theme-sm': 'var(--shadow-sm)',
         'theme': 'var(--shadow)',
-        'theme-lg': 'var(--shadow-lg)',
       },
     },
   },

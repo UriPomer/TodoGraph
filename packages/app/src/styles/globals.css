@@ -1,4 +1,5 @@
 @import '@xyflow/react/dist/style.css';
+@import './themes/base.css';
 @import './themes/default.css';
 @import './themes/glass.css';
 @import './themes/muted.css';

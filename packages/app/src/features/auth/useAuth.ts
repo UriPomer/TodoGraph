@@ -26,11 +26,7 @@ export function useAuth() {
         user?: { id: string; username: string };
       };
       const user = native ? data.user : data.id && data.username ? { id: data.id, username: data.username } : undefined;
-      if (data.ok && user) {
-        setState({ loading: false, user, error: null });
-      } else {
-        setState({ loading: false, user: null, error: null });
-      }
+      setState({ loading: false, user: data.ok && user ? user : null, error: null });
     } catch {
       setState({ loading: false, user: null, error: '无法连接到服务器' });
     }
@@ -48,56 +44,37 @@ export function useAuth() {
     [],
   );
 
-  const login = async (username: string, password: string, remember: boolean): Promise<string | null> => {
+  const authenticate = async (
+    action: 'login' | 'register',
+    credentials: { username: string; password: string; remember: boolean; registrationKey?: string },
+  ): Promise<string | null> => {
+    const label = action === 'login' ? '登录' : '注册';
     try {
       const native = isNativeRuntime();
-      const res = await apiFetch(`${getApiBase()}${native ? '/api/auth/native/login' : '/api/auth/login'}`, {
+      const res = await apiFetch(`${getApiBase()}/api/auth/${native ? 'native/' : ''}${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, remember }),
+        body: JSON.stringify(credentials),
       });
       const data = await res.json() as { ok: boolean; token?: string; username?: string; error?: string };
       if (data.ok) {
         if (native) {
-          if (!data.token) return '登录响应缺少设备令牌';
-          await setNativeSessionToken(data.token, remember);
+          if (!data.token) return `${label}响应缺少设备令牌`;
+          await setNativeSessionToken(data.token, credentials.remember);
         }
         await checkAuth();
         return null;
       }
-      return data.error ?? '登录失败';
+      return data.error ?? `${label}失败`;
     } catch {
       return '无法连接到服务器';
     }
   };
 
-  const register = async (
-    username: string,
-    password: string,
-    registrationKey: string,
-    remember: boolean,
-  ): Promise<string | null> => {
-    try {
-      const native = isNativeRuntime();
-      const res = await apiFetch(`${getApiBase()}${native ? '/api/auth/native/register' : '/api/auth/register'}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, registrationKey, remember }),
-      });
-      const data = await res.json() as { ok: boolean; token?: string; username?: string; error?: string };
-      if (data.ok) {
-        if (native) {
-          if (!data.token) return '注册响应缺少设备令牌';
-          await setNativeSessionToken(data.token, remember);
-        }
-        await checkAuth();
-        return null;
-      }
-      return data.error ?? '注册失败';
-    } catch {
-      return '无法连接到服务器';
-    }
-  };
+  const login = (username: string, password: string, remember: boolean) =>
+    authenticate('login', { username, password, remember });
+  const register = (username: string, password: string, registrationKey: string, remember: boolean) =>
+    authenticate('register', { username, password, registrationKey, remember });
 
   const logout = async () => {
     try {

@@ -155,6 +155,54 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     }
     toast.error(title, String((err as Error).message ?? err));
   };
+  // A loaded page has one activation path, shared by switching and cross-page moves.
+  const activateLoadedPage = async (
+    pageId: string,
+    generation: number,
+    context: '切换' | '移动后',
+    isStillCurrent: () => boolean = () => true,
+  ): Promise<'updated' | 'conflict' | 'stale'> => {
+    const current = () => isCurrentSession(generation) && isStillCurrent();
+    let nextMeta: Meta | null = null;
+    try {
+      nextMeta = await api.setActivePage(pageId, get().meta?.revision);
+      if (!current()) return 'stale';
+    } catch (err) {
+      if (!current()) return 'stale';
+      if (isConflictError(err)) {
+        const synced = await syncMetaAfterConflict(generation, pageId, isStillCurrent);
+        if (!current()) return 'stale';
+        if (synced) toast.info(`${context}页面已同步`, WORKSPACE_SYNCED_MESSAGE);
+        else toast.error(`${context}页面同步失败`, WORKSPACE_SYNC_FAILED_MESSAGE);
+        if (!synced) scheduleAllTasksRefresh();
+        return 'conflict';
+      }
+      console.warn('setActivePage failed', err);
+    }
+    const meta = nextMeta ?? get().meta;
+    if (meta) set({ meta: nextMeta ?? { ...meta, activePageId: pageId } });
+    scheduleAllTasksRefresh();
+    return 'updated';
+  };
+
+  const mutateWorkspace = async <T extends Meta | { meta: Meta } | null>(
+    title: string,
+    operation: (revision: number | undefined) => Promise<T>,
+    refreshTasks = true,
+  ): Promise<T | null> => {
+    const generation = getApiSessionGeneration();
+    try {
+      const result = await operation(get().meta?.revision);
+      if (!isCurrentSession(generation)) return null;
+      if (result) set({ meta: 'meta' in result ? result.meta : result });
+      if (refreshTasks) scheduleAllTasksRefresh();
+      return result;
+    } catch (err) {
+      await handleWorkspaceError(generation, title, err);
+      return null;
+    }
+  };
+
   subscribeAllTasksInvalidated(scheduleAllTasksRefresh);
   subscribeWorkspaceMetaUpdated((meta) => set({ meta }));
 
@@ -241,42 +289,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
         toast.error('切换页面失败', String((err as Error).message));
         return;
       }
-      try {
-        const nextMeta = await api.setActivePage(pageId, get().meta?.revision ?? meta.revision);
-        if (!isCurrentSession(generation) || !isCurrentSwitch()) return;
-        if (nextMeta) {
-          set({ meta: nextMeta });
-          scheduleAllTasksRefresh();
-          return;
-        }
-      } catch (err) {
-        if (!isCurrentSession(generation) || !isCurrentSwitch()) return;
-        if (isConflictError(err)) {
-          const synced = await syncMetaAfterConflict(generation, pageId, isCurrentSwitch);
-          if (!isCurrentSession(generation) || !isCurrentSwitch()) return;
-          if (synced) toast.info('切换页面已同步', WORKSPACE_SYNCED_MESSAGE);
-          else toast.error('切换页面同步失败', WORKSPACE_SYNC_FAILED_MESSAGE);
-          return;
-        }
-        console.warn('setActivePage failed', err);
-      }
-      set({ meta: { ...(get().meta ?? meta), activePageId: pageId } });
-      scheduleAllTasksRefresh();
+      await activateLoadedPage(pageId, generation, '切换', isCurrentSwitch);
     },
 
     createPage: async (title) => {
-      const generation = getApiSessionGeneration();
-      const meta = get().meta;
-      try {
-        const result = await api.createPage(title, meta?.revision);
-        if (!isCurrentSession(generation)) return null;
-        set({ meta: result.meta });
-        scheduleAllTasksRefresh();
-        return result.page;
-      } catch (err) {
-        await handleWorkspaceError(generation, '创建页面失败', err);
-        return null;
-      }
+      const result = await mutateWorkspace('创建页面失败', revision => api.createPage(title, revision));
+      return result?.page ?? null;
     },
 
     deletePage: async (pageId) => {
@@ -306,30 +324,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     },
 
     renamePage: async (pageId, title) => {
-      const generation = getApiSessionGeneration();
-      const meta = get().meta;
-      if (!meta) return;
-      try {
-        const nextMeta = await api.renamePage(pageId, title, meta.revision);
-        if (!isCurrentSession(generation)) return;
-        if (nextMeta) set({ meta: nextMeta });
-        scheduleAllTasksRefresh();
-      } catch (err) {
-        await handleWorkspaceError(generation, '重命名失败', err);
-      }
+      if (get().meta) await mutateWorkspace('重命名失败', revision => api.renamePage(pageId, title, revision));
     },
-
     reorderPages: async (ids) => {
-      const generation = getApiSessionGeneration();
-      const meta = get().meta;
-      if (!meta) return;
-      try {
-        const nextMeta = await api.reorderPages(ids, meta.revision);
-        if (!isCurrentSession(generation)) return;
-        set({ meta: nextMeta });
-      } catch (err) {
-        await handleWorkspaceError(generation, '排序失败', err);
-      }
+      if (get().meta) await mutateWorkspace('排序失败', revision => api.reorderPages(ids, revision), false);
     },
 
     moveNodesToPage: async (nodeIds, target) => {
@@ -381,28 +379,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
 
         await useTaskStore.getState().loadPage(targetPageId);
         if (!isCurrentSession(generation)) return null;
-        try {
-          const nextMeta = await api.setActivePage(targetPageId, get().meta?.revision);
-          if (!isCurrentSession(generation)) return null;
-          if (nextMeta) set({ meta: nextMeta });
-        } catch (err) {
-          if (!isCurrentSession(generation)) return null;
-          if (isConflictError(err)) {
-            const synced = await syncMetaAfterConflict(generation, targetPageId);
-            if (!isCurrentSession(generation)) return null;
-            if (synced) toast.info('移动后页面已同步', WORKSPACE_SYNCED_MESSAGE);
-            else toast.error('移动后页面同步失败', WORKSPACE_SYNC_FAILED_MESSAGE);
-            scheduleAllTasksRefresh();
-            return targetPageId;
-          }
-          console.warn('setActivePage failed after moveNodes', err);
-        }
-
-        const nextMeta = get().meta;
-        if (nextMeta) {
-          set({ meta: { ...nextMeta, activePageId: targetPageId } });
-        }
-        scheduleAllTasksRefresh();
+        const activation = await activateLoadedPage(targetPageId, generation, '移动后');
+        if (activation === 'stale') return null;
+        if (activation === 'conflict') return targetPageId;
 
         const details = [`${resp.movedNodes} 个节点`];
         if (resp.autoIncludedChildren > 0) {

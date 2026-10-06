@@ -1,0 +1,16 @@
+/* Shared semantic defaults; each theme only supplies its distinct palette. */
+[data-theme] {
+  --card-foreground: var(--foreground);
+  --secondary-foreground: var(--foreground);
+  --accent-foreground: var(--foreground);
+  --primary-foreground: 0 0% 100%;
+  --destructive-foreground: 0 0% 100%;
+  --success-foreground: 0 0% 100%;
+  --muted: var(--secondary);
+  --input: var(--border);
+  --ring: var(--primary);
+  --radius: 0.625rem;
+}
+[data-theme^='glass'] {
+  --radius: 0.75rem;
+}

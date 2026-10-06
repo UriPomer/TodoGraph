@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { claimPageForAutoLayout, fitPageAfterAutoLayout } from '@/features/graph/pageAutoLayout';
-import { buildAlignedPatches } from '@/features/graph/GraphView';
+import { buildAlignedPatches } from '@/features/graph/pageAutoLayout';
 import type { Task } from '@todograph/shared';
 
 describe('page auto-layout gate', () => {

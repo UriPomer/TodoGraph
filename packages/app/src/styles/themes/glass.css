@@ -14,39 +14,29 @@
   --foreground: 240 8% 93%;
 
   --card: 250 5% 12%;
-  --card-foreground: 240 8% 93%;
 
   --border: 250 5% 22%;
   --input: 250 5% 18%;
 
   --ring: var(--brand-hue, 260) 80% 60%;
   --primary: var(--brand-hue, 260) 75% 56%;
-  --primary-foreground: 0 0% 100%;
   --link: var(--brand-hue, 260) 80% 64%;
 
   --secondary: 250 5% 15%;
   --secondary-foreground: 240 8% 88%;
 
-  --muted: 250 5% 15%;
   --muted-foreground: 250 4% 55%;
 
   --accent: calc(var(--brand-hue, 260) - 15) 20% 22%;
   --accent-foreground: 240 8% 94%;
 
   --destructive: 0 65% 54%;
-  --destructive-foreground: 0 0% 100%;
 
   --success: 150 50% 46%;
-  --success-foreground: 0 0% 100%;
 
-  --surface-2: 250 5% 10%;
-  --overlay: 250 4% 2% / 0.7;
 
-  --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
   --shadow: 0 4px 16px hsl(0 0% 0% / 0.4);
-  --shadow-lg: 0 12px 36px hsl(0 0% 0% / 0.5);
 
-  --radius: 0.75rem;
 }
 
 /* ---------- 玻璃·浅色 ---------- */
@@ -57,37 +47,26 @@
   --foreground: 30 6% 12%;
 
   --card: 0 0% 100%;
-  --card-foreground: 30 6% 12%;
 
   --border: 240 5% 85%;
   --input: 240 5% 90%;
 
   --ring: var(--brand-hue, 260) 75% 50%;
   --primary: var(--brand-hue, 260) 70% 46%;
-  --primary-foreground: 0 0% 100%;
   --link: var(--brand-hue, 260) 75% 44%;
 
   --secondary: 240 5% 94%;
   --secondary-foreground: 30 6% 16%;
 
-  --muted: 240 5% 94%;
   --muted-foreground: 40 4% 48%;
 
   --accent: calc(var(--brand-hue, 260) - 10) 25% 90%;
-  --accent-foreground: 30 6% 12%;
 
   --destructive: 0 60% 46%;
-  --destructive-foreground: 0 0% 100%;
 
   --success: 150 48% 34%;
-  --success-foreground: 0 0% 100%;
 
-  --surface-2: 240 5% 94%;
-  --overlay: 240 5% 88% / 0.5;
 
-  --shadow-sm: 0 1px 2px hsl(30 4% 35% / 0.06);
   --shadow: 0 2px 10px hsl(30 4% 35% / 0.1);
-  --shadow-lg: 0 8px 28px hsl(30 4% 35% / 0.15);
 
-  --radius: 0.75rem;
 }
