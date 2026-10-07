@@ -49,7 +49,7 @@ function runNpm(args: string[]) {
   });
 }
 
-function localPackShasum(): string {
+export function localPackShasum(): string {
   const result = runNpm(['pack', '--json', '--dry-run']);
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(result.stderr || 'npm pack failed');
@@ -59,7 +59,7 @@ function localPackShasum(): string {
   return shasum;
 }
 
-function publishedShasum(name: string, version: string): string | null {
+export function publishedShasum(name: string, version: string): string | null {
   const result = runNpm(['view', `${name}@${version}`, 'dist.shasum', '--json']);
   if (result.error) throw result.error;
   if (result.status === 0) {
@@ -75,7 +75,7 @@ function publishedShasum(name: string, version: string): string | null {
   throw new Error(result.stderr || `Unable to query ${name}@${version} from npm`);
 }
 
-function publishedLatestVersion(name: string): string | null {
+export function publishedLatestVersion(name: string): string | null {
   const result = runNpm(['view', name, 'version', '--json']);
   if (result.error) throw result.error;
   if (result.status === 0) {

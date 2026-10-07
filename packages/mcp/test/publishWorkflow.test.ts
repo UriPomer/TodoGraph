@@ -74,4 +74,26 @@ describe('MCP publish workflow', () => {
     expect(manifest.scripts['publish:npm']).toContain('--filter @todograph/shared build');
     expect(publishWorkflow).not.toContain('pnpm --filter @todograph/mcp... build');
   });
+
+  it('checks packed MCP releases in CI without npm publication credentials', () => {
+    const ci = readFileSync(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    expect(ci).toContain('pnpm --filter @todograph/mcp check:npm');
+    expect(ci).not.toContain('secrets.NPM_TOKEN');
+    const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    expect(manifest.scripts['check:npm']).toBe('tsx scripts/publish.ts --dry-run');
+  });
+
+  it('prepares reviewable versions in Actions and explicitly runs CI for the generated branch', () => {
+    const preparation = readFileSync(
+      new URL('../../../.github/workflows/mcp-version.yml', import.meta.url),
+      'utf8',
+    );
+    expect(preparation).toContain('pnpm --filter @todograph/mcp prepare:version');
+    expect(preparation).toContain('gh pr create');
+    expect(preparation).toContain('gh workflow run ci.yml --ref');
+    expect(preparation).not.toContain('secrets.NPM_TOKEN');
+    expect(preparation).not.toContain('--force');
+    const ci = readFileSync(new URL('../../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    expect(ci).toContain('workflow_dispatch:');
+  });
 });

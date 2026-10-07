@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -23,3 +24,5 @@ jobs:
       - run: pnpm typecheck
       # Build already ran above, so invoke workspace tests without repeating root pretest builds.
       - run: pnpm -r test
+      - name: Check MCP release against npm without publishing
+        run: pnpm --filter @todograph/mcp check:npm

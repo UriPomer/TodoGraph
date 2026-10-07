@@ -1,0 +1,64 @@
+name: Prepare MCP version
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'MCP release type when published package contents have changed'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+concurrency:
+  group: todograph-mcp-version
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @todograph/shared build && pnpm --filter @todograph/mcp build
+      - name: Prepare matching MCP and server versions
+        id: version
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type || 'patch' }}
+        run: pnpm --filter @todograph/mcp prepare:version "$RELEASE_TYPE"
+      - name: Open version pull request and run CI
+        if: steps.version.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MCP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          branch="release/mcp-$MCP_VERSION"
+          existing=$(gh pr list --base main --head "$branch" --state open --json url --jq '.[0].url // empty')
+          if [ -n "$existing" ]; then
+            echo "Version pull request already exists: $existing" >> "$GITHUB_STEP_SUMMARY"
+            gh workflow run ci.yml --ref "$branch"
+            exit 0
+          fi
+          git switch -c "$branch"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/mcp/package.json packages/server/src/mcp-version.ts
+          git commit -m "chore(mcp): prepare version $MCP_VERSION"
+          git push origin "$branch"
+          printf '%s\n' 'The built MCP package differs from its published version. This change synchronizes the MCP package and server version. After CI passes and this PR is merged, the existing publication workflows publish npm before Docker.' > "$RUNNER_TEMP/mcp-version-pr.md"
+          gh pr create --base main --head "$branch" --title "chore(mcp): release $MCP_VERSION" --body-file "$RUNNER_TEMP/mcp-version-pr.md"
+          gh workflow run ci.yml --ref "$branch"

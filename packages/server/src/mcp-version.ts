@@ -1,6 +1,6 @@
 import { lt, valid } from 'semver';
 
-export const LATEST_MCP_VERSION = '0.1.1';
+export const LATEST_MCP_VERSION = '0.1.2';
 export const MCP_VERSION_HEADER = 'x-todograph-mcp-version';
 export const MCP_LATEST_VERSION_HEADER = 'x-todograph-mcp-latest-version';
 

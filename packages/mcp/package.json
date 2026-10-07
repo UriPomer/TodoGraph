@@ -1,6 +1,6 @@
 {
   "name": "@todograph/mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -17,7 +17,9 @@
     "build": "tsc -p tsconfig.json && esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --external:@modelcontextprotocol/sdk/* --external:dagre --external:zod --sourcemap --outfile=dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
-    "publish:npm": "pnpm --filter @todograph/shared build && pnpm build && tsx scripts/publish.ts"
+    "publish:npm": "pnpm --filter @todograph/shared build && pnpm build && tsx scripts/publish.ts",
+    "check:npm": "tsx scripts/publish.ts --dry-run",
+    "prepare:version": "tsx scripts/prepare-version.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
