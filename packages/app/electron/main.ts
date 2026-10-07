@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startEmbeddedServer } from '@todograph/desktop-host';
+import { startEmbeddedServer, DeviceStorage } from '@todograph/desktop-host';
 import { isSafeExternalUrl, isSameOrigin } from '../src/lib/externalUrl';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -15,10 +15,12 @@ const isDev = !app.isPackaged;
 // 统一把 userData 重定位到根目录下的 ./data：
 // 拷贝整个文件夹到别的机器依然能用，不留痕。
 const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
-const dataRoot = isDev
-  ? path.resolve(__dirname, '../../../..')
-  : portableDir ?? path.dirname(process.execPath);
-app.setPath('userData', path.join(dataRoot, 'data'));
+if (isDev || portableDir || process.platform === 'win32') {
+  const dataRoot = isDev ? path.resolve(__dirname, '../../../..') : portableDir ?? path.dirname(process.execPath);
+  app.setPath('userData', path.join(dataRoot, 'data'));
+}
+if (process.env.TODOGRAPH_DATA_DIR) app.setPath('userData', path.resolve(process.env.TODOGRAPH_DATA_DIR));
+const deviceStorage = new DeviceStorage(app.getPath('userData'));
 
 let apiBase = '';
 
@@ -28,7 +30,7 @@ async function startServer(): Promise<void> {
     ? new URL(process.env.ELECTRON_RENDERER_URL)
     : null;
   // 生产模式下让 Fastify 也托管静态资源（和 Web 模式同构，双保险）
-  const staticDir = isDev ? undefined : path.join(__dirname, '../renderer');
+  const staticDir = isDev && process.env.ELECTRON_RENDERER_URL ? undefined : path.join(__dirname, '../renderer');
   const started = await startEmbeddedServer({
     dataDir,
     staticDir,
@@ -47,6 +49,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 600,
     backgroundColor: '#0f1419',
+    show: process.env.TODOGRAPH_E2E !== '1',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -84,6 +87,13 @@ function createWindow(): void {
 ipcMain.on('todograph:get-api-base-sync', (event) => {
   event.returnValue = apiBase;
 });
+
+function assertRenderer(event: Electron.IpcMainInvokeEvent) {
+  const origin = isDev && process.env.ELECTRON_RENDERER_URL ? process.env.ELECTRON_RENDERER_URL : apiBase;
+  if (!event.senderFrame || !isSameOrigin(event.senderFrame.url, origin)) throw new Error('Untrusted device storage caller');
+}
+ipcMain.handle('todograph:device-read', (event, key: string) => { assertRenderer(event); return deviceStorage.read(key); });
+ipcMain.handle('todograph:device-write', (event, key: string, value: unknown, expectedVersion: number) => { assertRenderer(event); return deviceStorage.write(key, value, expectedVersion); });
 
 app.whenReady().then(async () => {
   await startServer();

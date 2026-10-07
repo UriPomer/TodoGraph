@@ -35,7 +35,7 @@ export interface TaskStore {
     x?: number;
     y?: number;
     parentId?: string;
-  }) => Task;
+  }) => Task | null;
   updateTask: (id: string, patch: Partial<Omit<Task, 'id'>>) => void;
   deleteTask: (id: string) => void;
   deleteTasks: (ids: readonly string[]) => void;

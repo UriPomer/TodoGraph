@@ -35,6 +35,7 @@ import { useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useHistoryStore } from '@/stores/useHistoryStore';
 import { saveTaskDraft } from '@/stores/taskDraftStorage';
+import { useProductStore } from '@/features/product/entitlements';
 
 function makePage(id: string, title: string, order: number): PageInfo {
   return {
@@ -66,6 +67,7 @@ describe('workspace/task store conflict handling', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    useProductStore.setState({ entitlements: { plan: 'pro', source: 'server', purchaseAvailable: false } });
     const values = new Map<string, string>();
     vi.stubGlobal('localStorage', {
       get length() { return values.size; },

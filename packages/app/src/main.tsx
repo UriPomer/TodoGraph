@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './styles/globals.css';
 import { initializeWallpaper } from './platform/wallpaper';
+import { Capacitor } from '@capacitor/core';
 
 // iOS home-screen apps may expose navigator.standalone even when the
 // display-mode media query does not match. Ordinary tabs/native shells skip it.
@@ -11,6 +12,9 @@ document.documentElement.toggleAttribute('data-ios-home-screen', iosHomeScreen);
 
 const disposeWallpaper = initializeWallpaper();
 if (import.meta.hot) import.meta.hot.dispose(disposeWallpaper);
+if (import.meta.env.PROD && !Capacitor.isNativePlatform() && !window.todograph?.isElectron && 'serviceWorker' in navigator) {
+  void navigator.serviceWorker.register('/sw.js').catch(error => console.warn('离线应用资源缓存失败', error));
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

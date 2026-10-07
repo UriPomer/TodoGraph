@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { ArchiveRestore, ArrowLeft, ChevronRight, Shield, X } from 'lucide-react';
 import { AccountSecurityPanel } from './AccountSecurityPanel';
 import { BackupPanel } from './BackupPanel';
+import { isLocalWorkspace } from '@/platform/workspaceRuntime';
+import { ProBadge } from '@/features/product/ProDialog';
 
 interface Props { open: boolean; onClose?: () => void; username?: string }
 export function SecurityDialog({ open, onClose, username }: Props) {
@@ -18,7 +20,8 @@ export function SecurityDialog({ open, onClose, username }: Props) {
         <button type="button" aria-label="关闭账号与数据" onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-accent"><X className="h-4 w-4" /></button>
       </header>
       {backupsOpen ? <BackupPanel /> : <div className="space-y-5">
-        <AccountSecurityPanel key={username} username={username} />
+        <ProBadge />
+        {isLocalWorkspace() ? <p className="text-sm text-muted-foreground">本地工作区的数据保存在这台设备，无需账号和服务器。</p> : <AccountSecurityPanel key={username} username={username} />}
         <button type="button" aria-label="备份与恢复" onClick={() => setBackupsOpen(true)} className="flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors duration-200 hover:bg-foreground/5">
           <ArchiveRestore className="h-5 w-5 shrink-0 text-muted-foreground" />
           <span className="flex-1"><span className="block text-sm font-medium">备份与恢复</span><span className="mt-1 block text-xs text-muted-foreground">导入导出、页面备份、草稿与回收站</span></span>

@@ -6,9 +6,10 @@ import fastifySecureSession from '@fastify/secure-session';
 import fastifyHelmet from '@fastify/helmet';
 import fastifyRateLimit from '@fastify/rate-limit';
 import path from 'node:path';
+import { ProductAccessError } from '@todograph/shared';
 import { workspaceRoutes } from './routes/workspace.js';
 import { mcpRoutes } from './routes/mcp.js';
-import { authRoutes, authHook, resolveMcpPrincipal } from './auth.js';
+import { authRoutes, authHook, resolveMcpPrincipal, getAuthenticatedUserId } from './auth.js';
 import { McpKeyStore } from './mcp-keys.js';
 import { FileWorkspaceRepository } from './repositories/FileWorkspaceRepository.js';
 import { FileUserRepository } from './repositories/FileUserRepository.js';
@@ -31,10 +32,18 @@ export interface AppOptions {
   /** Exact renderer origin allowed to call the API in Electron development. */
   corsOrigin?: string;
   logger?: boolean;
+  /** Trusted deployment grants; never accepted from browser payloads. */
+  proUsernames?: string[];
 }
 
 export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: opts.logger ?? true });
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof ProductAccessError) {
+      return reply.status(403).send({ ok: false, code: error.code, error: error.message });
+    }
+    reply.send(error);
+  });
 
   // Security plugins
   if (opts.corsOrigin) {
@@ -50,13 +59,13 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
       directives: {
         defaultSrc: ["'self'"],
         baseUri: ["'self'"],
-        connectSrc: ["'self'"],
+        connectSrc: ["'self'", 'https://api.apple-cloudkit.com', 'https://*.icloud-content.com'],
         fontSrc: ["'self'", 'data:'],
         formAction: ["'self'"],
         frameAncestors: ["'none'"],
         imgSrc: ["'self'", 'data:', 'blob:'],
         objectSrc: ["'none'"],
-        scriptSrc: ["'self'"],
+        scriptSrc: ["'self'", 'https://cdn.apple-cloudkit.com'],
         scriptSrcAttr: ["'none'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         upgradeInsecureRequests: null,
@@ -95,8 +104,10 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   });
 
   // Per-user workspace repo factory
+  const proUsernames = new Set(opts.proUsernames ?? (process.env.TODOGRAPH_PRO_USERNAMES ?? '').split(',').map(value => value.trim()).filter(Boolean));
+  const getPlan = async (userId: string) => proUsernames.has((await userRepo.findById(userId))?.username ?? '') ? 'pro' as const : 'free' as const;
   const getRepo = (userId: string): WorkspaceRepository =>
-    new FileWorkspaceRepository(path.join(opts.dataDir, 'users', userId), opts.dataDir);
+    new FileWorkspaceRepository(path.join(opts.dataDir, 'users', userId), opts.dataDir, () => getPlan(userId));
 
   // Protected API routes share one auth hook scope so every request is validated consistently.
   await app.register(async (protectedApi) => {
@@ -109,6 +120,9 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
       rememberTokenStore,
     ));
     await protectedApi.register(mcpRoutes, { keyStore });
+    protectedApi.get('/api/entitlements', async (request) => {
+      return { plan: await getPlan(getAuthenticatedUserId(request)), source: 'server', purchaseAvailable: false };
+    });
     await protectedApi.register(workspaceRoutes, { getRepo });
   });
 

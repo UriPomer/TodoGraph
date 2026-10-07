@@ -7,6 +7,9 @@ import { ThemeSwitcher } from '@/features/theme/ThemeSwitcher';
 import { isNativeRuntime } from '@/platform/nativeSession';
 import { isHapticsEnabled, setHapticsEnabled } from '@/platform/nativeInteractions';
 import { cn } from '@/lib/utils';
+import { ProBadge } from '@/features/product/ProDialog';
+import { isLocalWorkspace } from '@/platform/workspaceRuntime';
+import { SyncControl } from '@/sync/SyncControl';
 
 export type MorePage = 'home' | 'security' | 'backups' | 'mcp';
 const titles: Record<MorePage, string> = { home: '更多', security: '账号安全', backups: '备份与恢复', mcp: 'AI Agent 接入' };
@@ -58,11 +61,12 @@ export function MobileMorePanel({ onLogout, username, page, onNavigate }: {
           <div aria-hidden="true" className="settings-account-avatar"><UserRound className="h-6 w-6" strokeWidth={1.6} /></div>
           <div className="min-w-0 flex-1">
             <p title={username} className="truncate text-[28px] font-semibold leading-tight tracking-tight">{username}</p>
-            <span className="settings-account-status mt-1.5 block text-[13px] text-muted-foreground">已登录</span>
+            <span className="settings-account-status mt-1.5 block text-[13px] text-muted-foreground">{isLocalWorkspace() ? '仅本地' : '已登录'}</span>
+            <div className="mt-3 flex items-center gap-2"><ProBadge /><SyncControl /></div>
           </div>
         </div>
         <section aria-label="工作区设置" className="settings-menu">
-          {entries.map(entry => <SettingsEntry key={entry.page} entry={entry} onNavigate={onNavigate} />)}
+          {entries.filter(entry => !isLocalWorkspace() || entry.page === 'backups').map(entry => <SettingsEntry key={entry.page} entry={entry} onNavigate={onNavigate} />)}
           {isNativeRuntime() && <button type="button" role="switch" aria-checked={haptics} onClick={toggleHaptics} className="settings-entry w-full rounded-xl text-left transition-colors duration-200 hover:bg-foreground/5">
             <span className="settings-entry-symbol"><Smartphone className="settings-entry-icon" /></span><span className="flex-1 text-base font-medium">触觉反馈</span>
             <span aria-hidden="true" className={cn('relative h-6 w-11 rounded-full transition-colors', haptics ? 'bg-[hsl(var(--primary))]' : 'bg-muted')}><span className={cn('absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full shadow-sm transition-transform', haptics ? 'translate-x-6 bg-[hsl(var(--primary-foreground))]' : 'translate-x-1 bg-card')} /></span>

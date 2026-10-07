@@ -5,7 +5,7 @@ import {
   type PageData,
   type Task,
 } from '@todograph/shared';
-import { isDAG } from '@todograph/core';
+import { isDAG } from './dag.js';
 
 export interface WorkspaceMovePlan {
   source: PageData;

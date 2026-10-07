@@ -9,10 +9,23 @@ try {
 } catch {
   apiOrigin = null;
 }
-if (!apiOrigin || apiOrigin.protocol !== 'https:' || apiOrigin.origin !== apiBase) {
-  throw new Error('VITE_API_BASE must be the public HTTPS TodoGraph server origin');
+if (apiBase && (!apiOrigin || apiOrigin.protocol !== 'https:' || apiOrigin.origin !== apiBase)) {
+  throw new Error('When provided, VITE_API_BASE must be the public HTTPS TodoGraph server origin');
 }
-process.env.VITE_API_BASE = apiBase;
+process.env.VITE_API_BASE = apiBase ?? '';
+process.env.VITE_LOCAL_FIRST = apiBase ? 'false' : 'true';
+const cloudContainer = process.env.TODOGRAPH_CLOUDKIT_CONTAINER ?? '';
+if (cloudContainer && !/^iCloud\.[A-Za-z0-9.-]+$/.test(cloudContainer)) throw new Error('TODOGRAPH_CLOUDKIT_CONTAINER must be an iCloud container identifier');
+process.env.VITE_CLOUDKIT_CONTAINER = cloudContainer;
+const entitlementsPath = fileURLToPath(new URL('../ios/App/App/App.entitlements', import.meta.url));
+writeFileSync(entitlementsPath, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>${cloudContainer ? `
+<key>com.apple.developer.icloud-container-identifiers</key><array><string>${cloudContainer}</string></array>
+<key>com.apple.developer.icloud-services</key><array><string>CloudKit</string></array>
+<key>com.apple.developer.icloud-container-environment</key><string>$(TODOGRAPH_CLOUDKIT_ENVIRONMENT)</string>` : ''}
+</dict></plist>
+`);
 const pnpmEntry = process.env.npm_execpath;
 if (!pnpmEntry) throw new Error('build:mobile must be started through pnpm');
 for (const args of [['build:web'], ['exec', 'cap', 'sync']]) {

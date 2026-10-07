@@ -18,6 +18,12 @@ import { useTaskStore } from '@/stores/useTaskStore';
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 import { useDialogStore } from '@/components/ui/dialog-store';
 import { useKeyboardVisible, useNativeBackButton, useNativeSystemBars } from '@/platform/useNativeShell';
+import { ProBadge, ProDialog } from '@/features/product/ProDialog';
+import { useProductStore } from '@/features/product/entitlements';
+import { isLocalWorkspace } from '@/platform/workspaceRuntime';
+import { canEditProductPage } from '@todograph/shared';
+import { useAppearanceStore } from '@/features/theme/appearance';
+import { SyncControl, SyncLifecycle } from '@/sync/SyncControl';
 
 type MobileTab = 'list' | 'graph' | 'more';
 
@@ -62,10 +68,11 @@ function Header({ onTab, user, onLogout, onOpenSecurity, onOpenMcp }: {
         <span className="text-muted-foreground">推荐：</span><span className="truncate font-medium text-[hsl(var(--success))]">{recommended?.title ?? '—'}</span>
       </button>
       <div className="ml-auto flex shrink-0 items-center gap-2">
-        <SecurityButton onClick={onOpenSecurity} /><McpSetupButton onClick={onOpenMcp} /><ThemeSwitcher />
+        <ProBadge /><SyncControl />
+        <SecurityButton onClick={onOpenSecurity} />{!isLocalWorkspace() && <McpSetupButton onClick={onOpenMcp} />}<ThemeSwitcher />
         <button onClick={() => void exportMarkdown()} className="text-muted-foreground hover:text-foreground" title="导出 Markdown"><Download className="h-4 w-4" /></button>
         <span className="text-xs text-muted-foreground">{user.username}</span>
-        <button onClick={onLogout} className="text-xs text-muted-foreground hover:text-foreground">退出</button>
+        <button onClick={onLogout} className="text-xs text-muted-foreground hover:text-foreground">{isLocalWorkspace() ? '切换工作区' : '退出'}</button>
       </div>
     </DesktopHeaderShell>
   );
@@ -166,6 +173,8 @@ export default function WorkspaceApp({ user, logout }: {
   const workspaceUserId = useWorkspaceStore((state) => state.sessionUserId);
   const loaded = useWorkspaceStore((state) => state.loaded);
   const meta = useWorkspaceStore((state) => state.meta);
+  const plan = useProductStore(state => state.entitlements.plan);
+  const readOnly = meta ? !canEditProductPage(meta, meta.activePageId, plan) : false;
   const [tab, setTab] = useState<MobileTab>('list');
   const tabHistory = useRef<MobileTab[]>([]);
   const [securityOpen, setSecurityOpen] = useState(false);
@@ -201,8 +210,15 @@ export default function WorkspaceApp({ user, logout }: {
     return false;
   });
   useEffect(() => {
-    if (workspaceUserId !== user.id) void bootstrap(user.id);
+    if (workspaceUserId !== user.id) void (async () => { await useProductStore.getState().refresh(); await bootstrap(user.id); })();
   }, [bootstrap, user.id, workspaceUserId]);
+  useEffect(() => { void useAppearanceStore.getState().load(user.id); }, [user.id]);
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === 'visible') void useProductStore.getState().refresh(); };
+    document.addEventListener('visibilitychange', refresh);
+    const timer = setInterval(refresh, 60_000);
+    return () => { document.removeEventListener('visibilitychange', refresh); clearInterval(timer); };
+  }, []);
   useEffect(() => {
     if (!graphEnabled) {
       tabHistory.current = tabHistory.current.filter((entry) => entry !== 'graph');
@@ -220,6 +236,10 @@ export default function WorkspaceApp({ user, logout }: {
         <PageBar mode={isDesktop && graphEnabled ? 'graph' : tab === 'graph' ? 'graph' : 'list'} onModeChange={changeTab} />
       </div>
       {!isDesktop && tab === 'more' && <MobileMoreHeader page={morePage} onBack={() => navigateMore('home')} />}
+      {readOnly && <div role="status" className="flex items-center gap-3 border-b border-border bg-card px-4 py-2 text-xs"><span className="flex-1">此页面只读，数据仍可查看和导出</span><button type="button" onClick={() => {
+        if (!meta) return;
+        void useWorkspaceStore.getState().reorderPages([meta.pages.find(page => page.kind === 'hierarchy')!.id, meta.activePageId, ...meta.pages.filter(page => page.kind !== 'hierarchy' && page.id !== meta.activePageId).map(page => page.id)]);
+      }} className="rounded-xl px-2 py-1 hover:bg-foreground/5">设为免费可编辑页面</button><button type="button" onClick={useProductStore.getState().openPro} className="text-primary">解锁 Pro</button></div>}
       {ready ? <WorkspaceContent isDesktop={isDesktop} tab={tab} graphEnabled={graphEnabled} username={user.username} onLogout={() => void logoutSafely()} morePage={morePage} onNavigateMore={navigateMore} /> : <LoadingState />}
     </div>
     {/* The footer owns its height; feedback anchors above it, even when hidden. */}
@@ -228,6 +248,8 @@ export default function WorkspaceApp({ user, logout }: {
       <Toaster />
     </div>
     <DialogContainer />
+    <ProDialog />
+    <SyncLifecycle />
     <SecurityDialog open={securityOpen} username={user.username} onClose={() => setSecurityOpen(false)} />
     <McpSetupDialog open={mcpOpen} onClose={() => setMcpOpen(false)} />
   </div>;

@@ -7,6 +7,10 @@ const config: CapacitorConfig = {
   backgroundColor: '#151317',
   loggingBehavior: 'debug',
   plugins: {
+    AppleCloud: { containerId: process.env.TODOGRAPH_CLOUDKIT_CONTAINER ?? '' },
+    ApplePurchases: {
+      productIds: (process.env.TODOGRAPH_APPLE_PRO_PRODUCT_IDS ?? '').split(',').map(value => value.trim()).filter(Boolean),
+    },
     CapacitorHttp: { enabled: true },
     Keyboard: {
       resize: 'native',

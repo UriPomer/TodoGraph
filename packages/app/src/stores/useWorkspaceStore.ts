@@ -7,6 +7,8 @@ import type {
 import { api, getApiSessionGeneration, resetApiSession } from '@/api/client';
 import { toast } from '@/components/ui/toaster-store';
 import { useTaskStore } from './useTaskStore';
+import { useProductStore } from '@/features/product/entitlements';
+import { ordinaryPages } from '@todograph/shared';
 import { subscribeAllTasksInvalidated, subscribeWorkspaceMetaUpdated } from './workspaceEvents';
 import type { PageViewportCache } from '@/features/graph/pageViewportCache';
 import {
@@ -293,6 +295,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => {
     },
 
     createPage: async (title) => {
+      const meta = get().meta;
+      if (meta && useProductStore.getState().entitlements.plan === 'free' && ordinaryPages(meta).length >= 1) {
+        useProductStore.getState().openPro(); return null;
+      }
       const result = await mutateWorkspace('创建页面失败', revision => api.createPage(title, revision));
       return result?.page ?? null;
     },

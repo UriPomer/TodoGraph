@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, GripVertical, ListTree, MoreHorizontal, Network, Plus, SquareStack } from 'lucide-react';
 import { MAX_PAGE_TITLE_LENGTH, SYSTEM_HIERARCHY_PAGE_ID, type PageInfo } from '@todograph/shared';
+import { useProductStore } from '@/features/product/entitlements';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -69,6 +70,7 @@ export function MobilePageSelectorView({
   onToggleMode: () => void;
   isSwitching?: boolean;
 }) {
+  const plan = useProductStore(state => state.entitlements.plan);
   const orderedPages = useMemo(
     () => [...pages]
       .filter((page) => page.id !== SYSTEM_HIERARCHY_PAGE_ID)
@@ -159,11 +161,13 @@ export function MobilePageSelectorView({
       >
         <Plus className="h-4 w-4" />
       </Button>
+      <span className="text-[11px] text-muted-foreground" aria-label="页面额度">{orderedPages.length}{plan === 'free' ? ' / 1' : ' 页'}</span>
     </div>
   );
 }
 
 export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onModeChange?: (mode: 'list' | 'graph') => void }) {
+  const plan = useProductStore(state => state.entitlements.plan);
   const meta = useWorkspaceStore((s) => s.meta);
   const switchPage = useWorkspaceStore((s) => s.switchPage);
   const createPage = useWorkspaceStore((s) => s.createPage);
@@ -258,6 +262,7 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
   if (!meta) return null;
 
   const handleCreatePage = async () => {
+    if (plan === 'free' && pages.length >= 1) { useProductStore.getState().openPro(); return; }
     const fallbackTitle = `页面 ${pages.length + 1}`;
     const title = await dialog.prompt('新页面名称', {
       defaultValue: fallbackTitle,
@@ -384,7 +389,9 @@ export function PageBar({ mode, onModeChange }: { mode?: 'list' | 'graph'; onMod
         >
           <Plus className="h-3.5 w-3.5" />
           新页面
+          {plan === 'free' && <span className="text-[10px] text-primary">Pro</span>}
         </Button>
+        <span className="shrink-0 text-xs text-muted-foreground" aria-label="页面额度">{pages.length}{plan === 'free' ? ' / 1 个页面' : ' 个页面'}</span>
       </div>
     </div>
   );

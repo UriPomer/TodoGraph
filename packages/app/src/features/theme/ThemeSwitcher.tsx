@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import type { ThemeDef } from './themes';
+import { AppearanceDialog } from './AppearanceDialog';
 
 const HUE_STORAGE_KEY = 'todograph.brand-hue';
 const DEFAULT_HUE = 256;
@@ -106,11 +107,12 @@ function LeftPanelOpaqueToggle() {
 }
 
 export function ThemeSwitcher() {
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const { theme, setTheme, themes, currentThemeDef } = useTheme();
   const isGlass = currentThemeDef?.id.startsWith('glass');
 
   return (
-    <DropdownMenu>
+    <><DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" className="h-8 w-8" title="切换主题">
           <Palette className="h-4 w-4" />
@@ -138,7 +140,9 @@ export function ThemeSwitcher() {
             <LeftPanelOpaqueToggle />
           </div>
         )}
+        <DropdownMenuItem onSelect={() => setAppearanceOpen(true)} className="flex items-center gap-2"><Palette className="h-4 w-4" /><span className="flex-1">自定义外观</span><span className="text-[10px] text-primary">Pro</span></DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    {appearanceOpen && <AppearanceDialog onClose={() => setAppearanceOpen(false)} />}</>
   );
 }

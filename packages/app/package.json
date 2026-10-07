@@ -15,12 +15,14 @@
     "mobile:android": "cap open android",
     "mobile:ios": "cap open ios",
     "package": "electron-vite build && electron-builder --win portable",
+    "package:mac": "electron-vite build && electron-builder --mac dmg --arm64 --x64",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@fastify/secure-session": "^8.3.0",
     "@capacitor/app": "8.1.1",
     "@capacitor/core": "8.4.2",
     "@capacitor/haptics": "8.0.2",
@@ -94,6 +96,11 @@
         }
       ],
       "artifactName": "${productName}.${ext}"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg"],
+      "artifactName": "${productName}-${arch}.${ext}"
     },
     "portable": {
       "artifactName": "${productName}.${ext}"

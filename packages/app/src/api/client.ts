@@ -17,6 +17,7 @@ import {
   isNativeSessionPersisted,
   replaceNativeSessionToken,
 } from '@/platform/nativeSession';
+import { isLocalWorkspace } from '@/platform/workspaceRuntime';
 export interface McpKeyInfo {
   id: string;
   prefix: string;
@@ -140,6 +141,12 @@ function notifyUnauthorized(): void {
 
 export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const generation = apiSessionGeneration;
+  if (isLocalWorkspace()) {
+    const { localRequest } = await import('@/local/localClient');
+    const response = await localRequest(requestPath(input), init);
+    if (generation !== apiSessionGeneration) throw Object.assign(new Error('API session changed'), { name: 'AbortError' });
+    return response;
+  }
   const retryInput = input instanceof Request ? input.clone() : input;
   let response = await fetchWithCredentials(input, init);
   if (generation !== apiSessionGeneration) {
@@ -180,13 +187,15 @@ async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     let message = text || res.statusText || `HTTP ${res.status}`;
+    let accessDenied = false;
     if (text) {
       try {
-        const body = JSON.parse(text) as { error?: unknown };
+        const body = JSON.parse(text) as { error?: unknown; code?: unknown };
         if (typeof body.error === 'string' && body.error) message = body.error;
+        accessDenied = body.code === 'PRO_REQUIRED';
       } catch { /* keep plain-text response */ }
     }
-    throw new Error(message);
+    throw Object.assign(new Error(message), { accessDenied });
   }
   return (await res.json()) as T;
 }

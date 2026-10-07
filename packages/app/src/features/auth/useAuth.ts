@@ -5,6 +5,7 @@ import {
   isNativeRuntime,
   setNativeSessionToken,
 } from '@/platform/nativeSession';
+import { isLocalWorkspace, LOCAL_USER, setWorkspaceMode } from '@/platform/workspaceRuntime';
 
 interface AuthState {
   loading: boolean;
@@ -16,6 +17,7 @@ export function useAuth() {
   const [state, setState] = useState<AuthState>({ loading: true, user: null, error: null });
 
   const checkAuth = useCallback(async () => {
+    if (isLocalWorkspace()) { setState({ loading: false, user: LOCAL_USER, error: null }); return; }
     try {
       const native = isNativeRuntime();
       const res = await apiFetch(`${getApiBase()}${native ? '/api/auth/native/me' : '/api/auth/me'}`);
@@ -77,6 +79,11 @@ export function useAuth() {
     authenticate('register', { username, password, registrationKey, remember });
 
   const logout = async () => {
+    if (isLocalWorkspace()) {
+      setWorkspaceMode('server');
+      setState({ loading: false, user: null, error: null });
+      return;
+    }
     try {
       await apiFetch(`${getApiBase()}${isNativeRuntime() ? '/api/auth/native/logout' : '/api/auth/logout'}`, { method: 'POST' });
     } catch { /* ignore */ }
@@ -84,5 +91,13 @@ export function useAuth() {
     setState({ loading: false, user: null, error: null });
   };
 
-  return { ...state, login, register, logout, checkAuth };
+  const startLocal = async () => {
+    try {
+      const { localTransaction } = await import('@/local/localWorkspace');
+      await localTransaction(record => record.meta);
+      setWorkspaceMode('local');
+      await checkAuth();
+    } catch (error) { setState(current => ({ ...current, error: (error as Error).message })); }
+  };
+  return { ...state, login, register, logout, checkAuth, startLocal };
 }

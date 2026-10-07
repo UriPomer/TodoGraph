@@ -1,0 +1,31 @@
+/* Customization changes material layers, never foreground/content opacity. */
+html[data-appearance-custom][data-theme^='glass'] .bg-matte {
+  background: hsl(var(--card) / var(--custom-material-alpha));
+  backdrop-filter: blur(var(--custom-blur));
+  -webkit-backdrop-filter: blur(var(--custom-blur));
+}
+html[data-appearance-custom][data-theme^='glass'] [data-desktop-header],
+html[data-appearance-custom][data-theme^='glass'] .split-pane-left {
+  background: hsl(var(--card) / var(--custom-material-alpha));
+}
+html[data-appearance-custom][data-left-panel-opaque='true'] .split-pane-left {
+  background: hsl(var(--card));
+}
+@media (max-width: 767px) {
+  html[data-appearance-custom][data-theme^='glass'] .bg-sharp {
+    filter: blur(var(--custom-blur));
+    inset: -72px;
+  }
+  html[data-appearance-custom][data-theme^='glass'] .bg-matte {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  html[data-appearance-custom][data-theme^='glass'] .bg-matte::before {
+    background: hsl(var(--card) / var(--custom-material-alpha));
+  }
+}
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  html[data-theme^='glass'] .bg-sharp, html[data-theme^='glass'] .bg-matte { display: none; }
+  html[data-theme^='glass'] .split-pane-left, html[data-theme^='glass'] [data-desktop-header] { background: hsl(var(--card)); }
+}

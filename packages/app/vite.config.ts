@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
+import { offlineShell } from './scripts/offline-shell';
 
 process.env.VITE_API_BASE ??= '';
 
@@ -9,7 +10,7 @@ process.env.VITE_API_BASE ??= '';
  * Electron 模式使用 electron.vite.config.ts。
  */
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), offlineShell()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),

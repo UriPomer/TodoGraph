@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        A71C7A052F42000100A11CE0 /* AppleCloudPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71C7A042F42000100A11CE0 /* AppleCloudPlugin.swift */; };
+        A71C7A032F42000100A11CE0 /* ApplePurchasesPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A71C7A022F42000100A11CE0 /* ApplePurchasesPlugin.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
@@ -19,6 +21,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        A71C7A042F42000100A11CE0 /* AppleCloudPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleCloudPlugin.swift; sourceTree = "<group>"; };
+        A71C7A022F42000100A11CE0 /* ApplePurchasesPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplePurchasesPlugin.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -67,6 +71,8 @@
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				A71C7A002F42000100A11CE0 /* SecureSessionPlugin.swift */,
+                A71C7A022F42000100A11CE0 /* ApplePurchasesPlugin.swift */,
+                A71C7A042F42000100A11CE0 /* AppleCloudPlugin.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -160,6 +166,8 @@
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				A71C7A012F42000100A11CE0 /* SecureSessionPlugin.swift in Sources */,
+                A71C7A032F42000100A11CE0 /* ApplePurchasesPlugin.swift in Sources */,
+                A71C7A052F42000100A11CE0 /* AppleCloudPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -311,9 +319,12 @@
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = com.todograph.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+                TODOGRAPH_CLOUDKIT_ENVIRONMENT = Production;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+                CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
+                SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 			};
 			name = Debug;
 		};
@@ -332,9 +343,12 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.todograph.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+                TODOGRAPH_CLOUDKIT_ENVIRONMENT = Production;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+                CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
+                SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 			};
 			name = Release;
 		};

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AllTasksCacheStore, type AllTasksCache } from '../src/routes/workspace.js';
+import { AllTasksCacheStore, type AllTasksCache } from '../src/routes/allTasksCache.js';
 
 function cache(title: string): AllTasksCache {
   return {

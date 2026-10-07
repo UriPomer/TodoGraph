@@ -5,6 +5,7 @@ export function initializeWallpaper() {
   let image: HTMLImageElement | undefined;
   let disposed = false;
   let frame = 0;
+  let loadGeneration = 0;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 32;
   const context = canvas.getContext('2d', { willReadFrequently: true });
@@ -65,16 +66,18 @@ export function initializeWallpaper() {
     frame = requestAnimationFrame(updateCanvasColor);
   };
   const observer = new MutationObserver(updateCanvasColor);
-  observer.observe(root, { attributes: true, attributeFilter: ['data-theme', 'data-app-surface'] });
+  observer.observe(root, { attributes: true, attributeFilter: ['data-theme', 'data-app-surface', 'data-appearance-custom'] });
   window.addEventListener('resize', scheduleUpdate);
   window.addEventListener('pageshow', scheduleUpdate);
 
   const load = async (url: string): Promise<boolean> => {
-    root.style.setProperty('--bg-url', `url('${url}')`);
+    const request = ++loadGeneration;
     const photo = new Image();
     photo.src = url;
-    try { await photo.decode(); } catch { return false; }
-    if (disposed) return false;
+    try { await photo.decode(); } catch { return disposed || request !== loadGeneration; }
+    // Superseded loads must not trigger a fallback over the newer custom photo.
+    if (disposed || request !== loadGeneration) return true;
+    root.style.setProperty('--bg-url', `url('${url}')`);
     image = photo;
     root.setAttribute('data-wallpaper-ready', '');
     // WebKit may retain pre-load edge pixels on a filtered fixed layer.
@@ -86,6 +89,12 @@ export function initializeWallpaper() {
   root.removeAttribute('data-wallpaper-ready');
   updateCanvasColor();
   const url = `/bg-${Math.floor(Math.random() * 6) + 1}.jpg`;
+  const changeWallpaper = (event: Event) => {
+    const custom = (event as CustomEvent<{ url: string | null }>).detail.url;
+    root.dataset.customWallpaper = String(Boolean(custom));
+    void load(custom ?? url).then(loaded => { if (!loaded && !disposed) { root.dataset.customWallpaper = 'false'; void load('/bg-1.jpg'); } });
+  };
+  window.addEventListener('todograph-wallpaper', changeWallpaper);
   void load(url).then(async loaded => {
     if (!loaded && !disposed && url !== '/bg-1.jpg') await load('/bg-1.jpg');
   });
@@ -96,6 +105,7 @@ export function initializeWallpaper() {
     cancelAnimationFrame(frame);
     window.removeEventListener('resize', scheduleUpdate);
     window.removeEventListener('pageshow', scheduleUpdate);
+    window.removeEventListener('todograph-wallpaper', changeWallpaper);
     root.style.removeProperty('--wallpaper-edge-color');
     root.removeAttribute('data-wallpaper-ready');
   };

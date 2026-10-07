@@ -10,6 +10,7 @@ import { clearTaskDraft, clearTaskDraftIfMatching, loadTaskDraft, saveTaskDraft 
 import { createTaskActions } from './taskActions';
 import { createTaskHierarchyActions } from './taskHierarchyActions';
 import type { TaskStore } from './taskStoreTypes';
+import { guardTaskActions, isProductPageEditable } from '@/features/product/taskAccess';
 
 export const useTaskStore = create<TaskStore>((set, get) => {
   let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -65,8 +66,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       backupRevision: state.backupRevision + 1,
     })),
     shouldRetry: (error, pageId) => {
-      const candidate = error as Error & { conflict?: boolean };
-      return !candidate.conflict && get().activePageId === pageId;
+      const candidate = error as Error & { conflict?: boolean; accessDenied?: boolean };
+      return !candidate.conflict && !candidate.accessDenied && get().activePageId === pageId;
     },
     persist: async (pid) => {
       const generation = getApiSessionGeneration();
@@ -148,7 +149,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
         JSON.stringify({ nodes: data.nodes, edges: data.edges })
       : false;
     if (draft && serverMatchesDraft && sessionUserId) clearTaskDraft(sessionUserId, pageId);
-    const recoveredDraft = draft && !serverMatchesDraft && draft.baseVersion === (data.version ?? 0)
+    const recoveredDraft = draft && !serverMatchesDraft && draft.baseVersion === (data.version ?? 0) && isProductPageEditable(pageId)
       ? draft
       : null;
     if (draft && !serverMatchesDraft && !recoveredDraft) {
@@ -176,7 +177,7 @@ export const useTaskStore = create<TaskStore>((set, get) => {
     }));
     useHistoryStore.getState().clear();
     if (recoveredDraft) toast.info('已恢复本地草稿', '正在重新保存关闭前的修改');
-    if (recoveredDraft || repaired !== effective.nodes) scheduleSave();
+    if ((recoveredDraft || repaired !== effective.nodes) && isProductPageEditable(pageId)) scheduleSave();
   };
   const cancelScheduledSave = () => {
     persistence.cancel();
@@ -268,8 +269,8 @@ export const useTaskStore = create<TaskStore>((set, get) => {
       draftStorageWarningShown = false;
       warnedStaleDrafts.clear();
     },
-    ...createTaskActions({ set, get, pushPre, scheduleSave }),
-    ...createTaskHierarchyActions({ set, get, pushPre, scheduleSave }),
+    ...guardTaskActions(createTaskActions({ set, get, pushPre, scheduleSave }), () => get().activePageId),
+    ...guardTaskActions(createTaskHierarchyActions({ set, get, pushPre, scheduleSave }), () => get().activePageId),
     markBackupDone: (pageId, revision) => set((state) => state.activePageId === pageId
       && state.backupRevision === revision ? { backupDirty: false } : state),
   };

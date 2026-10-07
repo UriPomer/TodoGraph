@@ -17,4 +17,8 @@ contextBridge.exposeInMainWorld('__API_BASE__', resolveApiBase());
 
 contextBridge.exposeInMainWorld('todograph', {
   isElectron: true,
+  deviceStorage: {
+    read: (key: string) => ipcRenderer.invoke('todograph:device-read', key),
+    write: (key: string, value: unknown, expectedVersion: number) => ipcRenderer.invoke('todograph:device-write', key, value, expectedVersion),
+  },
 });

@@ -14,8 +14,11 @@ import {
   type MoveNodesResponse,
   type PageData,
   type PageInfo,
+  assertProductPageCapacity,
+  assertProductPageEditable,
+  type ProductPlan,
 } from '@todograph/shared';
-import { planWorkspaceMove } from '../domain/workspaceMovePlan.js';
+import { planWorkspaceMove } from '@todograph/core';
 import {
   type BackupInfo,
   MetaVersionConflictError,
@@ -139,7 +142,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   /** Old root-level data dir (pre-multi-user). If set and meta.json exists there, migrate it in. */
   private readonly legacyV2Dir?: string;
 
-  constructor(dataDir: string, legacyV2Dir?: string) {
+  constructor(dataDir: string, legacyV2Dir?: string, private readonly getProductPlan: () => Promise<ProductPlan> = async () => 'pro') {
     this.dataDir = dataDir;
     this.metaPath = path.join(dataDir, 'meta.json');
     this.pagesDir = path.join(dataDir, 'pages');
@@ -166,6 +169,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     return this.runLocked(async () => {
       const meta = await this.loadMetaUnlocked();
       this.assertKnownPage(meta, pageId);
+      assertProductPageEditable(meta, pageId, await this.getProductPlan());
       this.assertPageAllowsDependencies(meta, pageId, data);
       await this.assertWorkspaceGrowthAllowed(meta, new Map([[pageId, data]]));
       return this.savePageUnlocked(pageId, data, expectedVersion);
@@ -182,6 +186,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       }
       for (const entry of entries) {
         this.assertKnownPage(meta, entry.pageId);
+        assertProductPageEditable(meta, entry.pageId, await this.getProductPlan());
         this.assertPageAllowsDependencies(meta, entry.pageId, entry.data);
       }
       await this.assertWorkspaceGrowthAllowed(
@@ -196,6 +201,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     return this.runLocked(async () => {
       const meta = await this.loadMetaUnlocked();
       this.assertMetaRevision(meta, expectedRevision);
+      assertProductPageCapacity(meta, await this.getProductPlan());
       if (meta.pages.length >= MAX_WORKSPACE_PAGES) {
         throw new Error(`workspace exceeds ${MAX_WORKSPACE_PAGES} pages`);
       }
@@ -273,6 +279,9 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       if (sourcePageId === SYSTEM_HIERARCHY_PAGE_ID) throw new Error('system page cannot be merged');
       this.assertKnownPage(meta, sourcePageId);
       this.assertKnownPage(meta, targetPageId);
+      const productPlan = await this.getProductPlan();
+      assertProductPageEditable(meta, sourcePageId, productPlan);
+      assertProductPageEditable(meta, targetPageId, productPlan);
       if (meta.pages.length <= 1) throw new Error('last page cannot be merged');
 
       const sourcePath = this.pageFilePath(sourcePageId);
@@ -350,6 +359,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     return this.runLocked(async () => {
       const meta = await this.loadMetaUnlocked();
       this.assertMetaRevision(meta, expectedRevision);
+      assertProductPageEditable(meta, pageId, await this.getProductPlan());
       const idx = meta.pages.findIndex((p) => p.id === pageId);
       if (idx < 0) throw new Error(`page not found: ${pageId}`);
       const cleaned = title.trim() || meta.pages[idx]!.title;
@@ -400,6 +410,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
   async importWorkspace(data: WorkspaceExport): Promise<Meta> {
     return this.runLocked(async () => {
       const validated = this.validateWorkspaceImport(data);
+      assertProductPageCapacity(validated.meta, await this.getProductPlan(), 0);
       const importBackupDir = path.join(this.dataDir, 'backups', '_workspace-imports');
       await fs.mkdir(importBackupDir, { recursive: true });
       // Import is destructive, so failure to snapshot the current workspace aborts it.
@@ -514,6 +525,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     return this.runLocked(async () => {
       const meta = await this.loadMetaUnlocked();
       this.assertKnownPage(meta, pageId);
+      assertProductPageEditable(meta, pageId, await this.getProductPlan());
       return this.restoreBackupUnlocked(meta, pageId, backupName, expectedVersion);
     });
   }
@@ -523,6 +535,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
     return this.runLocked(async () => {
       const meta = await this.loadMetaUnlocked();
       this.assertKnownPage(meta, pageId);
+      assertProductPageEditable(meta, pageId, await this.getProductPlan());
       const backups = await this.listBackupsUnlocked(pageId);
       if (backups.length === 0) {
         throw new Error(`no backup found for page ${pageId}`);
@@ -619,6 +632,7 @@ export class FileWorkspaceRepository implements WorkspaceRepository {
       const trashPath = path.join(this.dataDir, 'trash', 'pages', name);
       const raw = JSON.parse(await fs.readFile(trashPath, 'utf-8')) as Record<string, unknown>;
       const originalPage = PageInfoSchema.parse(raw.page);
+      assertProductPageCapacity(meta, await this.getProductPlan(), originalPage.id === SYSTEM_HIERARCHY_PAGE_ID ? 0 : 1);
       if (meta.pages.some((page) => page.id === originalPage.id)) {
         throw new Error(`page already exists: ${originalPage.id}`);
       }

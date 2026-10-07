@@ -3,11 +3,12 @@ import { Check } from 'lucide-react';
 import { PasswordInput } from '@/components/ui/password-input';
 
 interface Props {
+  onLocal?: () => Promise<void>;
   onLogin: (username: string, password: string, remember: boolean) => Promise<string | null>;
   onRegister: (username: string, password: string, registrationKey: string, remember: boolean) => Promise<string | null>;
 }
 
-export function LoginPage({ onLogin, onRegister }: Props) {
+export function LoginPage({ onLogin, onRegister, onLocal }: Props) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -41,6 +42,11 @@ export function LoginPage({ onLogin, onRegister }: Props) {
           <span className="text-[hsl(var(--primary))] text-3xl">◈</span>
           <h1 className="mt-2 text-xl font-semibold">TodoGraph</h1>
         </div>
+
+        {onLocal && <div className="mb-6 text-center">
+          <button type="button" disabled={busy} onClick={() => void onLocal()} className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm font-medium transition-colors duration-200 hover:bg-foreground/5">在本机使用</button>
+          <p className="mt-2 text-xs text-muted-foreground">无需账号 · 数据保存在这台设备</p>
+        </div>}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

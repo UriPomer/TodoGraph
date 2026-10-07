@@ -24,6 +24,8 @@ describe('MCP tools integration', () => {
 
   beforeAll(async () => {
     dataDir = path.join(os.tmpdir(), `todograph-mcp-test-${Date.now()}`);
+    const { FileUserRepository } = await import('../../server/src/repositories/FileUserRepository.js');
+    await new FileUserRepository(dataDir).register({ id: 'u1', username: 'mcp-pro-fixture', passwordHash: 'unused-fixture', sessionVersion: 0, createdAt: new Date().toISOString() }, true);
 
     // Set env vars BEFORE importing modules that capture them at load time
     process.env.MCP_API_KEY = 'test-key-20chars-min-xxxxxxxxxxxxxxxxxxxxxxxx';
@@ -37,6 +39,7 @@ describe('MCP tools integration', () => {
       registrationKey: 'test',
       sessionSecret: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       logger: false,
+      proUsernames: ['mcp-pro-fixture'],
     });
     await app.listen({ port: 0, host: '127.0.0.1' });
     const addr = app.server.address();

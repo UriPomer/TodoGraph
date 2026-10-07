@@ -139,6 +139,7 @@ export function useGraphCommands({
       if (!pendingCreate) return;
       const { connection, ...position } = pendingCreate;
       const task = addTask({ title, ...position });
+      if (!task) { setPendingCreate(null); return; }
       if (connection) {
         if (connection.handleType === 'target') addEdge(task.id, connection.nodeId);
         else addEdge(connection.nodeId, task.id);

@@ -50,6 +50,7 @@ export default defineConfig({
         SESSION_SECRET: '0123456789abcdef0123456789abcdef',
         REGISTRATION_KEY: 'todograph-e2e',
         TODOGRAPH_E2E: '1',
+        TODOGRAPH_PRO_USERNAMES: 'e2e-test-user',
         PORT: '5183',
         HOST: '127.0.0.1',
       },
@@ -61,6 +62,8 @@ export default defineConfig({
       reuseExistingServer: false,
       env: {
         VITE_API_PROXY_TARGET: 'http://127.0.0.1:5183',
+        VITE_CLOUDKIT_CONTAINER: 'iCloud.test.todograph',
+        VITE_CLOUDKIT_API_TOKEN: 'e2e-public-token-placeholder',
       },
     },
   ],

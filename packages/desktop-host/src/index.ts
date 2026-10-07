@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { buildApp } from '@todograph/server';
+export { DeviceStorage } from './deviceStorage.js';
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 

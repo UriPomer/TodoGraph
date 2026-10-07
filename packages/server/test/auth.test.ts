@@ -20,6 +20,7 @@ describe('auth routes', () => {
       registrationKey: '',
       sessionSecret: makeSecret(),
       logger: false,
+      proUsernames: ['alice'],
     });
     await app.ready();
   });

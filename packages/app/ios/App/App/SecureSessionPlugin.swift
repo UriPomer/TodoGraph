@@ -6,6 +6,8 @@ import Security
 public class AppBridgeViewController: CAPBridgeViewController {
     public override func capacitorDidLoad() {
         bridge?.registerPluginInstance(SecureSessionPlugin())
+        bridge?.registerPluginInstance(ApplePurchasesPlugin())
+        bridge?.registerPluginInstance(AppleCloudPlugin())
     }
 }
 

@@ -1,6 +1,6 @@
 import { pageSupportsDependencyGraph, type MoveNodesResponse } from '@todograph/shared';
 import type { WorkspaceRepository } from '../repositories/Repository.js';
-import { planWorkspaceMove } from '../domain/workspaceMovePlan.js';
+import { planWorkspaceMove } from '@todograph/core';
 
 /** Applies a cross-page move as one repository transaction, including descendants and internal edges. */
 export async function moveNodesBetweenPages(

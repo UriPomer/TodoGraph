@@ -8,6 +8,7 @@
 @import './toast.css';
 @import './settings.css';
 @import './mobile-chrome.css';
+@import './appearance.css';
 
 @tailwind base;
 @tailwind components;
