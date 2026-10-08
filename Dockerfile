@@ -21,6 +21,7 @@ COPY packages/server/src packages/server/src/
 COPY packages/app/tsconfig.json packages/app/tsconfig.node.json packages/app/vite.config.ts packages/app/tailwind.config.ts packages/app/postcss.config.js packages/app/index.html packages/app/
 COPY packages/app/public packages/app/public/
 COPY packages/app/src packages/app/src/
+COPY packages/app/scripts/offline-shell.ts packages/app/scripts/offline-shell.ts
 
 RUN pnpm --filter @todograph/core --filter @todograph/shared --filter @todograph/server build
 RUN pnpm --filter @todograph/app build:web
